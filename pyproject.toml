@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "paper2structure"
+version = "0.1.0"
+description = "Agentic workflow that turns your paper into a simulation-ready structure"
+requires-python = ">=3.12"
+license = "MIT AND Apache-2.0"
+license-files = ["LICENSE"]
+dependencies = [
+    "ase",
+    "numpy",
+    "pydantic",
+    "pydantic-ai",
+    "pyyaml"
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["paper2structure*"]
