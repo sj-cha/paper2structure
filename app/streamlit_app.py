@@ -17,7 +17,9 @@ import streamlit as st
 
 from paper2structure.summarizer.graph import summarize_paper_sync
 from paper2structure.summarizer.knowledge_graph import load_graph, to_dot, technique_packets
-from paper2structure.summarizer.models import DEFAULT_MODEL, get_model
+from paper2structure.structure import export, generate_structure
+from paper2structure.summarizer.models import DEFAULT_MODEL, MODEL_CHOICES, get_model
+from structure_viewer import structure_viewer
 
 OUTPUTS = Path("outputs")
 
@@ -31,7 +33,17 @@ st.write(
 
 with st.sidebar:
     st.header("Settings")
-    model_name = st.text_input("Model", os.getenv("P2S_MODEL", DEFAULT_MODEL), help="Use 'dry-run' to test without an API key.")
+    default_model = os.getenv("P2S_MODEL", DEFAULT_MODEL)
+    choices = list(MODEL_CHOICES) + ["other"]
+    choice = st.selectbox(
+        "Model",
+        choices,
+        index=choices.index(default_model) if default_model in choices else len(choices) - 1,
+        format_func=lambda m: MODEL_CHOICES.get(m, "Other (type a model name)"),
+        help="USD per 1M tokens (input / output). Luna price varies between sources. GPT-5 nano is cheap per token "
+        "but slow and thinks a lot, so it costs more per paper than GPT-5.4 nano. 'Dry run' tests the page without an API key.",
+    )
+    model_name = st.text_input("Model name", default_model, help="Any pydantic-ai model name, e.g. openai:gpt-5.4-mini") if choice == "other" else choice
     if not os.getenv("OPENAI_API_KEY") and model_name.startswith("openai:"):
         key = st.text_input("OpenAI API key", type="password", help="Only kept for this browser session. Better: put it in the .env file.")
         if key:
@@ -72,7 +84,9 @@ st.write(m.summary)
 if (result_dir / "errors.txt").exists():
     st.warning("Some steps had problems:\n\n" + (result_dir / "errors.txt").read_text())
 
-tab_sys, tab_ev, tab_graph, tab_dl = st.tabs([f"Material systems ({len(graph.systems)})", f"Evidence ({len(graph.evidence)})", "Knowledge graph", "Download"])
+tab_sys, tab_ev, tab_graph, tab_struct, tab_dl = st.tabs(
+    [f"Material systems ({len(graph.systems)})", f"Evidence ({len(graph.evidence)})", "Knowledge graph", "Structure (mock-up)", "Download"]
+)
 
 with tab_sys:
     st.dataframe(
@@ -122,6 +136,64 @@ with tab_ev:
 with tab_graph:
     st.caption("Paper → material systems → techniques. The number on each arrow is how many evidence items link them.")
     st.graphviz_chart(to_dot(graph), width="stretch")
+
+with tab_struct:
+    st.info(
+        "**Mock-up.** The real structure generator is being built separately. For now this tab always shows "
+        "the same demo crystal, sized by the settings, so the workflow can be tried end to end."
+    )
+    c1, c2, c3 = st.columns([2, 1, 2])
+    system = c1.selectbox("Material system", graph.systems, format_func=lambda s: f"{s.system_id} · {s.name}")
+    method = c2.radio("Simulation", ["DFT", "MD"], horizontal=True, help="DFT: small periodic cell (≲200 atoms). MD: large cell (thousands of atoms).")
+    realism = c3.slider(
+        "Computationally tractable  ←→  Closer to experiment",
+        0.0, 1.0, 0.3, 0.05,
+        help="Left: smallest, cheapest cell. Right: bigger, more realistic cell (in the mock-up: larger and with more thermal noise).",
+    )
+    if st.button("Generate structure", type="primary"):
+        st.session_state["structure"] = (str(result_dir), generate_structure(system, method, realism))
+
+    owner, gen = st.session_state.get("structure", (None, None))
+    if gen and owner == str(result_dir):
+        st.subheader(f"{gen.system_name} · {gen.method} · realism {gen.realism:.2f}")
+        info, estimate = gen.info(), gen.compute_estimate()
+        view, facts = st.columns([3, 2])
+        with view:
+            v1, v2 = st.columns(2)
+            style = v1.radio("Style", ["Ball and stick", "Space filling"], horizontal=True, index=0 if len(gen.atoms) < 3000 else 1)
+            show_cell = v2.checkbox("Show cell", value=True)
+            structure_viewer(gen.atoms, style=style, show_cell=show_cell)
+            st.caption("Drag to rotate · scroll to zoom · right-drag to move")
+        with facts:
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Atoms", f"{info['atoms']:,}")
+            m2.metric("Valence e⁻", f"{info['valence_electrons']:,}")
+            m3.metric("Supercell", info["supercell"])
+            a, b, c = info["cell_lengths_A"]
+            rows = {
+                "Formula": info["formula"],
+                "Cell (Å)": f"{a} × {b} × {c}",
+                "Volume (Å³)": f"{info['volume_A3']:,}",
+                "Density (g/cm³)": info["density_g_cm3"],
+            }
+            st.table({"": list(rows), "value": [str(v) for v in rows.values()]})
+            st.markdown("**Compute estimate** (order of magnitude)")
+            st.table({"": list(estimate), "value": list(estimate.values())})
+            st.caption("Species: " + ", ".join(f"{e} {n}" for e, n in info["species"].items()))
+            for note in gen.notes:
+                st.caption(f"• {note}")
+        if st.button("Use this structure"):
+            files = export(gen, result_dir / "structures")
+            st.success(f"Saved for simulation: {', '.join(f.name for f in files)}")
+
+    saved = sorted((result_dir / "structures").glob("*.json")) if (result_dir / "structures").exists() else []
+    if saved:
+        st.markdown("**Structures chosen for simulation**")
+        for meta in saved:
+            with st.expander(meta.stem):
+                cols = st.columns(4)
+                for col, f in zip(cols, sorted(meta.parent.glob(f"{meta.stem}.*"))):
+                    col.download_button(f.suffix.lstrip("."), f.read_bytes(), file_name=f.name, key=f"dl-{f.name}")
 
 with tab_dl:
     buf = io.BytesIO()

@@ -5,7 +5,7 @@ Claude (in Claude Code) played the role of each LLM step by hand on one paper:
 
 > A. Shahee, D. Kumar, N. P. Lalla, *Structural studies on Multiferroic La1-xBixCrO3 Perovskites*,
 > AIP Conf. Proc. 1349, 1243 (2011), [arXiv:1403.3526](https://arxiv.org/abs/1403.3526).
-> PDF stored outside the repo at `hackathon/papers/La1-xBixCrO3_arXiv1403.3526.pdf`.
+> PDF stored outside the repo at `hackathon/paper/La1-xBixCrO3_arXiv1403.3526.pdf`.
 
 It is a 2-page paper, but it covers what the pipeline has to handle: a composition series
 (5 systems), XRD + Rietveld refinement + TEM + electron diffraction, and key numbers that appear
