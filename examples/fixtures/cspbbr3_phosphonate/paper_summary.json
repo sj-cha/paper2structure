@@ -1,0 +1,28 @@
+{
+  "title": "[SYNTHETIC FIXTURE] Hexylphosphonic acid passivation of CsPbBr3 nanocube surfaces",
+  "citation": "Synthetic fixture for pipeline testing; not a real publication.",
+  "synthetic": true,
+  "materials": ["CsPbBr3 nanocubes (~10 nm edge), indexed to the cubic perovskite phase"],
+  "adsorbates": ["hexylphosphonic acid (HPA), CCCCCCP(=O)(O)O"],
+  "objective": "Explain how hexylphosphonic acid treatment raises the photoluminescence quantum yield of CsPbBr3 nanocubes.",
+  "methods": ["XRD", "TEM", "FTIR", "XPS", "PL"],
+  "key_findings": [
+    "XRD indexes the nanocubes to cubic CsPbBr3 with a = 5.87 A.",
+    "TEM shows ~10 nm cubes bounded by {100} facets.",
+    "After treatment the P-OH band at 950 cm-1 disappears and the P=O band shifts from 1200 to 1100 cm-1.",
+    "XPS: the Br/Pb atomic ratio drops from 2.9 to 2.6 and a P 2p peak appears at 133.2 eV.",
+    "PL quantum yield increases from 60% to 90%."
+  ],
+  "author_interpretations": [
+    "HPA binds as a deprotonated phosphonate to surface Pb, taking the place of surface bromide.",
+    "Removing undercoordinated surface Pb sites suppresses non-radiative recombination."
+  ],
+  "reconstruction_target": "Phosphonate-passivated CsPbBr3 {100} surface",
+  "unresolved": [
+    "Monodentate versus bidentate phosphonate binding.",
+    "Degree of deprotonation (one or two P-OH groups).",
+    "CsBr- versus PbBr2-terminated facets.",
+    "Ligand surface coverage."
+  ],
+  "sources": [{"document": "main", "section": "Results"}]
+}

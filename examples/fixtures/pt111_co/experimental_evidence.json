@@ -1,0 +1,30 @@
+{
+  "synthetic": true,
+  "items": [
+    {"evidence_id": "E1", "technique": "XRD", "observation": "fcc Pt reflections; refined lattice parameter",
+     "value": 3.924, "unit": "A", "authors_interpretation": "bulk fcc Pt", "structural_implication": "fcc lattice constant a = 3.924 A",
+     "confidence": "high", "classification": "reported", "source": {"document": "main", "page": 3, "figure": "Fig. S1"}},
+    {"evidence_id": "E2", "technique": "LEED", "observation": "p(2x2) superstructure at 0.25 ML CO",
+     "value": 0.25, "unit": "ML", "authors_interpretation": "one CO per four surface Pt atoms in a p(2x2) cell",
+     "structural_implication": "a 2x2 surface cell (or a multiple) holding one CO per 2x2 cell", "confidence": "high",
+     "classification": "reported", "source": {"document": "main", "page": 4, "figure": "Fig. 1b"}},
+    {"evidence_id": "E3", "technique": "IRRAS", "observation": "strong C-O stretching band",
+     "value": 2090, "unit": "cm-1", "authors_interpretation": "CO bound atop a single Pt atom (carbon-down)",
+     "structural_implication": "C-bound CO on a top site", "confidence": "medium", "classification": "reported",
+     "source": {"document": "main", "page": 4, "figure": "Fig. 2a"}},
+    {"evidence_id": "E4", "technique": "IRRAS", "observation": "weak C-O stretching band",
+     "value": 1850, "unit": "cm-1", "authors_interpretation": "bridge-bonded CO",
+     "structural_implication": "a minority of CO bridging two Pt atoms", "confidence": "medium", "classification": "reported",
+     "source": {"document": "main", "page": 4, "figure": "Fig. 2a"}},
+    {"evidence_id": "E5", "technique": "XPS", "observation": "C 1s main and minor components",
+     "value": 286.8, "unit": "eV", "authors_interpretation": "atop (286.8 eV) and bridge (286.1 eV) CO",
+     "structural_implication": "two inequivalent CO environments", "confidence": "medium", "classification": "reported",
+     "source": {"document": "main", "page": 5, "figure": "Fig. 3"}}
+  ],
+  "constraints": [
+    {"constraint_id": "C1", "statement": "CO binds carbon-down", "evidence_ids": ["E3", "E4"], "effect": "supports"},
+    {"constraint_id": "C2", "statement": "atop sites are the majority adsorption site at 0.25 ML", "evidence_ids": ["E3", "E5"], "effect": "supports"},
+    {"constraint_id": "C3", "statement": "coverage of one CO per four surface Pt atoms", "evidence_ids": ["E2"], "effect": "requires"}
+  ],
+  "missing": ["CO tilt angle", "relative populations of atop and bridge CO"]
+}

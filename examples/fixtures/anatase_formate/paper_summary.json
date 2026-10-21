@@ -1,0 +1,22 @@
+{
+  "title": "[SYNTHETIC FIXTURE] Dissociative adsorption of formic acid on anatase TiO2 nanoparticles",
+  "citation": "Synthetic fixture for pipeline testing; not a real publication.",
+  "synthetic": true,
+  "materials": ["anatase TiO2 nanoparticles (~20 nm) with predominantly (101) facets"],
+  "adsorbates": ["formic acid (HCOOH), adsorbed as formate (HCOO-)"],
+  "objective": "Identify the adsorption mode of formic acid on anatase TiO2 at room temperature.",
+  "methods": ["XRD", "TEM", "DRIFTS", "XPS"],
+  "key_findings": [
+    "XRD shows phase-pure anatase; no lattice parameters are reported.",
+    "TEM shows truncated bipyramids dominated by (101) facets.",
+    "DRIFTS shows asymmetric and symmetric OCO stretches at 1560 and 1360 cm-1 and no C=O band near 1700 cm-1.",
+    "O 1s XPS shows a new component at 531.6 eV."
+  ],
+  "author_interpretations": [
+    "The OCO splitting of 200 cm-1 indicates bridging bidentate formate over two five-fold coordinated Ti atoms.",
+    "The acidic proton transfers to a neighbouring two-fold coordinated bridging oxygen, forming a surface hydroxyl."
+  ],
+  "reconstruction_target": "Formate on anatase TiO2 (101)",
+  "unresolved": ["Coverage of formate", "Position of the dissociated proton"],
+  "sources": [{"document": "main", "section": "Results"}]
+}

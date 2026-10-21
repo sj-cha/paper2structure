@@ -1,0 +1,37 @@
+{
+  "synthetic": true,
+  "items": [
+    {"evidence_id": "E1", "technique": "XRD", "observation": "reflections indexed to cubic perovskite CsPbBr3",
+     "value": 5.87, "unit": "A", "authors_interpretation": "cubic CsPbBr3 (Pm-3m)", "structural_implication": "cubic lattice constant a = 5.87 A",
+     "confidence": "high", "classification": "reported", "source": {"document": "main", "page": 3, "figure": "Fig. 1a"}},
+    {"evidence_id": "E2", "technique": "TEM", "observation": "cubes of ~10 nm edge length bounded by {100} facets",
+     "value": 10.0, "unit": "nm", "authors_interpretation": "{100}-faceted nanocubes", "structural_implication": "the exposed surfaces are {100} facets",
+     "confidence": "high", "classification": "reported", "source": {"document": "main", "page": 3, "figure": "Fig. 1b"}},
+    {"evidence_id": "E3", "technique": "FTIR", "observation": "P-OH band at 950 cm-1 disappears after binding",
+     "value": 950, "unit": "cm-1", "authors_interpretation": "the phosphonic acid is deprotonated on binding",
+     "structural_implication": "at least one P-OH is deprotonated (phosphonate anion)", "confidence": "medium",
+     "classification": "reported", "source": {"document": "main", "page": 4, "figure": "Fig. 2a"}},
+    {"evidence_id": "E4", "technique": "FTIR", "observation": "P=O stretch shifts from 1200 to 1100 cm-1",
+     "value": 1100, "unit": "cm-1", "authors_interpretation": "P-O groups coordinate surface Pb",
+     "structural_implication": "phosphonate oxygens bind surface Pb", "confidence": "medium", "classification": "reported",
+     "source": {"document": "main", "page": 4, "figure": "Fig. 2b"}},
+    {"evidence_id": "E5", "technique": "XPS", "observation": "Br/Pb atomic ratio decreases from 2.9 to 2.6",
+     "value": 2.6, "unit": "Br/Pb", "authors_interpretation": "surface bromide is replaced by phosphonate",
+     "structural_implication": "ligands occupy surface Br sites", "confidence": "medium", "classification": "reported",
+     "source": {"document": "main", "page": 5, "figure": "Fig. 3a"}},
+    {"evidence_id": "E6", "technique": "XPS", "observation": "P 2p peak at 133.2 eV after treatment",
+     "value": 133.2, "unit": "eV", "authors_interpretation": "phosphonate bound to the surface",
+     "structural_implication": "phosphorus present as phosphonate", "confidence": "medium", "classification": "reported",
+     "source": {"document": "main", "page": 5, "figure": "Fig. 3b"}},
+    {"evidence_id": "E7", "technique": "PL", "observation": "PL quantum yield increases from 60% to 90%",
+     "value": 90, "unit": "%", "authors_interpretation": "trap passivation",
+     "structural_implication": "consistent with surface passivation; does not constrain the binding geometry",
+     "confidence": "low", "classification": "reported", "source": {"document": "main", "page": 6, "figure": "Fig. 4"}}
+  ],
+  "constraints": [
+    {"constraint_id": "C1", "statement": "phosphonate oxygens bind surface Pb", "evidence_ids": ["E3", "E4", "E6"], "effect": "supports"},
+    {"constraint_id": "C2", "statement": "ligands replace surface bromide", "evidence_ids": ["E5"], "effect": "supports"},
+    {"constraint_id": "C3", "statement": "{100} facets are exposed", "evidence_ids": ["E2"], "effect": "requires"}
+  ],
+  "missing": ["ligand coverage per nm^2", "binding denticity", "facet termination (CsBr vs PbBr2)"]
+}
