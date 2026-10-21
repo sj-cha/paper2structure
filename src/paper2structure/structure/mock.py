@@ -19,7 +19,7 @@ from pathlib import Path
 from ase import Atoms
 from ase.io import write
 
-from ..summarizer.schemas import MaterialSystem
+from ..agents.summarizer.schemas import MaterialSystem
 
 _NOBLE_CORES = (0, 2, 10, 18, 36, 54, 86)
 _TARGET_ATOMS = {"DFT": (5, 200), "MD": (1500, 20000)}  # (at realism 0, at realism 1)

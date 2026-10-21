@@ -15,10 +15,10 @@ from pathlib import Path
 
 import streamlit as st
 
-from paper2structure.summarizer.graph import summarize_paper_sync
-from paper2structure.summarizer.knowledge_graph import load_graph, to_dot, technique_packets
+from paper2structure.agents.summarizer.graph import summarize_paper_sync
+from paper2structure.agents.summarizer.knowledge_graph import load_graph, to_dot, technique_packets
 from paper2structure.structure import export, generate_structure
-from paper2structure.summarizer.models import DEFAULT_MODEL, MODEL_CHOICES, get_model
+from paper2structure.config import DEFAULT_MODEL, MODEL_CHOICES, get_model
 from structure_viewer import structure_viewer
 
 OUTPUTS = Path("outputs")
@@ -203,4 +203,4 @@ with tab_dl:
                 z.write(f, f.relative_to(result_dir))
     st.download_button("Download everything (.zip)", buf.getvalue(), file_name=f"{result_dir.name}.zip")
     st.download_button("Download paper_graph.json", (result_dir / "paper_graph.json").read_bytes(), file_name="paper_graph.json")
-    st.code(f"from paper2structure.summarizer.knowledge_graph import load_graph\ng = load_graph('{result_dir / 'paper_graph.json'}')\nxrd = g.evidence_for(technique='XRD')", language="python")
+    st.code(f"from paper2structure.agents.summarizer.knowledge_graph import load_graph\ng = load_graph('{result_dir / 'paper_graph.json'}')\nxrd = g.evidence_for(technique='XRD')", language="python")

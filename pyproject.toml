@@ -21,7 +21,8 @@ dependencies = [
 ]
 
 [project.scripts]
-paper-summarizer = "paper2structure.summarizer.cli:main"
+paper-summarizer = "paper2structure.agents.summarizer.cli:main"
+paper-orchestrator = "paper2structure.graph.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
