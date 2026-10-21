@@ -1,0 +1,51 @@
+campaign:
+  model: gpt-5.6-luna
+  reasoning_effort: null  # null keeps the provider default
+  max_retry: 3
+  use_images: true
+
+inputs:  # Agents 1-2 are placeholders: these are their (synthetic) outputs
+  paper_summary: examples/fixtures/pt111_co/paper_summary.json
+  experimental_evidence: examples/fixtures/pt111_co/experimental_evidence.json
+
+planning:
+  max_plans: 3
+  max_atoms: 5000
+
+construction:  # the Construction agent: a pydantic-ai-harness Coder, one sandboxed workspace per attempt
+  sandbox: bubblewrap  # bubblewrap (no network, writes only inside the workspace) or none
+  network: false
+  gpu: false  # expose GPUs to sandboxed scripts (network stays off); --gpu turns it on
+  hide_paths: [.env, ~/.ssh, ~/.aws, ~/.netrc, ~/.config]  # unreadable inside the sandbox
+  max_requests: 60  # model requests per Construction-agent run
+  max_tool_calls: 150
+  gate_retries: 2  # final reports the validation gate may send back before passing failures on
+  code_timeout: 600.0  # seconds for the from-scratch replay of each final script
+  memory_limit_gb: 16.0  # per replay; null disables the cap
+  planning_tool: true  # harness Planning task list
+  reminder_every: 10  # requests between reminders of the script contract; 0 disables
+  delegation: false  # Coder delegate_task
+  memory_dir: null  # harness Memory notebook kept across runs (e.g. runs/.construction_memory); null disables
+
+validation:
+  overlap_scale: 0.6
+  close_contact_scale: 0.85
+  anion_contact_scale: 1.3
+  bond_scale: 1.2
+  binding_scale: 1.5  # adsorbate-substrate contact: warn beyond (weakly bound)
+  detached_scale: 2.0  # ... fail beyond (detached)
+  charge_neutrality: false  # gate on zero net formal charge
+  min_vacuum: 15.0
+
+revision:
+  read_scripts: true  # the Revision agent may read the build scripts
+
+export:
+  formats: [poscar]
+
+overrides:
+  model_type: null
+  miller: null
+  supercell: null
+  lattice: null
+  notes: []
