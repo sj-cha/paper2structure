@@ -1,0 +1,707 @@
+{
+  "S1": {
+    "synthesis": {
+      "method": "solid-state reaction",
+      "precursors": [
+        "La2O3 (99.99%)",
+        "Cr2O3 (99.99%)",
+        "Bi2O3 (99.99%, 5% excess to compensate Bi volatility)"
+      ],
+      "conditions": [
+        "ground ~10 h",
+        "1 wt% PVA solution added as binder before pelletization",
+        "preheated 550 °C in air for 2 h (binder removal)",
+        "fired 1250 °C for 5-8 h"
+      ],
+      "notes": "Pellets cut across the thickness; unreacted Bi2O3 found only on the bare upper surface, bulk is clean."
+    },
+    "structure": {
+      "crystal_system": "orthorhombic",
+      "space_group": "Pnma",
+      "lattice_parameters": [],
+      "site_occupancy": [],
+      "phase_purity": "single phase in bulk; Bi2O3 only on the pellet's upper surface",
+      "other": [
+        "Text gives lattice trends only; per-composition values are in Fig. 2"
+      ]
+    },
+    "evidence": [
+      {
+        "system_ids": [
+          "S1",
+          "S2",
+          "S3",
+          "S4",
+          "S5"
+        ],
+        "technique": "XRD",
+        "technique_category": "diffraction",
+        "summary": "Powder XRD of the inner cut (bulk) surfaces shows no unreacted Bi2O3; the bare upper pellet surface does contain unreacted Bi2O3.",
+        "measurements": [],
+        "conditions": [
+          "Cu-Kα",
+          "2θ range 10°-110°",
+          "Rigaku powder X-ray diffractometer",
+          "measured on bare upper and inner cut surfaces"
+        ],
+        "figure_refs": [
+          "Fig. 1a"
+        ],
+        "quote": "The bulk was found free from unreacted Bi2O3.",
+        "page": 2
+      },
+      {
+        "system_ids": [
+          "S1",
+          "S2",
+          "S3",
+          "S4",
+          "S5"
+        ],
+        "technique": "Rietveld refinement",
+        "technique_category": "diffraction",
+        "summary": "FullProf-2K Rietveld refinement starting from the reported LaCrO3 model with Bi placed on the La site; all peaks indexed by a single orthorhombic Pnma phase. Lattice parameters change non-monotonically with x.",
+        "measurements": [
+          {
+            "quantity": "space group",
+            "value": "Pnma"
+          },
+          {
+            "quantity": "crystal system",
+            "value": "orthorhombic"
+          },
+          {
+            "quantity": "Goldschmidt tolerance factor range",
+            "value": "0.84092 to 0.84072"
+          }
+        ],
+        "conditions": [
+          "FullProf-2K",
+          "starting model: LaCrO3 Wyckoff positions and lattice parameters from ref. [4]",
+          "Bi on La site"
+        ],
+        "figure_refs": [
+          "Fig. 1b",
+          "Fig. 2"
+        ],
+        "quote": "All the observed peaks were very nicely accounted by Pnma phase. We could not observe any un accounted peak.",
+        "page": 2
+      },
+      {
+        "system_ids": [
+          "S1",
+          "S2",
+          "S3",
+          "S4",
+          "S5"
+        ],
+        "technique": "Rietveld refinement",
+        "technique_category": "diffraction",
+        "summary": "Trends vs Bi content: a increases up to x = 0.30 then drops at 0.35; b and cell volume decrease to x = 0.20, increase to 0.30, then drop abruptly; c decreases slowly to 0.30 and faster above. Attributed to anisotropic Bi-O bonds from the Bi3+ lone pair causing octahedral tilting (La3+ 1.32 Å and Bi3+ 1.30 Å radii are nearly equal).",
+        "measurements": [
+          {
+            "quantity": "ionic radius La3+",
+            "value": "1.32",
+            "unit": "Å"
+          },
+          {
+            "quantity": "ionic radius Bi3+",
+            "value": "1.30",
+            "unit": "Å"
+          }
+        ],
+        "conditions": [],
+        "figure_refs": [
+          "Fig. 2"
+        ],
+        "quote": "with increasing Bi3+ content the lattice parameters and cell volume undergo non monotonous changes",
+        "page": 2
+      }
+    ]
+  },
+  "S2": {
+    "synthesis": {
+      "method": "solid-state reaction",
+      "precursors": [
+        "La2O3 (99.99%)",
+        "Cr2O3 (99.99%)",
+        "Bi2O3 (99.99%, 5% excess to compensate Bi volatility)"
+      ],
+      "conditions": [
+        "ground ~10 h",
+        "1 wt% PVA solution added as binder before pelletization",
+        "preheated 550 °C in air for 2 h (binder removal)",
+        "fired 1250 °C for 5-8 h"
+      ],
+      "notes": "Pellets cut across the thickness; unreacted Bi2O3 found only on the bare upper surface, bulk is clean."
+    },
+    "structure": {
+      "crystal_system": "orthorhombic",
+      "space_group": "Pnma",
+      "lattice_parameters": [],
+      "site_occupancy": [
+        "Bi substitutes on the La (A) site"
+      ],
+      "phase_purity": "single phase in bulk; Bi2O3 only on the pellet's upper surface",
+      "other": [
+        "Text gives lattice trends only; per-composition values are in Fig. 2"
+      ]
+    },
+    "evidence": [
+      {
+        "system_ids": [
+          "S1",
+          "S2",
+          "S3",
+          "S4",
+          "S5"
+        ],
+        "technique": "XRD",
+        "technique_category": "diffraction",
+        "summary": "Powder XRD of the inner cut (bulk) surfaces shows no unreacted Bi2O3; the bare upper pellet surface does contain unreacted Bi2O3.",
+        "measurements": [],
+        "conditions": [
+          "Cu-Kα",
+          "2θ range 10°-110°",
+          "Rigaku powder X-ray diffractometer",
+          "measured on bare upper and inner cut surfaces"
+        ],
+        "figure_refs": [
+          "Fig. 1a"
+        ],
+        "quote": "The bulk was found free from unreacted Bi2O3.",
+        "page": 2
+      },
+      {
+        "system_ids": [
+          "S1",
+          "S2",
+          "S3",
+          "S4",
+          "S5"
+        ],
+        "technique": "Rietveld refinement",
+        "technique_category": "diffraction",
+        "summary": "FullProf-2K Rietveld refinement starting from the reported LaCrO3 model with Bi placed on the La site; all peaks indexed by a single orthorhombic Pnma phase. Lattice parameters change non-monotonically with x.",
+        "measurements": [
+          {
+            "quantity": "space group",
+            "value": "Pnma"
+          },
+          {
+            "quantity": "crystal system",
+            "value": "orthorhombic"
+          },
+          {
+            "quantity": "Goldschmidt tolerance factor range",
+            "value": "0.84092 to 0.84072"
+          }
+        ],
+        "conditions": [
+          "FullProf-2K",
+          "starting model: LaCrO3 Wyckoff positions and lattice parameters from ref. [4]",
+          "Bi on La site"
+        ],
+        "figure_refs": [
+          "Fig. 1b",
+          "Fig. 2"
+        ],
+        "quote": "All the observed peaks were very nicely accounted by Pnma phase. We could not observe any un accounted peak.",
+        "page": 2
+      },
+      {
+        "system_ids": [
+          "S1",
+          "S2",
+          "S3",
+          "S4",
+          "S5"
+        ],
+        "technique": "Rietveld refinement",
+        "technique_category": "diffraction",
+        "summary": "Trends vs Bi content: a increases up to x = 0.30 then drops at 0.35; b and cell volume decrease to x = 0.20, increase to 0.30, then drop abruptly; c decreases slowly to 0.30 and faster above. Attributed to anisotropic Bi-O bonds from the Bi3+ lone pair causing octahedral tilting (La3+ 1.32 Å and Bi3+ 1.30 Å radii are nearly equal).",
+        "measurements": [
+          {
+            "quantity": "ionic radius La3+",
+            "value": "1.32",
+            "unit": "Å"
+          },
+          {
+            "quantity": "ionic radius Bi3+",
+            "value": "1.30",
+            "unit": "Å"
+          }
+        ],
+        "conditions": [],
+        "figure_refs": [
+          "Fig. 2"
+        ],
+        "quote": "with increasing Bi3+ content the lattice parameters and cell volume undergo non monotonous changes",
+        "page": 2
+      }
+    ]
+  },
+  "S3": {
+    "synthesis": {
+      "method": "solid-state reaction",
+      "precursors": [
+        "La2O3 (99.99%)",
+        "Cr2O3 (99.99%)",
+        "Bi2O3 (99.99%, 5% excess to compensate Bi volatility)"
+      ],
+      "conditions": [
+        "ground ~10 h",
+        "1 wt% PVA solution added as binder before pelletization",
+        "preheated 550 °C in air for 2 h (binder removal)",
+        "fired 1250 °C for 5-8 h"
+      ],
+      "notes": "Pellets cut across the thickness; unreacted Bi2O3 found only on the bare upper surface, bulk is clean."
+    },
+    "structure": {
+      "crystal_system": "orthorhombic",
+      "space_group": "Pnma",
+      "lattice_parameters": [],
+      "site_occupancy": [
+        "Bi substitutes on the La (A) site"
+      ],
+      "phase_purity": "single phase in bulk; Bi2O3 only on the pellet's upper surface",
+      "other": [
+        "Text gives lattice trends only; per-composition values are in Fig. 2"
+      ]
+    },
+    "evidence": [
+      {
+        "system_ids": [
+          "S1",
+          "S2",
+          "S3",
+          "S4",
+          "S5"
+        ],
+        "technique": "XRD",
+        "technique_category": "diffraction",
+        "summary": "Powder XRD of the inner cut (bulk) surfaces shows no unreacted Bi2O3; the bare upper pellet surface does contain unreacted Bi2O3.",
+        "measurements": [],
+        "conditions": [
+          "Cu-Kα",
+          "2θ range 10°-110°",
+          "Rigaku powder X-ray diffractometer",
+          "measured on bare upper and inner cut surfaces"
+        ],
+        "figure_refs": [
+          "Fig. 1a"
+        ],
+        "quote": "The bulk was found free from unreacted Bi2O3.",
+        "page": 2
+      },
+      {
+        "system_ids": [
+          "S1",
+          "S2",
+          "S3",
+          "S4",
+          "S5"
+        ],
+        "technique": "Rietveld refinement",
+        "technique_category": "diffraction",
+        "summary": "FullProf-2K Rietveld refinement starting from the reported LaCrO3 model with Bi placed on the La site; all peaks indexed by a single orthorhombic Pnma phase. Lattice parameters change non-monotonically with x.",
+        "measurements": [
+          {
+            "quantity": "space group",
+            "value": "Pnma"
+          },
+          {
+            "quantity": "crystal system",
+            "value": "orthorhombic"
+          },
+          {
+            "quantity": "Goldschmidt tolerance factor range",
+            "value": "0.84092 to 0.84072"
+          }
+        ],
+        "conditions": [
+          "FullProf-2K",
+          "starting model: LaCrO3 Wyckoff positions and lattice parameters from ref. [4]",
+          "Bi on La site"
+        ],
+        "figure_refs": [
+          "Fig. 1b",
+          "Fig. 2"
+        ],
+        "quote": "All the observed peaks were very nicely accounted by Pnma phase. We could not observe any un accounted peak.",
+        "page": 2
+      },
+      {
+        "system_ids": [
+          "S1",
+          "S2",
+          "S3",
+          "S4",
+          "S5"
+        ],
+        "technique": "Rietveld refinement",
+        "technique_category": "diffraction",
+        "summary": "Trends vs Bi content: a increases up to x = 0.30 then drops at 0.35; b and cell volume decrease to x = 0.20, increase to 0.30, then drop abruptly; c decreases slowly to 0.30 and faster above. Attributed to anisotropic Bi-O bonds from the Bi3+ lone pair causing octahedral tilting (La3+ 1.32 Å and Bi3+ 1.30 Å radii are nearly equal).",
+        "measurements": [
+          {
+            "quantity": "ionic radius La3+",
+            "value": "1.32",
+            "unit": "Å"
+          },
+          {
+            "quantity": "ionic radius Bi3+",
+            "value": "1.30",
+            "unit": "Å"
+          }
+        ],
+        "conditions": [],
+        "figure_refs": [
+          "Fig. 2"
+        ],
+        "quote": "with increasing Bi3+ content the lattice parameters and cell volume undergo non monotonous changes",
+        "page": 2
+      }
+    ]
+  },
+  "S4": {
+    "synthesis": {
+      "method": "solid-state reaction",
+      "precursors": [
+        "La2O3 (99.99%)",
+        "Cr2O3 (99.99%)",
+        "Bi2O3 (99.99%, 5% excess to compensate Bi volatility)"
+      ],
+      "conditions": [
+        "ground ~10 h",
+        "1 wt% PVA solution added as binder before pelletization",
+        "preheated 550 °C in air for 2 h (binder removal)",
+        "fired 1250 °C for 5-8 h"
+      ],
+      "notes": "Pellets cut across the thickness; unreacted Bi2O3 found only on the bare upper surface, bulk is clean."
+    },
+    "structure": {
+      "crystal_system": "orthorhombic",
+      "space_group": "Pnma",
+      "lattice_parameters": [
+        {
+          "quantity": "a",
+          "value": "5.48",
+          "unit": "Å",
+          "approximate": false
+        },
+        {
+          "quantity": "b",
+          "value": "7.76",
+          "unit": "Å",
+          "approximate": false
+        },
+        {
+          "quantity": "c",
+          "value": "5.49",
+          "unit": "Å",
+          "approximate": false
+        }
+      ],
+      "site_occupancy": [
+        "Bi substitutes on the La (A) site"
+      ],
+      "phase_purity": "single phase in bulk; Bi2O3 only on the pellet's upper surface",
+      "other": [
+        "Text gives lattice trends only; per-composition values are in Fig. 2",
+        "a, b, c above are from SAED (TEM), not XRD"
+      ]
+    },
+    "evidence": [
+      {
+        "system_ids": [
+          "S1",
+          "S2",
+          "S3",
+          "S4",
+          "S5"
+        ],
+        "technique": "XRD",
+        "technique_category": "diffraction",
+        "summary": "Powder XRD of the inner cut (bulk) surfaces shows no unreacted Bi2O3; the bare upper pellet surface does contain unreacted Bi2O3.",
+        "measurements": [],
+        "conditions": [
+          "Cu-Kα",
+          "2θ range 10°-110°",
+          "Rigaku powder X-ray diffractometer",
+          "measured on bare upper and inner cut surfaces"
+        ],
+        "figure_refs": [
+          "Fig. 1a"
+        ],
+        "quote": "The bulk was found free from unreacted Bi2O3.",
+        "page": 2
+      },
+      {
+        "system_ids": [
+          "S1",
+          "S2",
+          "S3",
+          "S4",
+          "S5"
+        ],
+        "technique": "Rietveld refinement",
+        "technique_category": "diffraction",
+        "summary": "FullProf-2K Rietveld refinement starting from the reported LaCrO3 model with Bi placed on the La site; all peaks indexed by a single orthorhombic Pnma phase. Lattice parameters change non-monotonically with x.",
+        "measurements": [
+          {
+            "quantity": "space group",
+            "value": "Pnma"
+          },
+          {
+            "quantity": "crystal system",
+            "value": "orthorhombic"
+          },
+          {
+            "quantity": "Goldschmidt tolerance factor range",
+            "value": "0.84092 to 0.84072"
+          }
+        ],
+        "conditions": [
+          "FullProf-2K",
+          "starting model: LaCrO3 Wyckoff positions and lattice parameters from ref. [4]",
+          "Bi on La site"
+        ],
+        "figure_refs": [
+          "Fig. 1b",
+          "Fig. 2"
+        ],
+        "quote": "All the observed peaks were very nicely accounted by Pnma phase. We could not observe any un accounted peak.",
+        "page": 2
+      },
+      {
+        "system_ids": [
+          "S1",
+          "S2",
+          "S3",
+          "S4",
+          "S5"
+        ],
+        "technique": "Rietveld refinement",
+        "technique_category": "diffraction",
+        "summary": "Trends vs Bi content: a increases up to x = 0.30 then drops at 0.35; b and cell volume decrease to x = 0.20, increase to 0.30, then drop abruptly; c decreases slowly to 0.30 and faster above. Attributed to anisotropic Bi-O bonds from the Bi3+ lone pair causing octahedral tilting (La3+ 1.32 Å and Bi3+ 1.30 Å radii are nearly equal).",
+        "measurements": [
+          {
+            "quantity": "ionic radius La3+",
+            "value": "1.32",
+            "unit": "Å"
+          },
+          {
+            "quantity": "ionic radius Bi3+",
+            "value": "1.30",
+            "unit": "Å"
+          }
+        ],
+        "conditions": [],
+        "figure_refs": [
+          "Fig. 2"
+        ],
+        "quote": "with increasing Bi3+ content the lattice parameters and cell volume undergo non monotonous changes",
+        "page": 2
+      },
+      {
+        "system_ids": [
+          "S4"
+        ],
+        "technique": "Rietveld refinement",
+        "technique_category": "diffraction",
+        "summary": "A typical Rietveld fit is shown for x = 0.3.",
+        "measurements": [],
+        "conditions": [],
+        "figure_refs": [
+          "Fig. 1b"
+        ],
+        "quote": "Fig.1 (b) represents a typical Rietveld refined XRD data for x=0.3.",
+        "page": 2
+      },
+      {
+        "system_ids": [
+          "S4"
+        ],
+        "technique": "TEM",
+        "technique_category": "microscopy",
+        "summary": "Bright-field TEM shows densely packed grains of about 1 µm.",
+        "measurements": [
+          {
+            "quantity": "grain size",
+            "value": "~1",
+            "unit": "µm"
+          }
+        ],
+        "conditions": [
+          "FEI Tecnai 20 G2"
+        ],
+        "figure_refs": [
+          "Fig. 3a"
+        ],
+        "quote": "an electron micrograph of densely packed grains of sizes ~1µm",
+        "page": 2
+      },
+      {
+        "system_ids": [
+          "S4"
+        ],
+        "technique": "SAED",
+        "technique_category": "diffraction",
+        "summary": "Single-grain SAED patterns index to the orthorhombic Pnma phase along the [010] and [101] zones, confirming the XRD result.",
+        "measurements": [
+          {
+            "quantity": "a",
+            "value": "5.48",
+            "unit": "Å"
+          },
+          {
+            "quantity": "b",
+            "value": "7.76",
+            "unit": "Å"
+          },
+          {
+            "quantity": "c",
+            "value": "5.49",
+            "unit": "Å"
+          },
+          {
+            "quantity": "zone axes",
+            "value": "[010], [101]"
+          }
+        ],
+        "conditions": [
+          "FEI Tecnai 20 G2",
+          "selected-area diffraction from a single grain"
+        ],
+        "figure_refs": [
+          "Fig. 3b",
+          "Fig. 3c"
+        ],
+        "quote": "the SADs belong to the orthorhombic phase with lattice parameters a= 5.48Å, b= 7.76 Å & c= 5.49Å",
+        "page": 2
+      }
+    ]
+  },
+  "S5": {
+    "synthesis": {
+      "method": "solid-state reaction",
+      "precursors": [
+        "La2O3 (99.99%)",
+        "Cr2O3 (99.99%)",
+        "Bi2O3 (99.99%, 5% excess to compensate Bi volatility)"
+      ],
+      "conditions": [
+        "ground ~10 h",
+        "1 wt% PVA solution added as binder before pelletization",
+        "preheated 550 °C in air for 2 h (binder removal)",
+        "fired 1250 °C for 5-8 h"
+      ],
+      "notes": "Pellets cut across the thickness; unreacted Bi2O3 found only on the bare upper surface, bulk is clean."
+    },
+    "structure": {
+      "crystal_system": "orthorhombic",
+      "space_group": "Pnma",
+      "lattice_parameters": [],
+      "site_occupancy": [
+        "Bi substitutes on the La (A) site"
+      ],
+      "phase_purity": "single phase in bulk; Bi2O3 only on the pellet's upper surface",
+      "other": [
+        "Text gives lattice trends only; per-composition values are in Fig. 2"
+      ]
+    },
+    "evidence": [
+      {
+        "system_ids": [
+          "S1",
+          "S2",
+          "S3",
+          "S4",
+          "S5"
+        ],
+        "technique": "XRD",
+        "technique_category": "diffraction",
+        "summary": "Powder XRD of the inner cut (bulk) surfaces shows no unreacted Bi2O3; the bare upper pellet surface does contain unreacted Bi2O3.",
+        "measurements": [],
+        "conditions": [
+          "Cu-Kα",
+          "2θ range 10°-110°",
+          "Rigaku powder X-ray diffractometer",
+          "measured on bare upper and inner cut surfaces"
+        ],
+        "figure_refs": [
+          "Fig. 1a"
+        ],
+        "quote": "The bulk was found free from unreacted Bi2O3.",
+        "page": 2
+      },
+      {
+        "system_ids": [
+          "S1",
+          "S2",
+          "S3",
+          "S4",
+          "S5"
+        ],
+        "technique": "Rietveld refinement",
+        "technique_category": "diffraction",
+        "summary": "FullProf-2K Rietveld refinement starting from the reported LaCrO3 model with Bi placed on the La site; all peaks indexed by a single orthorhombic Pnma phase. Lattice parameters change non-monotonically with x.",
+        "measurements": [
+          {
+            "quantity": "space group",
+            "value": "Pnma"
+          },
+          {
+            "quantity": "crystal system",
+            "value": "orthorhombic"
+          },
+          {
+            "quantity": "Goldschmidt tolerance factor range",
+            "value": "0.84092 to 0.84072"
+          }
+        ],
+        "conditions": [
+          "FullProf-2K",
+          "starting model: LaCrO3 Wyckoff positions and lattice parameters from ref. [4]",
+          "Bi on La site"
+        ],
+        "figure_refs": [
+          "Fig. 1b",
+          "Fig. 2"
+        ],
+        "quote": "All the observed peaks were very nicely accounted by Pnma phase. We could not observe any un accounted peak.",
+        "page": 2
+      },
+      {
+        "system_ids": [
+          "S1",
+          "S2",
+          "S3",
+          "S4",
+          "S5"
+        ],
+        "technique": "Rietveld refinement",
+        "technique_category": "diffraction",
+        "summary": "Trends vs Bi content: a increases up to x = 0.30 then drops at 0.35; b and cell volume decrease to x = 0.20, increase to 0.30, then drop abruptly; c decreases slowly to 0.30 and faster above. Attributed to anisotropic Bi-O bonds from the Bi3+ lone pair causing octahedral tilting (La3+ 1.32 Å and Bi3+ 1.30 Å radii are nearly equal).",
+        "measurements": [
+          {
+            "quantity": "ionic radius La3+",
+            "value": "1.32",
+            "unit": "Å"
+          },
+          {
+            "quantity": "ionic radius Bi3+",
+            "value": "1.30",
+            "unit": "Å"
+          }
+        ],
+        "conditions": [],
+        "figure_refs": [
+          "Fig. 2"
+        ],
+        "quote": "with increasing Bi3+ content the lattice parameters and cell volume undergo non monotonous changes",
+        "page": 2
+      }
+    ]
+  }
+}

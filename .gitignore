@@ -6,3 +6,5 @@ __pycache__/
 *.pkl.gz
 .vscode/
 *.ipynb
+.venv/
+outputs/

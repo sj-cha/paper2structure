@@ -1,0 +1,353 @@
+[
+  {
+    "figure_id": "p1_f1",
+    "figure_label": "Fig. 1a",
+    "useful_for_structure": true,
+    "panels": [
+      {
+        "panel_label": "a",
+        "plot_type": "stacked powder XRD patterns",
+        "technique": "XRD",
+        "technique_category": "diffraction",
+        "system_ids": [
+          "S1",
+          "S2",
+          "S3",
+          "S4",
+          "S5"
+        ],
+        "description": "XRD patterns of all five compositions, vertically offset. Same set of perovskite reflections for every x, strongest near 2θ ≈ 32.5°; no extra peaks appear with Bi.",
+        "axes": [
+          "2θ (deg)",
+          "Normalized intensity"
+        ],
+        "measurements": [
+          {
+            "quantity": "strongest reflection 2θ",
+            "value": "~32.5",
+            "unit": "deg",
+            "approximate": true
+          },
+          {
+            "quantity": "other main reflections 2θ",
+            "value": "~23, 40, 46.5, 52.5, 58, 68, 77.5, 87, 96",
+            "unit": "deg",
+            "approximate": true
+          }
+        ],
+        "observations": [
+          "No Bi2O3 or other impurity peaks visible",
+          "Pattern shape unchanged across x: same structure type",
+          "Legend labels x as 'Bi = 0.20%' etc. (means x = 0.20)"
+        ]
+      }
+    ]
+  },
+  {
+    "figure_id": "p1_f2",
+    "figure_label": "Fig. 1b",
+    "useful_for_structure": true,
+    "panels": [
+      {
+        "panel_label": "b",
+        "plot_type": "Rietveld fit",
+        "technique": "Rietveld refinement",
+        "technique_category": "diffraction",
+        "system_ids": [
+          "S4"
+        ],
+        "description": "Observed vs calculated pattern, Bragg positions and difference curve for x = 0.30. Difference curve is nearly flat, indicating a good single-phase Pnma fit.",
+        "axes": [
+          "2θ (deg)",
+          "Intensity (arb.)"
+        ],
+        "measurements": [],
+        "observations": [
+          "Flat difference curve, no unindexed peaks",
+          "No R-factors or chi² given in figure or text"
+        ]
+      }
+    ]
+  },
+  {
+    "figure_id": "p2_f1",
+    "figure_label": "Fig. 2",
+    "useful_for_structure": true,
+    "panels": [
+      {
+        "panel_label": "a",
+        "plot_type": "lattice parameter a vs Bi content",
+        "technique": "Rietveld refinement",
+        "technique_category": "diffraction",
+        "system_ids": [
+          "S1",
+          "S2",
+          "S3",
+          "S4",
+          "S5"
+        ],
+        "description": "a rises from ~5.480 Å (x=0) to a maximum ~5.492 Å at x=0.30, then drops to ~5.489 Å at x=0.35.",
+        "axes": [
+          "Bi content (%)",
+          "lattice parameter a (Å)"
+        ],
+        "measurements": [
+          {
+            "quantity": "a at x=0",
+            "value": "5.480",
+            "unit": "Å",
+            "approximate": true
+          },
+          {
+            "quantity": "a at x=0.2",
+            "value": "5.485",
+            "unit": "Å",
+            "approximate": true
+          },
+          {
+            "quantity": "a at x=0.25",
+            "value": "5.488",
+            "unit": "Å",
+            "approximate": true
+          },
+          {
+            "quantity": "a at x=0.3",
+            "value": "5.492",
+            "unit": "Å",
+            "approximate": true
+          },
+          {
+            "quantity": "a at x=0.35",
+            "value": "5.489",
+            "unit": "Å",
+            "approximate": true
+          }
+        ],
+        "observations": []
+      },
+      {
+        "panel_label": "b",
+        "plot_type": "lattice parameter b vs Bi content",
+        "technique": "Rietveld refinement",
+        "technique_category": "diffraction",
+        "system_ids": [
+          "S1",
+          "S2",
+          "S3",
+          "S4",
+          "S5"
+        ],
+        "description": "b dips from ~7.761 to ~7.757 Å at x=0.20, rises to ~7.763 Å at x=0.30, then falls sharply to ~7.755 Å.",
+        "axes": [
+          "Bi content (%)",
+          "lattice parameter b (Å)"
+        ],
+        "measurements": [
+          {
+            "quantity": "b at x=0",
+            "value": "7.761",
+            "unit": "Å",
+            "approximate": true
+          },
+          {
+            "quantity": "b at x=0.2",
+            "value": "7.757",
+            "unit": "Å",
+            "approximate": true
+          },
+          {
+            "quantity": "b at x=0.25",
+            "value": "7.760",
+            "unit": "Å",
+            "approximate": true
+          },
+          {
+            "quantity": "b at x=0.3",
+            "value": "7.763",
+            "unit": "Å",
+            "approximate": true
+          },
+          {
+            "quantity": "b at x=0.35",
+            "value": "7.755",
+            "unit": "Å",
+            "approximate": true
+          }
+        ],
+        "observations": []
+      },
+      {
+        "panel_label": "c",
+        "plot_type": "lattice parameter c vs Bi content",
+        "technique": "Rietveld refinement",
+        "technique_category": "diffraction",
+        "system_ids": [
+          "S1",
+          "S2",
+          "S3",
+          "S4",
+          "S5"
+        ],
+        "description": "c decreases from ~5.515 to ~5.495 Å by x=0.30, then faster to ~5.483 Å at x=0.35.",
+        "axes": [
+          "Bi content (%)",
+          "lattice parameter c (Å)"
+        ],
+        "measurements": [
+          {
+            "quantity": "c at x=0",
+            "value": "5.515",
+            "unit": "Å",
+            "approximate": true
+          },
+          {
+            "quantity": "c at x=0.2",
+            "value": "5.500",
+            "unit": "Å",
+            "approximate": true
+          },
+          {
+            "quantity": "c at x=0.25",
+            "value": "5.497",
+            "unit": "Å",
+            "approximate": true
+          },
+          {
+            "quantity": "c at x=0.3",
+            "value": "5.495",
+            "unit": "Å",
+            "approximate": true
+          },
+          {
+            "quantity": "c at x=0.35",
+            "value": "5.483",
+            "unit": "Å",
+            "approximate": true
+          }
+        ],
+        "observations": []
+      },
+      {
+        "panel_label": "d",
+        "plot_type": "unit cell volume vs Bi content",
+        "technique": "Rietveld refinement",
+        "technique_category": "diffraction",
+        "system_ids": [
+          "S1",
+          "S2",
+          "S3",
+          "S4",
+          "S5"
+        ],
+        "description": "Volume dips to ~234.0 Å³ at x=0.20, recovers to ~234.3 at x=0.30, then drops abruptly to ~233.4 Å³.",
+        "axes": [
+          "Bi content (%)",
+          "unit cell volume (Å^3)"
+        ],
+        "measurements": [
+          {
+            "quantity": "V at x=0",
+            "value": "234.37",
+            "unit": "Å^3",
+            "approximate": true
+          },
+          {
+            "quantity": "V at x=0.2",
+            "value": "234.01",
+            "unit": "Å^3",
+            "approximate": true
+          },
+          {
+            "quantity": "V at x=0.25",
+            "value": "234.12",
+            "unit": "Å^3",
+            "approximate": true
+          },
+          {
+            "quantity": "V at x=0.3",
+            "value": "234.26",
+            "unit": "Å^3",
+            "approximate": true
+          },
+          {
+            "quantity": "V at x=0.35",
+            "value": "233.37",
+            "unit": "Å^3",
+            "approximate": true
+          }
+        ],
+        "observations": []
+      }
+    ]
+  },
+  {
+    "figure_id": "p2_f2",
+    "figure_label": "Fig. 3",
+    "useful_for_structure": true,
+    "panels": [
+      {
+        "panel_label": "a",
+        "plot_type": "bright-field TEM micrograph",
+        "technique": "TEM",
+        "technique_category": "microscopy",
+        "system_ids": [
+          "S4"
+        ],
+        "description": "Densely packed micron-sized grains with bend contours.",
+        "axes": [],
+        "measurements": [
+          {
+            "quantity": "grain size",
+            "value": "~1",
+            "unit": "µm",
+            "approximate": true
+          }
+        ],
+        "observations": [
+          "Dense ceramic, no obvious secondary phase"
+        ]
+      },
+      {
+        "panel_label": "b",
+        "plot_type": "SAED pattern",
+        "technique": "SAED",
+        "technique_category": "diffraction",
+        "system_ids": [
+          "S4"
+        ],
+        "description": "Single-crystal spot pattern along <010>.",
+        "axes": [],
+        "measurements": [
+          {
+            "quantity": "zone axis",
+            "value": "[010]"
+          }
+        ],
+        "observations": [
+          "Sharp spots, single grain",
+          "Rectangular net consistent with orthorhombic Pnma"
+        ]
+      },
+      {
+        "panel_label": "c",
+        "plot_type": "SAED pattern",
+        "technique": "SAED",
+        "technique_category": "diffraction",
+        "system_ids": [
+          "S4"
+        ],
+        "description": "Single-crystal spot pattern along <101>.",
+        "axes": [],
+        "measurements": [
+          {
+            "quantity": "zone axis",
+            "value": "[101]"
+          }
+        ],
+        "observations": [
+          "Sharp spots, single grain"
+        ]
+      }
+    ]
+  }
+]

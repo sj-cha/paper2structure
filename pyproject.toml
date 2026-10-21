@@ -14,8 +14,14 @@ dependencies = [
     "numpy",
     "pydantic",
     "pydantic-ai",
-    "pyyaml"
+    "pyyaml",
+    "pymupdf",
+    "python-dotenv",
+    "streamlit"
 ]
+
+[project.scripts]
+paper-summarizer = "paper2structure.summarizer.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

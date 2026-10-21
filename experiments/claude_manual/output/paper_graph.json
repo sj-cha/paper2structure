@@ -1,0 +1,2191 @@
+{
+  "source_pdf": "/net/csefiles/coc-fung-cluster/Ankit/hackathon/paper2structure/experiments/claude_manual/../../../papers/La1-xBixCrO3_arXiv1403.3526.pdf",
+  "model": "claude-manual",
+  "metadata": {
+    "title": "Structural studies on Multiferroic La1-xBixCrO3 Perovskites",
+    "authors": [
+      "Aga Shahee",
+      "Dhirendra Kumar",
+      "N. P. Lalla"
+    ],
+    "doi": "10.1063/1.3606316",
+    "year": 2011,
+    "summary": "The authors made five La1-xBixCrO3 ceramics (x = 0 to 0.35) by solid-state reaction and studied their crystal structure with XRD and TEM. Rietveld refinement shows every sample is a single-phase orthorhombic perovskite (space group Pnma) with Bi on the La site. The lattice parameters and cell volume change non-monotonically with Bi content, which the authors attribute to the Bi3+ lone pair distorting Bi-O bonds and tilting the CrO6 octahedra. TEM/SAED on x = 0.3 confirms the Pnma cell."
+  },
+  "systems": [
+    {
+      "system_id": "S1",
+      "name": "LaCrO3",
+      "family": "La1-xBixCrO3",
+      "composition_variables": {
+        "x": "0"
+      },
+      "material_class": "perovskite oxide",
+      "form": "polycrystalline sintered pellet (bulk, inner cut surface)",
+      "synthesis": {
+        "method": "solid-state reaction",
+        "precursors": [
+          "La2O3 (99.99%)",
+          "Cr2O3 (99.99%)",
+          "Bi2O3 (99.99%, 5% excess to compensate Bi volatility)"
+        ],
+        "conditions": [
+          "ground ~10 h",
+          "1 wt% PVA solution added as binder before pelletization",
+          "preheated 550 °C in air for 2 h (binder removal)",
+          "fired 1250 °C for 5-8 h"
+        ],
+        "notes": "Pellets cut across the thickness; unreacted Bi2O3 found only on the bare upper surface, bulk is clean."
+      },
+      "structure": {
+        "crystal_system": "orthorhombic",
+        "space_group": "Pnma",
+        "lattice_parameters": [],
+        "site_occupancy": [],
+        "phase_purity": "single phase in bulk; Bi2O3 only on the pellet's upper surface",
+        "other": [
+          "Text gives lattice trends only; per-composition values are in Fig. 2"
+        ]
+      }
+    },
+    {
+      "system_id": "S2",
+      "name": "La0.8Bi0.2CrO3",
+      "family": "La1-xBixCrO3",
+      "composition_variables": {
+        "x": "0.2"
+      },
+      "material_class": "perovskite oxide",
+      "form": "polycrystalline sintered pellet (bulk, inner cut surface)",
+      "synthesis": {
+        "method": "solid-state reaction",
+        "precursors": [
+          "La2O3 (99.99%)",
+          "Cr2O3 (99.99%)",
+          "Bi2O3 (99.99%, 5% excess to compensate Bi volatility)"
+        ],
+        "conditions": [
+          "ground ~10 h",
+          "1 wt% PVA solution added as binder before pelletization",
+          "preheated 550 °C in air for 2 h (binder removal)",
+          "fired 1250 °C for 5-8 h"
+        ],
+        "notes": "Pellets cut across the thickness; unreacted Bi2O3 found only on the bare upper surface, bulk is clean."
+      },
+      "structure": {
+        "crystal_system": "orthorhombic",
+        "space_group": "Pnma",
+        "lattice_parameters": [],
+        "site_occupancy": [
+          "Bi substitutes on the La (A) site"
+        ],
+        "phase_purity": "single phase in bulk; Bi2O3 only on the pellet's upper surface",
+        "other": [
+          "Text gives lattice trends only; per-composition values are in Fig. 2"
+        ]
+      }
+    },
+    {
+      "system_id": "S3",
+      "name": "La0.75Bi0.25CrO3",
+      "family": "La1-xBixCrO3",
+      "composition_variables": {
+        "x": "0.25"
+      },
+      "material_class": "perovskite oxide",
+      "form": "polycrystalline sintered pellet (bulk, inner cut surface)",
+      "synthesis": {
+        "method": "solid-state reaction",
+        "precursors": [
+          "La2O3 (99.99%)",
+          "Cr2O3 (99.99%)",
+          "Bi2O3 (99.99%, 5% excess to compensate Bi volatility)"
+        ],
+        "conditions": [
+          "ground ~10 h",
+          "1 wt% PVA solution added as binder before pelletization",
+          "preheated 550 °C in air for 2 h (binder removal)",
+          "fired 1250 °C for 5-8 h"
+        ],
+        "notes": "Pellets cut across the thickness; unreacted Bi2O3 found only on the bare upper surface, bulk is clean."
+      },
+      "structure": {
+        "crystal_system": "orthorhombic",
+        "space_group": "Pnma",
+        "lattice_parameters": [],
+        "site_occupancy": [
+          "Bi substitutes on the La (A) site"
+        ],
+        "phase_purity": "single phase in bulk; Bi2O3 only on the pellet's upper surface",
+        "other": [
+          "Text gives lattice trends only; per-composition values are in Fig. 2"
+        ]
+      }
+    },
+    {
+      "system_id": "S4",
+      "name": "La0.7Bi0.3CrO3",
+      "family": "La1-xBixCrO3",
+      "composition_variables": {
+        "x": "0.3"
+      },
+      "material_class": "perovskite oxide",
+      "form": "polycrystalline sintered pellet (bulk, inner cut surface)",
+      "synthesis": {
+        "method": "solid-state reaction",
+        "precursors": [
+          "La2O3 (99.99%)",
+          "Cr2O3 (99.99%)",
+          "Bi2O3 (99.99%, 5% excess to compensate Bi volatility)"
+        ],
+        "conditions": [
+          "ground ~10 h",
+          "1 wt% PVA solution added as binder before pelletization",
+          "preheated 550 °C in air for 2 h (binder removal)",
+          "fired 1250 °C for 5-8 h"
+        ],
+        "notes": "Pellets cut across the thickness; unreacted Bi2O3 found only on the bare upper surface, bulk is clean."
+      },
+      "structure": {
+        "crystal_system": "orthorhombic",
+        "space_group": "Pnma",
+        "lattice_parameters": [
+          {
+            "quantity": "a",
+            "value": "5.48",
+            "unit": "Å",
+            "uncertainty": null,
+            "approximate": false
+          },
+          {
+            "quantity": "b",
+            "value": "7.76",
+            "unit": "Å",
+            "uncertainty": null,
+            "approximate": false
+          },
+          {
+            "quantity": "c",
+            "value": "5.49",
+            "unit": "Å",
+            "uncertainty": null,
+            "approximate": false
+          }
+        ],
+        "site_occupancy": [
+          "Bi substitutes on the La (A) site"
+        ],
+        "phase_purity": "single phase in bulk; Bi2O3 only on the pellet's upper surface",
+        "other": [
+          "Text gives lattice trends only; per-composition values are in Fig. 2",
+          "a, b, c above are from SAED (TEM), not XRD"
+        ]
+      }
+    },
+    {
+      "system_id": "S5",
+      "name": "La0.65Bi0.35CrO3",
+      "family": "La1-xBixCrO3",
+      "composition_variables": {
+        "x": "0.35"
+      },
+      "material_class": "perovskite oxide",
+      "form": "polycrystalline sintered pellet (bulk, inner cut surface)",
+      "synthesis": {
+        "method": "solid-state reaction",
+        "precursors": [
+          "La2O3 (99.99%)",
+          "Cr2O3 (99.99%)",
+          "Bi2O3 (99.99%, 5% excess to compensate Bi volatility)"
+        ],
+        "conditions": [
+          "ground ~10 h",
+          "1 wt% PVA solution added as binder before pelletization",
+          "preheated 550 °C in air for 2 h (binder removal)",
+          "fired 1250 °C for 5-8 h"
+        ],
+        "notes": "Pellets cut across the thickness; unreacted Bi2O3 found only on the bare upper surface, bulk is clean."
+      },
+      "structure": {
+        "crystal_system": "orthorhombic",
+        "space_group": "Pnma",
+        "lattice_parameters": [],
+        "site_occupancy": [
+          "Bi substitutes on the La (A) site"
+        ],
+        "phase_purity": "single phase in bulk; Bi2O3 only on the pellet's upper surface",
+        "other": [
+          "Text gives lattice trends only; per-composition values are in Fig. 2"
+        ]
+      }
+    }
+  ],
+  "evidence": [
+    {
+      "evidence_id": "E001",
+      "system_ids": [
+        "S1",
+        "S2",
+        "S3",
+        "S4",
+        "S5"
+      ],
+      "technique": "XRD",
+      "technique_category": "diffraction",
+      "source_type": "text",
+      "source_ref": "page 2",
+      "summary": "Powder XRD of the inner cut (bulk) surfaces shows no unreacted Bi2O3; the bare upper pellet surface does contain unreacted Bi2O3.",
+      "measurements": [],
+      "conditions": [
+        "Cu-Kα",
+        "2θ range 10°-110°",
+        "Rigaku powder X-ray diffractometer",
+        "measured on bare upper and inner cut surfaces"
+      ],
+      "observations": [],
+      "figure_refs": [
+        "Fig. 1a"
+      ],
+      "quote": "The bulk was found free from unreacted Bi2O3.",
+      "image_path": null
+    },
+    {
+      "evidence_id": "E002",
+      "system_ids": [
+        "S1",
+        "S2",
+        "S3",
+        "S4",
+        "S5"
+      ],
+      "technique": "Rietveld refinement",
+      "technique_category": "diffraction",
+      "source_type": "text",
+      "source_ref": "page 2",
+      "summary": "FullProf-2K Rietveld refinement starting from the reported LaCrO3 model with Bi placed on the La site; all peaks indexed by a single orthorhombic Pnma phase. Lattice parameters change non-monotonically with x.",
+      "measurements": [
+        {
+          "quantity": "space group",
+          "value": "Pnma",
+          "unit": null,
+          "uncertainty": null,
+          "approximate": false
+        },
+        {
+          "quantity": "crystal system",
+          "value": "orthorhombic",
+          "unit": null,
+          "uncertainty": null,
+          "approximate": false
+        },
+        {
+          "quantity": "Goldschmidt tolerance factor range",
+          "value": "0.84092 to 0.84072",
+          "unit": null,
+          "uncertainty": null,
+          "approximate": false
+        }
+      ],
+      "conditions": [
+        "FullProf-2K",
+        "starting model: LaCrO3 Wyckoff positions and lattice parameters from ref. [4]",
+        "Bi on La site"
+      ],
+      "observations": [],
+      "figure_refs": [
+        "Fig. 1b",
+        "Fig. 2"
+      ],
+      "quote": "All the observed peaks were very nicely accounted by Pnma phase. We could not observe any un accounted peak.",
+      "image_path": null
+    },
+    {
+      "evidence_id": "E003",
+      "system_ids": [
+        "S1",
+        "S2",
+        "S3",
+        "S4",
+        "S5"
+      ],
+      "technique": "Rietveld refinement",
+      "technique_category": "diffraction",
+      "source_type": "text",
+      "source_ref": "page 2",
+      "summary": "Trends vs Bi content: a increases up to x = 0.30 then drops at 0.35; b and cell volume decrease to x = 0.20, increase to 0.30, then drop abruptly; c decreases slowly to 0.30 and faster above. Attributed to anisotropic Bi-O bonds from the Bi3+ lone pair causing octahedral tilting (La3+ 1.32 Å and Bi3+ 1.30 Å radii are nearly equal).",
+      "measurements": [
+        {
+          "quantity": "ionic radius La3+",
+          "value": "1.32",
+          "unit": "Å",
+          "uncertainty": null,
+          "approximate": false
+        },
+        {
+          "quantity": "ionic radius Bi3+",
+          "value": "1.30",
+          "unit": "Å",
+          "uncertainty": null,
+          "approximate": false
+        }
+      ],
+      "conditions": [],
+      "observations": [],
+      "figure_refs": [
+        "Fig. 2"
+      ],
+      "quote": "with increasing Bi3+ content the lattice parameters and cell volume undergo non monotonous changes",
+      "image_path": null
+    },
+    {
+      "evidence_id": "E004",
+      "system_ids": [
+        "S4"
+      ],
+      "technique": "Rietveld refinement",
+      "technique_category": "diffraction",
+      "source_type": "text",
+      "source_ref": "page 2",
+      "summary": "A typical Rietveld fit is shown for x = 0.3.",
+      "measurements": [],
+      "conditions": [],
+      "observations": [],
+      "figure_refs": [
+        "Fig. 1b"
+      ],
+      "quote": "Fig.1 (b) represents a typical Rietveld refined XRD data for x=0.3.",
+      "image_path": null
+    },
+    {
+      "evidence_id": "E005",
+      "system_ids": [
+        "S4"
+      ],
+      "technique": "TEM",
+      "technique_category": "microscopy",
+      "source_type": "text",
+      "source_ref": "page 2",
+      "summary": "Bright-field TEM shows densely packed grains of about 1 µm.",
+      "measurements": [
+        {
+          "quantity": "grain size",
+          "value": "~1",
+          "unit": "µm",
+          "uncertainty": null,
+          "approximate": false
+        }
+      ],
+      "conditions": [
+        "FEI Tecnai 20 G2"
+      ],
+      "observations": [],
+      "figure_refs": [
+        "Fig. 3a"
+      ],
+      "quote": "an electron micrograph of densely packed grains of sizes ~1µm",
+      "image_path": null
+    },
+    {
+      "evidence_id": "E006",
+      "system_ids": [
+        "S4"
+      ],
+      "technique": "SAED",
+      "technique_category": "diffraction",
+      "source_type": "text",
+      "source_ref": "page 2",
+      "summary": "Single-grain SAED patterns index to the orthorhombic Pnma phase along the [010] and [101] zones, confirming the XRD result.",
+      "measurements": [
+        {
+          "quantity": "a",
+          "value": "5.48",
+          "unit": "Å",
+          "uncertainty": null,
+          "approximate": false
+        },
+        {
+          "quantity": "b",
+          "value": "7.76",
+          "unit": "Å",
+          "uncertainty": null,
+          "approximate": false
+        },
+        {
+          "quantity": "c",
+          "value": "5.49",
+          "unit": "Å",
+          "uncertainty": null,
+          "approximate": false
+        },
+        {
+          "quantity": "zone axes",
+          "value": "[010], [101]",
+          "unit": null,
+          "uncertainty": null,
+          "approximate": false
+        }
+      ],
+      "conditions": [
+        "FEI Tecnai 20 G2",
+        "selected-area diffraction from a single grain"
+      ],
+      "observations": [],
+      "figure_refs": [
+        "Fig. 3b",
+        "Fig. 3c"
+      ],
+      "quote": "the SADs belong to the orthorhombic phase with lattice parameters a= 5.48Å, b= 7.76 Å & c= 5.49Å",
+      "image_path": null
+    },
+    {
+      "evidence_id": "E007",
+      "system_ids": [
+        "S1",
+        "S2",
+        "S3",
+        "S4",
+        "S5"
+      ],
+      "technique": "XRD",
+      "technique_category": "diffraction",
+      "source_type": "figure",
+      "source_ref": "Fig. 1a panel a (page 1)",
+      "summary": "stacked powder XRD patterns: XRD patterns of all five compositions, vertically offset. Same set of perovskite reflections for every x, strongest near 2θ ≈ 32.5°; no extra peaks appear with Bi.",
+      "measurements": [
+        {
+          "quantity": "strongest reflection 2θ",
+          "value": "~32.5",
+          "unit": "deg",
+          "uncertainty": null,
+          "approximate": true
+        },
+        {
+          "quantity": "other main reflections 2θ",
+          "value": "~23, 40, 46.5, 52.5, 58, 68, 77.5, 87, 96",
+          "unit": "deg",
+          "uncertainty": null,
+          "approximate": true
+        }
+      ],
+      "conditions": [
+        "axes: 2θ (deg), Normalized intensity"
+      ],
+      "observations": [
+        "No Bi2O3 or other impurity peaks visible",
+        "Pattern shape unchanged across x: same structure type",
+        "Legend labels x as 'Bi = 0.20%' etc. (means x = 0.20)"
+      ],
+      "figure_refs": [],
+      "quote": "Fig.1.a. XRD patterns of La1-xBixCrO3.",
+      "image_path": "figures/p1_f1.png"
+    },
+    {
+      "evidence_id": "E008",
+      "system_ids": [
+        "S4"
+      ],
+      "technique": "Rietveld refinement",
+      "technique_category": "diffraction",
+      "source_type": "figure",
+      "source_ref": "Fig. 1b panel b (page 1)",
+      "summary": "Rietveld fit: Observed vs calculated pattern, Bragg positions and difference curve for x = 0.30. Difference curve is nearly flat, indicating a good single-phase Pnma fit.",
+      "measurements": [],
+      "conditions": [
+        "axes: 2θ (deg), Intensity (arb.)"
+      ],
+      "observations": [
+        "Flat difference curve, no unindexed peaks",
+        "No R-factors or chi² given in figure or text"
+      ],
+      "figure_refs": [],
+      "quote": "Fig.1.b. Reitveld refined XRD pattern of La0.70Bi0.30CrO3. All the cut pieces were studied using XRD with Cu-Kα in the 2θ range of 10°-110° using Rigaku",
+      "image_path": "figures/p1_f2.png"
+    },
+    {
+      "evidence_id": "E009",
+      "system_ids": [
+        "S1",
+        "S2",
+        "S3",
+        "S4",
+        "S5"
+      ],
+      "technique": "Rietveld refinement",
+      "technique_category": "diffraction",
+      "source_type": "figure",
+      "source_ref": "Fig. 2 panel a (page 2)",
+      "summary": "lattice parameter a vs Bi content: a rises from ~5.480 Å (x=0) to a maximum ~5.492 Å at x=0.30, then drops to ~5.489 Å at x=0.35.",
+      "measurements": [
+        {
+          "quantity": "a at x=0",
+          "value": "5.480",
+          "unit": "Å",
+          "uncertainty": null,
+          "approximate": true
+        },
+        {
+          "quantity": "a at x=0.2",
+          "value": "5.485",
+          "unit": "Å",
+          "uncertainty": null,
+          "approximate": true
+        },
+        {
+          "quantity": "a at x=0.25",
+          "value": "5.488",
+          "unit": "Å",
+          "uncertainty": null,
+          "approximate": true
+        },
+        {
+          "quantity": "a at x=0.3",
+          "value": "5.492",
+          "unit": "Å",
+          "uncertainty": null,
+          "approximate": true
+        },
+        {
+          "quantity": "a at x=0.35",
+          "value": "5.489",
+          "unit": "Å",
+          "uncertainty": null,
+          "approximate": true
+        }
+      ],
+      "conditions": [
+        "axes: Bi content (%), lattice parameter a (Å)"
+      ],
+      "observations": [],
+      "figure_refs": [],
+      "quote": "Fig.2 (a-d). Variations of unit cell parameters and unit cell volume as a function of Bi content.",
+      "image_path": "figures/p2_f1.png"
+    },
+    {
+      "evidence_id": "E010",
+      "system_ids": [
+        "S1",
+        "S2",
+        "S3",
+        "S4",
+        "S5"
+      ],
+      "technique": "Rietveld refinement",
+      "technique_category": "diffraction",
+      "source_type": "figure",
+      "source_ref": "Fig. 2 panel b (page 2)",
+      "summary": "lattice parameter b vs Bi content: b dips from ~7.761 to ~7.757 Å at x=0.20, rises to ~7.763 Å at x=0.30, then falls sharply to ~7.755 Å.",
+      "measurements": [
+        {
+          "quantity": "b at x=0",
+          "value": "7.761",
+          "unit": "Å",
+          "uncertainty": null,
+          "approximate": true
+        },
+        {
+          "quantity": "b at x=0.2",
+          "value": "7.757",
+          "unit": "Å",
+          "uncertainty": null,
+          "approximate": true
+        },
+        {
+          "quantity": "b at x=0.25",
+          "value": "7.760",
+          "unit": "Å",
+          "uncertainty": null,
+          "approximate": true
+        },
+        {
+          "quantity": "b at x=0.3",
+          "value": "7.763",
+          "unit": "Å",
+          "uncertainty": null,
+          "approximate": true
+        },
+        {
+          "quantity": "b at x=0.35",
+          "value": "7.755",
+          "unit": "Å",
+          "uncertainty": null,
+          "approximate": true
+        }
+      ],
+      "conditions": [
+        "axes: Bi content (%), lattice parameter b (Å)"
+      ],
+      "observations": [],
+      "figure_refs": [],
+      "quote": "Fig.2 (a-d). Variations of unit cell parameters and unit cell volume as a function of Bi content.",
+      "image_path": "figures/p2_f1.png"
+    },
+    {
+      "evidence_id": "E011",
+      "system_ids": [
+        "S1",
+        "S2",
+        "S3",
+        "S4",
+        "S5"
+      ],
+      "technique": "Rietveld refinement",
+      "technique_category": "diffraction",
+      "source_type": "figure",
+      "source_ref": "Fig. 2 panel c (page 2)",
+      "summary": "lattice parameter c vs Bi content: c decreases from ~5.515 to ~5.495 Å by x=0.30, then faster to ~5.483 Å at x=0.35.",
+      "measurements": [
+        {
+          "quantity": "c at x=0",
+          "value": "5.515",
+          "unit": "Å",
+          "uncertainty": null,
+          "approximate": true
+        },
+        {
+          "quantity": "c at x=0.2",
+          "value": "5.500",
+          "unit": "Å",
+          "uncertainty": null,
+          "approximate": true
+        },
+        {
+          "quantity": "c at x=0.25",
+          "value": "5.497",
+          "unit": "Å",
+          "uncertainty": null,
+          "approximate": true
+        },
+        {
+          "quantity": "c at x=0.3",
+          "value": "5.495",
+          "unit": "Å",
+          "uncertainty": null,
+          "approximate": true
+        },
+        {
+          "quantity": "c at x=0.35",
+          "value": "5.483",
+          "unit": "Å",
+          "uncertainty": null,
+          "approximate": true
+        }
+      ],
+      "conditions": [
+        "axes: Bi content (%), lattice parameter c (Å)"
+      ],
+      "observations": [],
+      "figure_refs": [],
+      "quote": "Fig.2 (a-d). Variations of unit cell parameters and unit cell volume as a function of Bi content.",
+      "image_path": "figures/p2_f1.png"
+    },
+    {
+      "evidence_id": "E012",
+      "system_ids": [
+        "S1",
+        "S2",
+        "S3",
+        "S4",
+        "S5"
+      ],
+      "technique": "Rietveld refinement",
+      "technique_category": "diffraction",
+      "source_type": "figure",
+      "source_ref": "Fig. 2 panel d (page 2)",
+      "summary": "unit cell volume vs Bi content: Volume dips to ~234.0 Å³ at x=0.20, recovers to ~234.3 at x=0.30, then drops abruptly to ~233.4 Å³.",
+      "measurements": [
+        {
+          "quantity": "V at x=0",
+          "value": "234.37",
+          "unit": "Å^3",
+          "uncertainty": null,
+          "approximate": true
+        },
+        {
+          "quantity": "V at x=0.2",
+          "value": "234.01",
+          "unit": "Å^3",
+          "uncertainty": null,
+          "approximate": true
+        },
+        {
+          "quantity": "V at x=0.25",
+          "value": "234.12",
+          "unit": "Å^3",
+          "uncertainty": null,
+          "approximate": true
+        },
+        {
+          "quantity": "V at x=0.3",
+          "value": "234.26",
+          "unit": "Å^3",
+          "uncertainty": null,
+          "approximate": true
+        },
+        {
+          "quantity": "V at x=0.35",
+          "value": "233.37",
+          "unit": "Å^3",
+          "uncertainty": null,
+          "approximate": true
+        }
+      ],
+      "conditions": [
+        "axes: Bi content (%), unit cell volume (Å^3)"
+      ],
+      "observations": [],
+      "figure_refs": [],
+      "quote": "Fig.2 (a-d). Variations of unit cell parameters and unit cell volume as a function of Bi content.",
+      "image_path": "figures/p2_f1.png"
+    },
+    {
+      "evidence_id": "E013",
+      "system_ids": [
+        "S4"
+      ],
+      "technique": "TEM",
+      "technique_category": "microscopy",
+      "source_type": "figure",
+      "source_ref": "Fig. 3 panel a (page 2)",
+      "summary": "bright-field TEM micrograph: Densely packed micron-sized grains with bend contours.",
+      "measurements": [
+        {
+          "quantity": "grain size",
+          "value": "~1",
+          "unit": "µm",
+          "uncertainty": null,
+          "approximate": true
+        }
+      ],
+      "conditions": [],
+      "observations": [
+        "Dense ceramic, no obvious secondary phase"
+      ],
+      "figure_refs": [],
+      "quote": "Fig.3. Microstructure (a) and SAD patterns taken along (b) [010], and (c) [101] zones of the orthorhombic Pnma phase of La0.70Bi0.30CrO3.",
+      "image_path": "figures/p2_f2.png"
+    },
+    {
+      "evidence_id": "E014",
+      "system_ids": [
+        "S4"
+      ],
+      "technique": "SAED",
+      "technique_category": "diffraction",
+      "source_type": "figure",
+      "source_ref": "Fig. 3 panel b (page 2)",
+      "summary": "SAED pattern: Single-crystal spot pattern along <010>.",
+      "measurements": [
+        {
+          "quantity": "zone axis",
+          "value": "[010]",
+          "unit": null,
+          "uncertainty": null,
+          "approximate": false
+        }
+      ],
+      "conditions": [],
+      "observations": [
+        "Sharp spots, single grain",
+        "Rectangular net consistent with orthorhombic Pnma"
+      ],
+      "figure_refs": [],
+      "quote": "Fig.3. Microstructure (a) and SAD patterns taken along (b) [010], and (c) [101] zones of the orthorhombic Pnma phase of La0.70Bi0.30CrO3.",
+      "image_path": "figures/p2_f2.png"
+    },
+    {
+      "evidence_id": "E015",
+      "system_ids": [
+        "S4"
+      ],
+      "technique": "SAED",
+      "technique_category": "diffraction",
+      "source_type": "figure",
+      "source_ref": "Fig. 3 panel c (page 2)",
+      "summary": "SAED pattern: Single-crystal spot pattern along <101>.",
+      "measurements": [
+        {
+          "quantity": "zone axis",
+          "value": "[101]",
+          "unit": null,
+          "uncertainty": null,
+          "approximate": false
+        }
+      ],
+      "conditions": [],
+      "observations": [
+        "Sharp spots, single grain"
+      ],
+      "figure_refs": [],
+      "quote": "Fig.3. Microstructure (a) and SAD patterns taken along (b) [010], and (c) [101] zones of the orthorhombic Pnma phase of La0.70Bi0.30CrO3.",
+      "image_path": "figures/p2_f2.png"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "paper",
+      "type": "paper",
+      "label": "Structural studies on Multiferroic La1-xBixCrO3 Perovskites",
+      "data": {
+        "title": "Structural studies on Multiferroic La1-xBixCrO3 Perovskites",
+        "authors": [
+          "Aga Shahee",
+          "Dhirendra Kumar",
+          "N. P. Lalla"
+        ],
+        "doi": "10.1063/1.3606316",
+        "year": 2011,
+        "summary": "The authors made five La1-xBixCrO3 ceramics (x = 0 to 0.35) by solid-state reaction and studied their crystal structure with XRD and TEM. Rietveld refinement shows every sample is a single-phase orthorhombic perovskite (space group Pnma) with Bi on the La site. The lattice parameters and cell volume change non-monotonically with Bi content, which the authors attribute to the Bi3+ lone pair distorting Bi-O bonds and tilting the CrO6 octahedra. TEM/SAED on x = 0.3 confirms the Pnma cell."
+      }
+    },
+    {
+      "id": "S1",
+      "type": "system",
+      "label": "LaCrO3",
+      "data": {
+        "system_id": "S1",
+        "name": "LaCrO3",
+        "family": "La1-xBixCrO3",
+        "composition_variables": {
+          "x": "0"
+        },
+        "material_class": "perovskite oxide",
+        "form": "polycrystalline sintered pellet (bulk, inner cut surface)",
+        "synthesis": {
+          "method": "solid-state reaction",
+          "precursors": [
+            "La2O3 (99.99%)",
+            "Cr2O3 (99.99%)",
+            "Bi2O3 (99.99%, 5% excess to compensate Bi volatility)"
+          ],
+          "conditions": [
+            "ground ~10 h",
+            "1 wt% PVA solution added as binder before pelletization",
+            "preheated 550 °C in air for 2 h (binder removal)",
+            "fired 1250 °C for 5-8 h"
+          ],
+          "notes": "Pellets cut across the thickness; unreacted Bi2O3 found only on the bare upper surface, bulk is clean."
+        },
+        "structure": {
+          "crystal_system": "orthorhombic",
+          "space_group": "Pnma",
+          "lattice_parameters": [],
+          "site_occupancy": [],
+          "phase_purity": "single phase in bulk; Bi2O3 only on the pellet's upper surface",
+          "other": [
+            "Text gives lattice trends only; per-composition values are in Fig. 2"
+          ]
+        }
+      }
+    },
+    {
+      "id": "S2",
+      "type": "system",
+      "label": "La0.8Bi0.2CrO3",
+      "data": {
+        "system_id": "S2",
+        "name": "La0.8Bi0.2CrO3",
+        "family": "La1-xBixCrO3",
+        "composition_variables": {
+          "x": "0.2"
+        },
+        "material_class": "perovskite oxide",
+        "form": "polycrystalline sintered pellet (bulk, inner cut surface)",
+        "synthesis": {
+          "method": "solid-state reaction",
+          "precursors": [
+            "La2O3 (99.99%)",
+            "Cr2O3 (99.99%)",
+            "Bi2O3 (99.99%, 5% excess to compensate Bi volatility)"
+          ],
+          "conditions": [
+            "ground ~10 h",
+            "1 wt% PVA solution added as binder before pelletization",
+            "preheated 550 °C in air for 2 h (binder removal)",
+            "fired 1250 °C for 5-8 h"
+          ],
+          "notes": "Pellets cut across the thickness; unreacted Bi2O3 found only on the bare upper surface, bulk is clean."
+        },
+        "structure": {
+          "crystal_system": "orthorhombic",
+          "space_group": "Pnma",
+          "lattice_parameters": [],
+          "site_occupancy": [
+            "Bi substitutes on the La (A) site"
+          ],
+          "phase_purity": "single phase in bulk; Bi2O3 only on the pellet's upper surface",
+          "other": [
+            "Text gives lattice trends only; per-composition values are in Fig. 2"
+          ]
+        }
+      }
+    },
+    {
+      "id": "S3",
+      "type": "system",
+      "label": "La0.75Bi0.25CrO3",
+      "data": {
+        "system_id": "S3",
+        "name": "La0.75Bi0.25CrO3",
+        "family": "La1-xBixCrO3",
+        "composition_variables": {
+          "x": "0.25"
+        },
+        "material_class": "perovskite oxide",
+        "form": "polycrystalline sintered pellet (bulk, inner cut surface)",
+        "synthesis": {
+          "method": "solid-state reaction",
+          "precursors": [
+            "La2O3 (99.99%)",
+            "Cr2O3 (99.99%)",
+            "Bi2O3 (99.99%, 5% excess to compensate Bi volatility)"
+          ],
+          "conditions": [
+            "ground ~10 h",
+            "1 wt% PVA solution added as binder before pelletization",
+            "preheated 550 °C in air for 2 h (binder removal)",
+            "fired 1250 °C for 5-8 h"
+          ],
+          "notes": "Pellets cut across the thickness; unreacted Bi2O3 found only on the bare upper surface, bulk is clean."
+        },
+        "structure": {
+          "crystal_system": "orthorhombic",
+          "space_group": "Pnma",
+          "lattice_parameters": [],
+          "site_occupancy": [
+            "Bi substitutes on the La (A) site"
+          ],
+          "phase_purity": "single phase in bulk; Bi2O3 only on the pellet's upper surface",
+          "other": [
+            "Text gives lattice trends only; per-composition values are in Fig. 2"
+          ]
+        }
+      }
+    },
+    {
+      "id": "S4",
+      "type": "system",
+      "label": "La0.7Bi0.3CrO3",
+      "data": {
+        "system_id": "S4",
+        "name": "La0.7Bi0.3CrO3",
+        "family": "La1-xBixCrO3",
+        "composition_variables": {
+          "x": "0.3"
+        },
+        "material_class": "perovskite oxide",
+        "form": "polycrystalline sintered pellet (bulk, inner cut surface)",
+        "synthesis": {
+          "method": "solid-state reaction",
+          "precursors": [
+            "La2O3 (99.99%)",
+            "Cr2O3 (99.99%)",
+            "Bi2O3 (99.99%, 5% excess to compensate Bi volatility)"
+          ],
+          "conditions": [
+            "ground ~10 h",
+            "1 wt% PVA solution added as binder before pelletization",
+            "preheated 550 °C in air for 2 h (binder removal)",
+            "fired 1250 °C for 5-8 h"
+          ],
+          "notes": "Pellets cut across the thickness; unreacted Bi2O3 found only on the bare upper surface, bulk is clean."
+        },
+        "structure": {
+          "crystal_system": "orthorhombic",
+          "space_group": "Pnma",
+          "lattice_parameters": [
+            {
+              "quantity": "a",
+              "value": "5.48",
+              "unit": "Å",
+              "uncertainty": null,
+              "approximate": false
+            },
+            {
+              "quantity": "b",
+              "value": "7.76",
+              "unit": "Å",
+              "uncertainty": null,
+              "approximate": false
+            },
+            {
+              "quantity": "c",
+              "value": "5.49",
+              "unit": "Å",
+              "uncertainty": null,
+              "approximate": false
+            }
+          ],
+          "site_occupancy": [
+            "Bi substitutes on the La (A) site"
+          ],
+          "phase_purity": "single phase in bulk; Bi2O3 only on the pellet's upper surface",
+          "other": [
+            "Text gives lattice trends only; per-composition values are in Fig. 2",
+            "a, b, c above are from SAED (TEM), not XRD"
+          ]
+        }
+      }
+    },
+    {
+      "id": "S5",
+      "type": "system",
+      "label": "La0.65Bi0.35CrO3",
+      "data": {
+        "system_id": "S5",
+        "name": "La0.65Bi0.35CrO3",
+        "family": "La1-xBixCrO3",
+        "composition_variables": {
+          "x": "0.35"
+        },
+        "material_class": "perovskite oxide",
+        "form": "polycrystalline sintered pellet (bulk, inner cut surface)",
+        "synthesis": {
+          "method": "solid-state reaction",
+          "precursors": [
+            "La2O3 (99.99%)",
+            "Cr2O3 (99.99%)",
+            "Bi2O3 (99.99%, 5% excess to compensate Bi volatility)"
+          ],
+          "conditions": [
+            "ground ~10 h",
+            "1 wt% PVA solution added as binder before pelletization",
+            "preheated 550 °C in air for 2 h (binder removal)",
+            "fired 1250 °C for 5-8 h"
+          ],
+          "notes": "Pellets cut across the thickness; unreacted Bi2O3 found only on the bare upper surface, bulk is clean."
+        },
+        "structure": {
+          "crystal_system": "orthorhombic",
+          "space_group": "Pnma",
+          "lattice_parameters": [],
+          "site_occupancy": [
+            "Bi substitutes on the La (A) site"
+          ],
+          "phase_purity": "single phase in bulk; Bi2O3 only on the pellet's upper surface",
+          "other": [
+            "Text gives lattice trends only; per-composition values are in Fig. 2"
+          ]
+        }
+      }
+    },
+    {
+      "id": "E001",
+      "type": "evidence",
+      "label": "XRD (page 2)",
+      "data": {
+        "evidence_id": "E001",
+        "system_ids": [
+          "S1",
+          "S2",
+          "S3",
+          "S4",
+          "S5"
+        ],
+        "technique": "XRD",
+        "technique_category": "diffraction",
+        "source_type": "text",
+        "source_ref": "page 2",
+        "summary": "Powder XRD of the inner cut (bulk) surfaces shows no unreacted Bi2O3; the bare upper pellet surface does contain unreacted Bi2O3.",
+        "measurements": [],
+        "conditions": [
+          "Cu-Kα",
+          "2θ range 10°-110°",
+          "Rigaku powder X-ray diffractometer",
+          "measured on bare upper and inner cut surfaces"
+        ],
+        "observations": [],
+        "figure_refs": [
+          "Fig. 1a"
+        ],
+        "quote": "The bulk was found free from unreacted Bi2O3.",
+        "image_path": null
+      }
+    },
+    {
+      "id": "tech:XRD",
+      "type": "technique",
+      "label": "XRD",
+      "data": {
+        "category": "diffraction"
+      }
+    },
+    {
+      "id": "E002",
+      "type": "evidence",
+      "label": "Rietveld refinement (page 2)",
+      "data": {
+        "evidence_id": "E002",
+        "system_ids": [
+          "S1",
+          "S2",
+          "S3",
+          "S4",
+          "S5"
+        ],
+        "technique": "Rietveld refinement",
+        "technique_category": "diffraction",
+        "source_type": "text",
+        "source_ref": "page 2",
+        "summary": "FullProf-2K Rietveld refinement starting from the reported LaCrO3 model with Bi placed on the La site; all peaks indexed by a single orthorhombic Pnma phase. Lattice parameters change non-monotonically with x.",
+        "measurements": [
+          {
+            "quantity": "space group",
+            "value": "Pnma",
+            "unit": null,
+            "uncertainty": null,
+            "approximate": false
+          },
+          {
+            "quantity": "crystal system",
+            "value": "orthorhombic",
+            "unit": null,
+            "uncertainty": null,
+            "approximate": false
+          },
+          {
+            "quantity": "Goldschmidt tolerance factor range",
+            "value": "0.84092 to 0.84072",
+            "unit": null,
+            "uncertainty": null,
+            "approximate": false
+          }
+        ],
+        "conditions": [
+          "FullProf-2K",
+          "starting model: LaCrO3 Wyckoff positions and lattice parameters from ref. [4]",
+          "Bi on La site"
+        ],
+        "observations": [],
+        "figure_refs": [
+          "Fig. 1b",
+          "Fig. 2"
+        ],
+        "quote": "All the observed peaks were very nicely accounted by Pnma phase. We could not observe any un accounted peak.",
+        "image_path": null
+      }
+    },
+    {
+      "id": "tech:Rietveld_refinement",
+      "type": "technique",
+      "label": "Rietveld refinement",
+      "data": {
+        "category": "diffraction"
+      }
+    },
+    {
+      "id": "E003",
+      "type": "evidence",
+      "label": "Rietveld refinement (page 2)",
+      "data": {
+        "evidence_id": "E003",
+        "system_ids": [
+          "S1",
+          "S2",
+          "S3",
+          "S4",
+          "S5"
+        ],
+        "technique": "Rietveld refinement",
+        "technique_category": "diffraction",
+        "source_type": "text",
+        "source_ref": "page 2",
+        "summary": "Trends vs Bi content: a increases up to x = 0.30 then drops at 0.35; b and cell volume decrease to x = 0.20, increase to 0.30, then drop abruptly; c decreases slowly to 0.30 and faster above. Attributed to anisotropic Bi-O bonds from the Bi3+ lone pair causing octahedral tilting (La3+ 1.32 Å and Bi3+ 1.30 Å radii are nearly equal).",
+        "measurements": [
+          {
+            "quantity": "ionic radius La3+",
+            "value": "1.32",
+            "unit": "Å",
+            "uncertainty": null,
+            "approximate": false
+          },
+          {
+            "quantity": "ionic radius Bi3+",
+            "value": "1.30",
+            "unit": "Å",
+            "uncertainty": null,
+            "approximate": false
+          }
+        ],
+        "conditions": [],
+        "observations": [],
+        "figure_refs": [
+          "Fig. 2"
+        ],
+        "quote": "with increasing Bi3+ content the lattice parameters and cell volume undergo non monotonous changes",
+        "image_path": null
+      }
+    },
+    {
+      "id": "E004",
+      "type": "evidence",
+      "label": "Rietveld refinement (page 2)",
+      "data": {
+        "evidence_id": "E004",
+        "system_ids": [
+          "S4"
+        ],
+        "technique": "Rietveld refinement",
+        "technique_category": "diffraction",
+        "source_type": "text",
+        "source_ref": "page 2",
+        "summary": "A typical Rietveld fit is shown for x = 0.3.",
+        "measurements": [],
+        "conditions": [],
+        "observations": [],
+        "figure_refs": [
+          "Fig. 1b"
+        ],
+        "quote": "Fig.1 (b) represents a typical Rietveld refined XRD data for x=0.3.",
+        "image_path": null
+      }
+    },
+    {
+      "id": "E005",
+      "type": "evidence",
+      "label": "TEM (page 2)",
+      "data": {
+        "evidence_id": "E005",
+        "system_ids": [
+          "S4"
+        ],
+        "technique": "TEM",
+        "technique_category": "microscopy",
+        "source_type": "text",
+        "source_ref": "page 2",
+        "summary": "Bright-field TEM shows densely packed grains of about 1 µm.",
+        "measurements": [
+          {
+            "quantity": "grain size",
+            "value": "~1",
+            "unit": "µm",
+            "uncertainty": null,
+            "approximate": false
+          }
+        ],
+        "conditions": [
+          "FEI Tecnai 20 G2"
+        ],
+        "observations": [],
+        "figure_refs": [
+          "Fig. 3a"
+        ],
+        "quote": "an electron micrograph of densely packed grains of sizes ~1µm",
+        "image_path": null
+      }
+    },
+    {
+      "id": "tech:TEM",
+      "type": "technique",
+      "label": "TEM",
+      "data": {
+        "category": "microscopy"
+      }
+    },
+    {
+      "id": "E006",
+      "type": "evidence",
+      "label": "SAED (page 2)",
+      "data": {
+        "evidence_id": "E006",
+        "system_ids": [
+          "S4"
+        ],
+        "technique": "SAED",
+        "technique_category": "diffraction",
+        "source_type": "text",
+        "source_ref": "page 2",
+        "summary": "Single-grain SAED patterns index to the orthorhombic Pnma phase along the [010] and [101] zones, confirming the XRD result.",
+        "measurements": [
+          {
+            "quantity": "a",
+            "value": "5.48",
+            "unit": "Å",
+            "uncertainty": null,
+            "approximate": false
+          },
+          {
+            "quantity": "b",
+            "value": "7.76",
+            "unit": "Å",
+            "uncertainty": null,
+            "approximate": false
+          },
+          {
+            "quantity": "c",
+            "value": "5.49",
+            "unit": "Å",
+            "uncertainty": null,
+            "approximate": false
+          },
+          {
+            "quantity": "zone axes",
+            "value": "[010], [101]",
+            "unit": null,
+            "uncertainty": null,
+            "approximate": false
+          }
+        ],
+        "conditions": [
+          "FEI Tecnai 20 G2",
+          "selected-area diffraction from a single grain"
+        ],
+        "observations": [],
+        "figure_refs": [
+          "Fig. 3b",
+          "Fig. 3c"
+        ],
+        "quote": "the SADs belong to the orthorhombic phase with lattice parameters a= 5.48Å, b= 7.76 Å & c= 5.49Å",
+        "image_path": null
+      }
+    },
+    {
+      "id": "tech:SAED",
+      "type": "technique",
+      "label": "SAED",
+      "data": {
+        "category": "diffraction"
+      }
+    },
+    {
+      "id": "E007",
+      "type": "evidence",
+      "label": "XRD (Fig. 1a panel a (page 1))",
+      "data": {
+        "evidence_id": "E007",
+        "system_ids": [
+          "S1",
+          "S2",
+          "S3",
+          "S4",
+          "S5"
+        ],
+        "technique": "XRD",
+        "technique_category": "diffraction",
+        "source_type": "figure",
+        "source_ref": "Fig. 1a panel a (page 1)",
+        "summary": "stacked powder XRD patterns: XRD patterns of all five compositions, vertically offset. Same set of perovskite reflections for every x, strongest near 2θ ≈ 32.5°; no extra peaks appear with Bi.",
+        "measurements": [
+          {
+            "quantity": "strongest reflection 2θ",
+            "value": "~32.5",
+            "unit": "deg",
+            "uncertainty": null,
+            "approximate": true
+          },
+          {
+            "quantity": "other main reflections 2θ",
+            "value": "~23, 40, 46.5, 52.5, 58, 68, 77.5, 87, 96",
+            "unit": "deg",
+            "uncertainty": null,
+            "approximate": true
+          }
+        ],
+        "conditions": [
+          "axes: 2θ (deg), Normalized intensity"
+        ],
+        "observations": [
+          "No Bi2O3 or other impurity peaks visible",
+          "Pattern shape unchanged across x: same structure type",
+          "Legend labels x as 'Bi = 0.20%' etc. (means x = 0.20)"
+        ],
+        "figure_refs": [],
+        "quote": "Fig.1.a. XRD patterns of La1-xBixCrO3.",
+        "image_path": "figures/p1_f1.png"
+      }
+    },
+    {
+      "id": "fig:p1_f1",
+      "type": "figure",
+      "label": "Fig. 1a",
+      "data": {
+        "image_path": "figures/p1_f1.png"
+      }
+    },
+    {
+      "id": "E008",
+      "type": "evidence",
+      "label": "Rietveld refinement (Fig. 1b panel b (page 1))",
+      "data": {
+        "evidence_id": "E008",
+        "system_ids": [
+          "S4"
+        ],
+        "technique": "Rietveld refinement",
+        "technique_category": "diffraction",
+        "source_type": "figure",
+        "source_ref": "Fig. 1b panel b (page 1)",
+        "summary": "Rietveld fit: Observed vs calculated pattern, Bragg positions and difference curve for x = 0.30. Difference curve is nearly flat, indicating a good single-phase Pnma fit.",
+        "measurements": [],
+        "conditions": [
+          "axes: 2θ (deg), Intensity (arb.)"
+        ],
+        "observations": [
+          "Flat difference curve, no unindexed peaks",
+          "No R-factors or chi² given in figure or text"
+        ],
+        "figure_refs": [],
+        "quote": "Fig.1.b. Reitveld refined XRD pattern of La0.70Bi0.30CrO3. All the cut pieces were studied using XRD with Cu-Kα in the 2θ range of 10°-110° using Rigaku",
+        "image_path": "figures/p1_f2.png"
+      }
+    },
+    {
+      "id": "fig:p1_f2",
+      "type": "figure",
+      "label": "Fig. 1b",
+      "data": {
+        "image_path": "figures/p1_f2.png"
+      }
+    },
+    {
+      "id": "E009",
+      "type": "evidence",
+      "label": "Rietveld refinement (Fig. 2 panel a (page 2))",
+      "data": {
+        "evidence_id": "E009",
+        "system_ids": [
+          "S1",
+          "S2",
+          "S3",
+          "S4",
+          "S5"
+        ],
+        "technique": "Rietveld refinement",
+        "technique_category": "diffraction",
+        "source_type": "figure",
+        "source_ref": "Fig. 2 panel a (page 2)",
+        "summary": "lattice parameter a vs Bi content: a rises from ~5.480 Å (x=0) to a maximum ~5.492 Å at x=0.30, then drops to ~5.489 Å at x=0.35.",
+        "measurements": [
+          {
+            "quantity": "a at x=0",
+            "value": "5.480",
+            "unit": "Å",
+            "uncertainty": null,
+            "approximate": true
+          },
+          {
+            "quantity": "a at x=0.2",
+            "value": "5.485",
+            "unit": "Å",
+            "uncertainty": null,
+            "approximate": true
+          },
+          {
+            "quantity": "a at x=0.25",
+            "value": "5.488",
+            "unit": "Å",
+            "uncertainty": null,
+            "approximate": true
+          },
+          {
+            "quantity": "a at x=0.3",
+            "value": "5.492",
+            "unit": "Å",
+            "uncertainty": null,
+            "approximate": true
+          },
+          {
+            "quantity": "a at x=0.35",
+            "value": "5.489",
+            "unit": "Å",
+            "uncertainty": null,
+            "approximate": true
+          }
+        ],
+        "conditions": [
+          "axes: Bi content (%), lattice parameter a (Å)"
+        ],
+        "observations": [],
+        "figure_refs": [],
+        "quote": "Fig.2 (a-d). Variations of unit cell parameters and unit cell volume as a function of Bi content.",
+        "image_path": "figures/p2_f1.png"
+      }
+    },
+    {
+      "id": "fig:p2_f1",
+      "type": "figure",
+      "label": "Fig. 2",
+      "data": {
+        "image_path": "figures/p2_f1.png"
+      }
+    },
+    {
+      "id": "E010",
+      "type": "evidence",
+      "label": "Rietveld refinement (Fig. 2 panel b (page 2))",
+      "data": {
+        "evidence_id": "E010",
+        "system_ids": [
+          "S1",
+          "S2",
+          "S3",
+          "S4",
+          "S5"
+        ],
+        "technique": "Rietveld refinement",
+        "technique_category": "diffraction",
+        "source_type": "figure",
+        "source_ref": "Fig. 2 panel b (page 2)",
+        "summary": "lattice parameter b vs Bi content: b dips from ~7.761 to ~7.757 Å at x=0.20, rises to ~7.763 Å at x=0.30, then falls sharply to ~7.755 Å.",
+        "measurements": [
+          {
+            "quantity": "b at x=0",
+            "value": "7.761",
+            "unit": "Å",
+            "uncertainty": null,
+            "approximate": true
+          },
+          {
+            "quantity": "b at x=0.2",
+            "value": "7.757",
+            "unit": "Å",
+            "uncertainty": null,
+            "approximate": true
+          },
+          {
+            "quantity": "b at x=0.25",
+            "value": "7.760",
+            "unit": "Å",
+            "uncertainty": null,
+            "approximate": true
+          },
+          {
+            "quantity": "b at x=0.3",
+            "value": "7.763",
+            "unit": "Å",
+            "uncertainty": null,
+            "approximate": true
+          },
+          {
+            "quantity": "b at x=0.35",
+            "value": "7.755",
+            "unit": "Å",
+            "uncertainty": null,
+            "approximate": true
+          }
+        ],
+        "conditions": [
+          "axes: Bi content (%), lattice parameter b (Å)"
+        ],
+        "observations": [],
+        "figure_refs": [],
+        "quote": "Fig.2 (a-d). Variations of unit cell parameters and unit cell volume as a function of Bi content.",
+        "image_path": "figures/p2_f1.png"
+      }
+    },
+    {
+      "id": "E011",
+      "type": "evidence",
+      "label": "Rietveld refinement (Fig. 2 panel c (page 2))",
+      "data": {
+        "evidence_id": "E011",
+        "system_ids": [
+          "S1",
+          "S2",
+          "S3",
+          "S4",
+          "S5"
+        ],
+        "technique": "Rietveld refinement",
+        "technique_category": "diffraction",
+        "source_type": "figure",
+        "source_ref": "Fig. 2 panel c (page 2)",
+        "summary": "lattice parameter c vs Bi content: c decreases from ~5.515 to ~5.495 Å by x=0.30, then faster to ~5.483 Å at x=0.35.",
+        "measurements": [
+          {
+            "quantity": "c at x=0",
+            "value": "5.515",
+            "unit": "Å",
+            "uncertainty": null,
+            "approximate": true
+          },
+          {
+            "quantity": "c at x=0.2",
+            "value": "5.500",
+            "unit": "Å",
+            "uncertainty": null,
+            "approximate": true
+          },
+          {
+            "quantity": "c at x=0.25",
+            "value": "5.497",
+            "unit": "Å",
+            "uncertainty": null,
+            "approximate": true
+          },
+          {
+            "quantity": "c at x=0.3",
+            "value": "5.495",
+            "unit": "Å",
+            "uncertainty": null,
+            "approximate": true
+          },
+          {
+            "quantity": "c at x=0.35",
+            "value": "5.483",
+            "unit": "Å",
+            "uncertainty": null,
+            "approximate": true
+          }
+        ],
+        "conditions": [
+          "axes: Bi content (%), lattice parameter c (Å)"
+        ],
+        "observations": [],
+        "figure_refs": [],
+        "quote": "Fig.2 (a-d). Variations of unit cell parameters and unit cell volume as a function of Bi content.",
+        "image_path": "figures/p2_f1.png"
+      }
+    },
+    {
+      "id": "E012",
+      "type": "evidence",
+      "label": "Rietveld refinement (Fig. 2 panel d (page 2))",
+      "data": {
+        "evidence_id": "E012",
+        "system_ids": [
+          "S1",
+          "S2",
+          "S3",
+          "S4",
+          "S5"
+        ],
+        "technique": "Rietveld refinement",
+        "technique_category": "diffraction",
+        "source_type": "figure",
+        "source_ref": "Fig. 2 panel d (page 2)",
+        "summary": "unit cell volume vs Bi content: Volume dips to ~234.0 Å³ at x=0.20, recovers to ~234.3 at x=0.30, then drops abruptly to ~233.4 Å³.",
+        "measurements": [
+          {
+            "quantity": "V at x=0",
+            "value": "234.37",
+            "unit": "Å^3",
+            "uncertainty": null,
+            "approximate": true
+          },
+          {
+            "quantity": "V at x=0.2",
+            "value": "234.01",
+            "unit": "Å^3",
+            "uncertainty": null,
+            "approximate": true
+          },
+          {
+            "quantity": "V at x=0.25",
+            "value": "234.12",
+            "unit": "Å^3",
+            "uncertainty": null,
+            "approximate": true
+          },
+          {
+            "quantity": "V at x=0.3",
+            "value": "234.26",
+            "unit": "Å^3",
+            "uncertainty": null,
+            "approximate": true
+          },
+          {
+            "quantity": "V at x=0.35",
+            "value": "233.37",
+            "unit": "Å^3",
+            "uncertainty": null,
+            "approximate": true
+          }
+        ],
+        "conditions": [
+          "axes: Bi content (%), unit cell volume (Å^3)"
+        ],
+        "observations": [],
+        "figure_refs": [],
+        "quote": "Fig.2 (a-d). Variations of unit cell parameters and unit cell volume as a function of Bi content.",
+        "image_path": "figures/p2_f1.png"
+      }
+    },
+    {
+      "id": "E013",
+      "type": "evidence",
+      "label": "TEM (Fig. 3 panel a (page 2))",
+      "data": {
+        "evidence_id": "E013",
+        "system_ids": [
+          "S4"
+        ],
+        "technique": "TEM",
+        "technique_category": "microscopy",
+        "source_type": "figure",
+        "source_ref": "Fig. 3 panel a (page 2)",
+        "summary": "bright-field TEM micrograph: Densely packed micron-sized grains with bend contours.",
+        "measurements": [
+          {
+            "quantity": "grain size",
+            "value": "~1",
+            "unit": "µm",
+            "uncertainty": null,
+            "approximate": true
+          }
+        ],
+        "conditions": [],
+        "observations": [
+          "Dense ceramic, no obvious secondary phase"
+        ],
+        "figure_refs": [],
+        "quote": "Fig.3. Microstructure (a) and SAD patterns taken along (b) [010], and (c) [101] zones of the orthorhombic Pnma phase of La0.70Bi0.30CrO3.",
+        "image_path": "figures/p2_f2.png"
+      }
+    },
+    {
+      "id": "fig:p2_f2",
+      "type": "figure",
+      "label": "Fig. 3",
+      "data": {
+        "image_path": "figures/p2_f2.png"
+      }
+    },
+    {
+      "id": "E014",
+      "type": "evidence",
+      "label": "SAED (Fig. 3 panel b (page 2))",
+      "data": {
+        "evidence_id": "E014",
+        "system_ids": [
+          "S4"
+        ],
+        "technique": "SAED",
+        "technique_category": "diffraction",
+        "source_type": "figure",
+        "source_ref": "Fig. 3 panel b (page 2)",
+        "summary": "SAED pattern: Single-crystal spot pattern along <010>.",
+        "measurements": [
+          {
+            "quantity": "zone axis",
+            "value": "[010]",
+            "unit": null,
+            "uncertainty": null,
+            "approximate": false
+          }
+        ],
+        "conditions": [],
+        "observations": [
+          "Sharp spots, single grain",
+          "Rectangular net consistent with orthorhombic Pnma"
+        ],
+        "figure_refs": [],
+        "quote": "Fig.3. Microstructure (a) and SAD patterns taken along (b) [010], and (c) [101] zones of the orthorhombic Pnma phase of La0.70Bi0.30CrO3.",
+        "image_path": "figures/p2_f2.png"
+      }
+    },
+    {
+      "id": "E015",
+      "type": "evidence",
+      "label": "SAED (Fig. 3 panel c (page 2))",
+      "data": {
+        "evidence_id": "E015",
+        "system_ids": [
+          "S4"
+        ],
+        "technique": "SAED",
+        "technique_category": "diffraction",
+        "source_type": "figure",
+        "source_ref": "Fig. 3 panel c (page 2)",
+        "summary": "SAED pattern: Single-crystal spot pattern along <101>.",
+        "measurements": [
+          {
+            "quantity": "zone axis",
+            "value": "[101]",
+            "unit": null,
+            "uncertainty": null,
+            "approximate": false
+          }
+        ],
+        "conditions": [],
+        "observations": [
+          "Sharp spots, single grain"
+        ],
+        "figure_refs": [],
+        "quote": "Fig.3. Microstructure (a) and SAD patterns taken along (b) [010], and (c) [101] zones of the orthorhombic Pnma phase of La0.70Bi0.30CrO3.",
+        "image_path": "figures/p2_f2.png"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "paper",
+      "target": "S1",
+      "relation": "has_system"
+    },
+    {
+      "source": "paper",
+      "target": "S2",
+      "relation": "has_system"
+    },
+    {
+      "source": "paper",
+      "target": "S3",
+      "relation": "has_system"
+    },
+    {
+      "source": "paper",
+      "target": "S4",
+      "relation": "has_system"
+    },
+    {
+      "source": "paper",
+      "target": "S5",
+      "relation": "has_system"
+    },
+    {
+      "source": "S1",
+      "target": "E001",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "S2",
+      "target": "E001",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "S3",
+      "target": "E001",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "S4",
+      "target": "E001",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "S5",
+      "target": "E001",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "E001",
+      "target": "tech:XRD",
+      "relation": "uses_technique"
+    },
+    {
+      "source": "S1",
+      "target": "E002",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "S2",
+      "target": "E002",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "S3",
+      "target": "E002",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "S4",
+      "target": "E002",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "S5",
+      "target": "E002",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "E002",
+      "target": "tech:Rietveld_refinement",
+      "relation": "uses_technique"
+    },
+    {
+      "source": "S1",
+      "target": "E003",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "S2",
+      "target": "E003",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "S3",
+      "target": "E003",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "S4",
+      "target": "E003",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "S5",
+      "target": "E003",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "E003",
+      "target": "tech:Rietveld_refinement",
+      "relation": "uses_technique"
+    },
+    {
+      "source": "S4",
+      "target": "E004",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "E004",
+      "target": "tech:Rietveld_refinement",
+      "relation": "uses_technique"
+    },
+    {
+      "source": "S4",
+      "target": "E005",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "E005",
+      "target": "tech:TEM",
+      "relation": "uses_technique"
+    },
+    {
+      "source": "S4",
+      "target": "E006",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "E006",
+      "target": "tech:SAED",
+      "relation": "uses_technique"
+    },
+    {
+      "source": "S1",
+      "target": "E007",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "S2",
+      "target": "E007",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "S3",
+      "target": "E007",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "S4",
+      "target": "E007",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "S5",
+      "target": "E007",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "E007",
+      "target": "tech:XRD",
+      "relation": "uses_technique"
+    },
+    {
+      "source": "E007",
+      "target": "fig:p1_f1",
+      "relation": "from_figure"
+    },
+    {
+      "source": "S4",
+      "target": "E008",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "E008",
+      "target": "tech:Rietveld_refinement",
+      "relation": "uses_technique"
+    },
+    {
+      "source": "E008",
+      "target": "fig:p1_f2",
+      "relation": "from_figure"
+    },
+    {
+      "source": "S1",
+      "target": "E009",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "S2",
+      "target": "E009",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "S3",
+      "target": "E009",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "S4",
+      "target": "E009",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "S5",
+      "target": "E009",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "E009",
+      "target": "tech:Rietveld_refinement",
+      "relation": "uses_technique"
+    },
+    {
+      "source": "E009",
+      "target": "fig:p2_f1",
+      "relation": "from_figure"
+    },
+    {
+      "source": "S1",
+      "target": "E010",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "S2",
+      "target": "E010",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "S3",
+      "target": "E010",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "S4",
+      "target": "E010",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "S5",
+      "target": "E010",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "E010",
+      "target": "tech:Rietveld_refinement",
+      "relation": "uses_technique"
+    },
+    {
+      "source": "E010",
+      "target": "fig:p2_f1",
+      "relation": "from_figure"
+    },
+    {
+      "source": "S1",
+      "target": "E011",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "S2",
+      "target": "E011",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "S3",
+      "target": "E011",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "S4",
+      "target": "E011",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "S5",
+      "target": "E011",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "E011",
+      "target": "tech:Rietveld_refinement",
+      "relation": "uses_technique"
+    },
+    {
+      "source": "E011",
+      "target": "fig:p2_f1",
+      "relation": "from_figure"
+    },
+    {
+      "source": "S1",
+      "target": "E012",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "S2",
+      "target": "E012",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "S3",
+      "target": "E012",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "S4",
+      "target": "E012",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "S5",
+      "target": "E012",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "E012",
+      "target": "tech:Rietveld_refinement",
+      "relation": "uses_technique"
+    },
+    {
+      "source": "E012",
+      "target": "fig:p2_f1",
+      "relation": "from_figure"
+    },
+    {
+      "source": "S4",
+      "target": "E013",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "E013",
+      "target": "tech:TEM",
+      "relation": "uses_technique"
+    },
+    {
+      "source": "E013",
+      "target": "fig:p2_f2",
+      "relation": "from_figure"
+    },
+    {
+      "source": "S4",
+      "target": "E014",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "E014",
+      "target": "tech:SAED",
+      "relation": "uses_technique"
+    },
+    {
+      "source": "E014",
+      "target": "fig:p2_f2",
+      "relation": "from_figure"
+    },
+    {
+      "source": "S4",
+      "target": "E015",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "E015",
+      "target": "tech:SAED",
+      "relation": "uses_technique"
+    },
+    {
+      "source": "E015",
+      "target": "fig:p2_f2",
+      "relation": "from_figure"
+    }
+  ]
+}

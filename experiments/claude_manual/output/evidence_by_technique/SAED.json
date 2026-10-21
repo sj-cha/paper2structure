@@ -1,0 +1,186 @@
+{
+  "technique": "SAED",
+  "category": "diffraction",
+  "paper": {
+    "title": "Structural studies on Multiferroic La1-xBixCrO3 Perovskites",
+    "authors": [
+      "Aga Shahee",
+      "Dhirendra Kumar",
+      "N. P. Lalla"
+    ],
+    "doi": "10.1063/1.3606316",
+    "year": 2011,
+    "summary": "The authors made five La1-xBixCrO3 ceramics (x = 0 to 0.35) by solid-state reaction and studied their crystal structure with XRD and TEM. Rietveld refinement shows every sample is a single-phase orthorhombic perovskite (space group Pnma) with Bi on the La site. The lattice parameters and cell volume change non-monotonically with Bi content, which the authors attribute to the Bi3+ lone pair distorting Bi-O bonds and tilting the CrO6 octahedra. TEM/SAED on x = 0.3 confirms the Pnma cell."
+  },
+  "systems": {
+    "S4": {
+      "system_id": "S4",
+      "name": "La0.7Bi0.3CrO3",
+      "family": "La1-xBixCrO3",
+      "composition_variables": {
+        "x": "0.3"
+      },
+      "material_class": "perovskite oxide",
+      "form": "polycrystalline sintered pellet (bulk, inner cut surface)",
+      "synthesis": {
+        "method": "solid-state reaction",
+        "precursors": [
+          "La2O3 (99.99%)",
+          "Cr2O3 (99.99%)",
+          "Bi2O3 (99.99%, 5% excess to compensate Bi volatility)"
+        ],
+        "conditions": [
+          "ground ~10 h",
+          "1 wt% PVA solution added as binder before pelletization",
+          "preheated 550 \u00b0C in air for 2 h (binder removal)",
+          "fired 1250 \u00b0C for 5-8 h"
+        ],
+        "notes": "Pellets cut across the thickness; unreacted Bi2O3 found only on the bare upper surface, bulk is clean."
+      },
+      "structure": {
+        "crystal_system": "orthorhombic",
+        "space_group": "Pnma",
+        "lattice_parameters": [
+          {
+            "quantity": "a",
+            "value": "5.48",
+            "unit": "\u00c5",
+            "uncertainty": null,
+            "approximate": false
+          },
+          {
+            "quantity": "b",
+            "value": "7.76",
+            "unit": "\u00c5",
+            "uncertainty": null,
+            "approximate": false
+          },
+          {
+            "quantity": "c",
+            "value": "5.49",
+            "unit": "\u00c5",
+            "uncertainty": null,
+            "approximate": false
+          }
+        ],
+        "site_occupancy": [
+          "Bi substitutes on the La (A) site"
+        ],
+        "phase_purity": "single phase in bulk; Bi2O3 only on the pellet's upper surface",
+        "other": [
+          "Text gives lattice trends only; per-composition values are in Fig. 2",
+          "a, b, c above are from SAED (TEM), not XRD"
+        ]
+      }
+    }
+  },
+  "evidence": [
+    {
+      "evidence_id": "E006",
+      "system_ids": [
+        "S4"
+      ],
+      "technique": "SAED",
+      "technique_category": "diffraction",
+      "source_type": "text",
+      "source_ref": "page 2",
+      "summary": "Single-grain SAED patterns index to the orthorhombic Pnma phase along the [010] and [101] zones, confirming the XRD result.",
+      "measurements": [
+        {
+          "quantity": "a",
+          "value": "5.48",
+          "unit": "\u00c5",
+          "uncertainty": null,
+          "approximate": false
+        },
+        {
+          "quantity": "b",
+          "value": "7.76",
+          "unit": "\u00c5",
+          "uncertainty": null,
+          "approximate": false
+        },
+        {
+          "quantity": "c",
+          "value": "5.49",
+          "unit": "\u00c5",
+          "uncertainty": null,
+          "approximate": false
+        },
+        {
+          "quantity": "zone axes",
+          "value": "[010], [101]",
+          "unit": null,
+          "uncertainty": null,
+          "approximate": false
+        }
+      ],
+      "conditions": [
+        "FEI Tecnai 20 G2",
+        "selected-area diffraction from a single grain"
+      ],
+      "observations": [],
+      "figure_refs": [
+        "Fig. 3b",
+        "Fig. 3c"
+      ],
+      "quote": "the SADs belong to the orthorhombic phase with lattice parameters a= 5.48\u00c5, b= 7.76 \u00c5 & c= 5.49\u00c5",
+      "image_path": null
+    },
+    {
+      "evidence_id": "E014",
+      "system_ids": [
+        "S4"
+      ],
+      "technique": "SAED",
+      "technique_category": "diffraction",
+      "source_type": "figure",
+      "source_ref": "Fig. 3 panel b (page 2)",
+      "summary": "SAED pattern: Single-crystal spot pattern along <010>.",
+      "measurements": [
+        {
+          "quantity": "zone axis",
+          "value": "[010]",
+          "unit": null,
+          "uncertainty": null,
+          "approximate": false
+        }
+      ],
+      "conditions": [],
+      "observations": [
+        "Sharp spots, single grain",
+        "Rectangular net consistent with orthorhombic Pnma"
+      ],
+      "figure_refs": [],
+      "quote": "Fig.3. Microstructure (a) and SAD patterns taken along (b) [010], and (c) [101] zones of the orthorhombic Pnma phase of La0.70Bi0.30CrO3.",
+      "image_path": "figures/p2_f2.png"
+    },
+    {
+      "evidence_id": "E015",
+      "system_ids": [
+        "S4"
+      ],
+      "technique": "SAED",
+      "technique_category": "diffraction",
+      "source_type": "figure",
+      "source_ref": "Fig. 3 panel c (page 2)",
+      "summary": "SAED pattern: Single-crystal spot pattern along <101>.",
+      "measurements": [
+        {
+          "quantity": "zone axis",
+          "value": "[101]",
+          "unit": null,
+          "uncertainty": null,
+          "approximate": false
+        }
+      ],
+      "conditions": [],
+      "observations": [
+        "Sharp spots, single grain"
+      ],
+      "figure_refs": [],
+      "quote": "Fig.3. Microstructure (a) and SAD patterns taken along (b) [010], and (c) [101] zones of the orthorhombic Pnma phase of La0.70Bi0.30CrO3.",
+      "image_path": "figures/p2_f2.png"
+    }
+  ]
+}
