@@ -11,12 +11,37 @@ license = "MIT AND Apache-2.0"
 license-files = ["LICENSE"]
 dependencies = [
     "ase",
+    "pymatgen",
     "numpy",
     "pydantic",
-    "pydantic-ai",
-    "pyyaml"
+    "pydantic-ai==2.59.0",
+    # Coder harness (file + shell tools, Skills, Planning, Memory, Bubblewrap sandbox); 0.x API, so pinned.
+    # The sandbox also needs the `bwrap` binary: conda install -c conda-forge bubblewrap
+    "pydantic-ai-harness[coder]==0.59.0",
+    "pyyaml",
+    "rdkit",
+    "scipy",
+    "matplotlib",
+    "nvalchemi-toolkit-ops==0.5.0",
+    # CUDA 12 builds: the cluster's NVIDIA driver (550.x) supports CUDA <= 12.4, so the default
+    # CUDA 13 wheels cannot reach the GPUs. Install with
+    #   pip install -e . --extra-index-url https://download.pytorch.org/whl/cu126
+    "torch==2.14.1+cu126",
+    "warp-lang @ https://github.com/NVIDIA/warp/releases/download/v1.18.0/warp_lang-1.18.0%2Bcu12-py3-none-manylinux_2_28_x86_64.whl",
 ]
+
+[project.optional-dependencies]
+test = ["pytest"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["paper2structure*"]
+
+[tool.setuptools.package-data]
+paper2structure = ["agents/constructor/skills/*/SKILL.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["live: calls the real LLM API (needs OPENAI_API_KEY)"]
+addopts = "-m 'not live'"
+filterwarnings = ["ignore::DeprecationWarning", "ignore::UserWarning"]
