@@ -1,0 +1,285 @@
+from __future__ import annotations
+
+import logging
+import tempfile
+from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+from pydantic_ai import BinaryContent, ModelRetry, RunContext
+from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace
+from pydantic_ai_harness import FileSystem
+
+from paper2structure.agents.reviser.schemas import ReportNarrative, RevisionDecision
+from paper2structure.agents.structured_agent import StructuredAgent
+
+if TYPE_CHECKING:  # graph.state imports this package's schemas
+    from paper2structure.graph.state import ArtifactStore, ReconstructionState
+
+log = logging.getLogger(__name__)
+
+
+@dataclass
+class RevisionDeps:
+    state: ReconstructionState
+    store: ArtifactStore
+    revisions_left: int
+    report_written: bool = False  # write_report was called in this review
+
+    @property
+    def structure_ids(self) -> set[str]:
+        return set(self.state.current_ids)
+
+
+class LLMReviser(StructuredAgent):
+    """Agent 5: judges whether the built structures represent what the paper describes, and writes
+    the final report when its decision ends the run."""
+    _output_type = RevisionDecision
+    _deps_type = RevisionDeps
+    _preflight_probe = ("Health check: call write_report with the summary 'health check', the assessment 'health "
+                        "check' and no next steps, then return action 'stop_inconclusive' with reasoning 'health check'.")
+
+    def __init__(self, model, effort: str | None, max_retry: int = 3, read_scripts: bool = True):
+        super().__init__(model, effort, reviser_system_prompt(read_scripts), max_retry=max_retry)
+        self.read_scripts = read_scripts
+
+    def _capabilities(self) -> list:
+        # read-only file tools over the run's structures/ directory (scripts, sidecars)
+        return [FileSystem(read_only=True, tools=("read_file", "list_files", "grep"))] if self.read_scripts else []
+
+    @staticmethod
+    def _workspace(directory: Path) -> ReadOnlyWorkspace:
+        return ReadOnlyWorkspace(Workspace(LocalWorkspaceBackend(directory)))
+
+    def preflight(self, **run_kwargs) -> tuple[bool, str]:
+        """A health-check review in a throwaway run directory, through the report tool."""
+        from paper2structure.graph.state import ArtifactStore, ReconstructionState  # graph imports this package
+
+        with tempfile.TemporaryDirectory(prefix="p2s-preflight-") as tmp:
+            deps = RevisionDeps(state=ReconstructionState(run_id="preflight"), store=ArtifactStore(tmp),
+                                revisions_left=0)
+            if self.read_scripts:
+                run_kwargs["workspace"] = self._workspace(Path(tmp))
+            return super().preflight(deps=deps, **run_kwargs)
+
+    def _register(self, agent) -> None:
+        @agent.tool
+        def write_report(ctx: RunContext[RevisionDeps], summary: str, assessment: str, next_steps: list[str]) -> str:
+            """Write the run's final report (final_report.md). Your text: `summary` (what was modeled
+            and the bottom line, two to five sentences), `assessment` (how each accepted structure
+            relates to the evidence, and the caveats a user must know before simulating it) and
+            `next_steps` (what would resolve the open questions: relaxations, alternative models,
+            further measurements). The tool adds the paper, the evidence table, the plans, every
+            structure with its validation, measured targets and script, the revision history and
+            the limitations. Call it before a decision that ends the run."""
+            if not summary.strip() or not assessment.strip():
+                raise ModelRetry("summary and assessment must not be empty")
+            deps = ctx.deps
+            deps.state.report = ReportNarrative(summary=summary.strip(), assessment=assessment.strip(),
+                                                next_steps=[n.strip() for n in next_steps if n.strip()])
+            deps.report_written = True
+            path = save_report(deps.state, deps.store)
+            return (f"wrote {deps.store.rel(path)}: your summary, assessment and {len(deps.state.report.next_steps)} "
+                    "next steps with the run's evidence, plans, structures, validation and scripts. It is "
+                    "finalized with your decision when the run ends.")
+
+        @agent.output_validator
+        def _validate(ctx: RunContext[RevisionDeps], output: RevisionDecision) -> RevisionDecision:
+            deps = ctx.deps
+            problems = []
+            known = deps.structure_ids
+            unknown = (set(output.accepted_structure_ids) | {v.structure_id for v in output.verdicts}) - known
+            if unknown:
+                problems.append(f"unknown structure IDs {sorted(unknown)} (valid: {sorted(known)})")
+            if output.action == "revisit_evidence" and deps.revisions_left <= 0:
+                problems.append("no revision budget is left: choose accept_candidates or stop_inconclusive")
+            if output.action == "revisit_evidence" and not output.feedback.strip():
+                problems.append("revisit_evidence needs concrete feedback for the evidence and planning agents")
+            if output.action == "accept_candidates" and not output.accepted_structure_ids:
+                problems.append("accept_candidates needs the accepted structure IDs")
+            if (not known and deps.state.failed_plans and deps.revisions_left > 0
+                    and output.action != "revisit_evidence"):
+                problems.append("no structure could be built but a revision is left: choose revisit_evidence and "
+                                "explain the construction failures in feedback so the planner can fix the plans")
+            if output.action != "revisit_evidence" and not deps.report_written:
+                problems.append(f"{output.action} ends the run: call write_report first")
+            if problems:
+                raise ModelRetry("Fix the decision:\n- " + "\n- ".join(problems))
+            return output
+
+    async def review(self, state: ReconstructionState, store: ArtifactStore, revisions_left: int,
+                     images: dict[str, bytes] | None = None) -> RevisionDecision:
+        """Review the current structures in `state`; `images` maps structure IDs to rendered views."""
+        deps = RevisionDeps(state=state, store=store, revisions_left=revisions_left)
+        text = reviser_prompt(state, revisions_left)
+        prompt: list = [text]
+        for sid, png in (images or {}).items():
+            prompt += [f"Rendered top and side views of {sid}:", BinaryContent(data=png, media_type="image/png")]
+        extra = {}
+        if self.read_scripts:
+            structures = store.root / "structures"
+            structures.mkdir(parents=True, exist_ok=True)
+            extra["workspace"] = self._workspace(structures)
+        return await self.arun(prompt if images else text, deps=deps, **extra)
+
+
+def reviser_prompt(state: ReconstructionState, revisions_left: int) -> str:
+    parts = ["## Paper summary", state.summary.model_dump_json(indent=1),
+             "## Experimental evidence snapshot", state.evidence.model_dump_json(indent=1),
+             "## Plans", state.plans.model_dump_json(indent=1), "## Constructed structures"]
+    current = [state.artifact(i) for i in state.current_ids]
+    if not current:
+        parts.append("No structure was built.")
+    for a in current:
+        rep = state.validation_reports.get(a.structure_id)
+        parts.append("\n".join([
+            f"### {a.structure_id} (plan {a.plan_id})",
+            a.description,
+            f"built by {Path(a.script).name}: {a.method or 'no method reported'}",
+            "measured targets: " + ("; ".join(f"{t.property} {t.measured} ({'met' if t.satisfied else 'NOT met'})"
+                                              for t in a.target_checks) or "none reported"),
+            f"deviations from plan: {'; '.join(a.deviations) or 'none reported'}",
+            f"deterministic validation: {rep.summary() if rep else 'not run'}",
+        ]))
+    if state.failed_plans:
+        parts += ["## Plans that could not be built"] + [f"- {k}: {v}" for k, v in state.failed_plans.items()]
+    parts.append(f"Revisions left: {revisions_left}"
+                 + ("" if revisions_left > 0 else " (revisit_evidence is not available)"))
+    return "\n\n".join(parts)
+
+
+def reviser_system_prompt(read_scripts: bool = True) -> str:
+    scripts = ("""
+- Each structure was built by the standalone script named in its section (`<structure id>.py`).
+  Read it with read_file when the summary leaves open how a feature was made (how the shell
+  was assigned, where a defect sits, how a molecule was placed); judge the structure, not the
+  coding style.""" if read_scripts else "")
+    return """\
+You are the Scientific Revision agent of Paper2Structure. You judge whether the constructed atomic
+structures plausibly represent the system the paper studies: the material and phase, the exposed
+surface or particle, the adsorbate identity and protonation state, the binding mode and
+site, coverage, and any solvent. Compare every structure with the paper summary, the evidence
+snapshot and the plan it realizes.
+
+Rules
+- Deterministic validation results are authoritative for geometry (overlaps, broken molecules,
+  vacuum). Judge resemblance to the paper qualitatively; never invent numerical agreement scores
+  and never treat the authors' proposed mechanism as proven.
+- Accepting a structure means it is a reasonable starting structure for simulation, not that it is
+  experimentally established. List the observations it does not explain and the assumptions it
+  rests on under `unresolved`.
+- Give a verdict for every structure. Check the measured targets against the plan and the
+  evidence.""" + scripts + """
+
+Actions
+- accept_candidates: one or more structures pass validation and represent the paper's system;
+  list them in accepted_structure_ids. Keep several when the evidence cannot tell them apart.
+- revisit_evidence: an important feature of the paper is missing or wrong in the structures, or
+  plans could not be built, and re-reading the evidence and re-planning could fix it. This re-runs
+  evidence analysis, planning and construction. Write concrete feedback naming what is wrong and
+  what the paper indicates; for plans that could not be built, restate why.
+- stop_inconclusive: the evidence cannot support a meaningful model, the structures cannot be
+  repaired with the information available, or no revisions are left.
+
+Report
+- accept_candidates and stop_inconclusive end the run: call write_report first with your summary,
+  assessment and next steps. Write them for a computational scientist who will simulate the
+  accepted structures. revisit_evidence does not need a report."""
+
+
+def save_report(state: ReconstructionState, store: ArtifactStore) -> Path:
+    """final_report.md: the reviewer's summary, assessment and next steps (state.report) around
+    the deterministic record: paper, evidence, plans, structures with validation and scripts,
+    revision decisions, reproduction and limitations."""
+    s, ev, narrative = state.summary, state.evidence, state.report
+    last = state.revision_history[-1] if state.revision_history else None
+    accepted = set(last.accepted_structure_ids) if last and last.action == "accept_candidates" else set()
+    status = "under review" if state.status == "running" else state.status
+    lines = [f"# Paper2Structure report - {state.run_id}", "", f"**Status:** {status}", "",
+             "## 1. Summary",
+             narrative.summary if narrative else "No reviewer summary: the run ended before a final review.", ""]
+    if s is not None:
+        lines += ["## 2. Paper and material",
+                  f"- {s.title}" + (" (synthetic fixture, not a real publication)" if s.synthetic else ""),
+                  f"- Materials: {'; '.join(s.materials)}",
+                  f"- Adsorbates: {'; '.join(s.adsorbates) or 'none'}",
+                  f"- Objective: {s.objective}",
+                  f"- Reconstruction target: {s.reconstruction_target}", ""]
+    if ev is not None:
+        lines += ["## 3. Experimental evidence used (fixed snapshot)",
+                  "| ID | technique | observation | value | authors' interpretation |", "|---|---|---|---|---|"]
+        for e in ev.items:
+            val = f"{e.value:g} {e.unit or ''}".strip() if e.value is not None else "n/a"
+            lines.append(f"| {e.evidence_id} | {e.technique} | {e.observation} | {val} | {e.authors_interpretation or ''} |")
+        if ev.missing:
+            lines += ["", "Not provided by the paper: " + "; ".join(ev.missing)]
+        lines.append("")
+    lines.append("## 4. Structural hypotheses and plans")
+    for r, ps in enumerate(state.plan_history):
+        lines.append(f"### Plan set {r}")
+        for p in ps.plans:
+            lines += [f"- **{p.plan_id}** ({p.model_type}): {p.hypothesis}",
+                      f"  - model: {p.description}",
+                      f"  - targets: {'; '.join(f'{t.property} {t.value}' for t in p.targets) or 'none'}",
+                      f"  - evidence: {', '.join(p.evidence_ids) or 'none'}",
+                      f"  - assumptions: {'; '.join(p.assumptions) or 'none stated'}"]
+    lines += ["", "## 5. Constructed structures and validation",
+              "| structure | plan | formula | atoms | validation | accepted | files | script |",
+              "|---|---|---|---|---|---|---|---|"]
+    for a in state.artifacts:
+        rep = state.validation_reports.get(a.structure_id)
+        files = ", ".join(f"[{k}]({v})" for k, v in a.files.items())
+        lines.append(f"| {a.structure_id} | {a.plan_id} | {a.formula} | {a.n_atoms} | "
+                     f"{rep.summary() if rep else 'not validated'} | {'yes' if a.structure_id in accepted else ''} | "
+                     f"{files} | [{Path(a.script).name}]({a.script}) |")
+    for a in state.artifacts:
+        lines += ["", f"**{a.structure_id}** - {a.method or 'no method reported'}"]
+        lines += [f"- target {t.property}: {t.measured} ({'met' if t.satisfied else 'NOT met'}"
+                  + (f"; {t.method}" if t.method else "") + ")" for t in a.target_checks]
+        lines += [f"- deviation: {d}" for d in a.deviations]
+    if state.failed_plans:
+        lines += ["", "Plans that could not be built: " + "; ".join(f"{k}: {v}" for k, v in state.failed_plans.items())]
+    lines += ["", "## 6. Revision decisions"]
+    for k, d in enumerate(state.revision_history):
+        lines += [f"- Review {k}: **{d.action}** - {d.reasoning}"]
+        if d.feedback:
+            lines.append(f"  - feedback: {d.feedback}")
+        for v in d.verdicts:
+            lines.append(f"  - {v.structure_id}: {'resembles' if v.resembles_paper else 'does not resemble'} the paper"
+                         + (f" ({'; '.join(v.issues)})" if v.issues else ""))
+    if narrative:
+        lines += ["", "## 7. Assessment", narrative.assessment]
+    if last and last.unresolved:
+        lines += ["", "Unexplained observations and unverified assumptions:"] + [f"- {u}" for u in last.unresolved]
+    if narrative and narrative.next_steps:
+        lines += ["", "## 8. Next steps"] + [f"- {n}" for n in narrative.next_steps]
+    lines += ["", "## 9. Reproduce and modify",
+              "Each `structures/<id>.py` is the standalone script that generated `<id>`: it was re-run alone in an "
+              "empty directory and reproduced the structure exactly. `python structures/<id>.py` rebuilds it into "
+              "`structures/` of the current directory (needs the paper2structure package); edit the parameters at "
+              "the top to explore variants. The agent's full workspaces, with every intermediate script, are in "
+              "`construction/r<revision>_a<attempt>/workspace/`."]
+    lines += ["", "## 10. Limitations",
+              "- Agents 1-2 are placeholders that load the input fixtures; the evidence was not re-analyzed on revision.",
+              "- Structures are unrelaxed starting geometries; no energies, relaxations or simulated observables "
+              "(XPS, IR, XRD) were computed, so agreement with experiment is qualitative only.",
+              "- Acceptance means a plausible simulation starting point, not an experimentally established structure."]
+    if state.errors:
+        lines += ["", "## Errors"] + [f"- {e}" for e in state.errors]
+    path = store.path("final_report.md")
+    path.write_text("\n".join(lines) + "\n")
+    return path
+
+
+def save_structures_readme(state: ReconstructionState, store: ArtifactStore) -> Path:
+    """structures/README.md: which script rebuilds which structure, and how to run it."""
+    lines = ["# Structures", "",
+             "Every structure here comes with the standalone script that generated it (verified by re-running it "
+             "alone in an empty directory). To rebuild or modify one:", "",
+             "```bash", "pip install -e <paper2structure checkout>   # once", "python <id>.py   # writes structures/<name>.extxyz and .vasp", "```",
+             "", "| structure | plan | formula | atoms | script | built as |", "|---|---|---|---|---|---|"]
+    for a in state.artifacts:
+        lines.append(f"| {a.structure_id} | {a.plan_id} | {a.formula} | {a.n_atoms} | {Path(a.script).name} | {a.name} |")
+    path = store.path("structures", "README.md")
+    path.write_text("\n".join(lines) + "\n")
+    return path
