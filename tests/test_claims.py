@@ -160,7 +160,7 @@ def test_planner_checks_the_formula_of_a_crystal_with_molecules():
     assert check_plan_set(PlanSet.model_validate(plan), deps) == []
     plan["plans"][0]["crystals"][0]["molecules"][0]["per_cell"] = 6
     problems = check_plan_set(PlanSet.model_validate(plan), deps)
-    assert any("6 BA" in p and "not the stated formula" in p for p in problems), problems
+    assert any("6 BA" in p and "x 4 formula units per cell is C32 H96 I16 N8 Pb4" in p for p in problems), problems
 
 
 def test_fill_cavities_is_not_specific_to_perovskites():
@@ -178,3 +178,19 @@ def test_fill_cavities_is_not_specific_to_perovskites():
     from paper2structure.tools.geometry_checks import validate_structure
     report = {c.name: c.status for c in validate_structure(with_co2, "CO2", max_atoms=5000, min_vacuum=10.0).checks}
     assert report["overlaps"] == report["molecule_integrity"] == report["molecule_geometry"] == "pass"
+
+
+def test_try_crystal_reports_what_a_spec_builds():
+    from paper2structure.agents.planner.agent import describe_crystal
+    from paper2structure.agents.planner.schemas import BulkSpec
+
+    spec = BulkSpec.model_validate({
+        "name": "S1", "formula": "(C4H9NH3)2PbI4", "space_group": "Pbca", "formula_units": 4,
+        "sites": [{"species": s, "coords": c} for s, c in zip(BA2PBI4["species"], BA2PBI4["coords"])],
+        "molecules": [{"name": "BA", "smiles": "CCCC[NH3+]", "per_cell": 8}],
+        "lattice": {"a": 8.863, "b": 8.682, "c": 27.57, "source": "literature"}})
+    text = describe_crystal(spec)
+    assert "found Pbca (61) at symprec 0.01 A" in text and "Pb: 6-6 I at 3.19-3.22 A" in text
+    assert "Pb-I-Pb bridging angles: 150.0-150.0 deg" in text
+    overlapping = spec.model_copy(update={"sites": spec.sites[:2] + [spec.sites[2].model_copy(update={"coords": (0.0, 0.0, 0.0)})]})
+    assert describe_crystal(overlapping).startswith("PROBLEMS:")

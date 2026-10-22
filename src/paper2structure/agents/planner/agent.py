@@ -41,15 +41,64 @@ def _smiles_elements(smiles: str) -> set[str] | None:
     return {a.GetSymbol() for a in Chem.AddHs(mol).GetAtoms()}
 
 
+def _build(bulk: BulkSpec):
+    lat = bulk.lattice
+    return build_bulk(bulk.space_group, [s.species for s in bulk.sites], [list(s.coords) for s in bulk.sites],
+                      a=lat.a, b=lat.b, c=lat.c, alpha=lat.alpha, beta=lat.beta, gamma=lat.gamma,
+                      formula_units=None if bulk.molecules else bulk.formula_units, check_bonded=not bulk.molecules)
+
+
+def describe_crystal(bulk: BulkSpec) -> str:
+    """What a crystal spec builds (the try_crystal tool): the problems the plan check would report,
+    or the generated cell's composition, symmetry, coordination with bond lengths, and the angles
+    at atoms bridging two others of one element (M-O-M, Si-O-Si, ...)."""
+    import io
+    from contextlib import redirect_stdout
+
+    import numpy as np
+    import spglib
+    from ase.neighborlist import neighbor_list
+
+    from paper2structure.tools._geometry import rcov
+
+    problems = _check_bulk(bulk)
+    if problems:
+        return "PROBLEMS:\n- " + "\n- ".join(problems)
+    with redirect_stdout(io.StringIO()):
+        atoms = _build(bulk)
+    sym = np.array(atoms.get_chemical_symbols())
+    found = {p: spglib.get_spacegroup((atoms.cell.array, atoms.get_scaled_positions(), atoms.numbers), symprec=p)
+             for p in (0.01, 0.1)}
+    lines = [f"framework {atoms.get_chemical_formula()} ({len(atoms)} atoms), "
+             + (f"plus {', '.join(f'{m.per_cell} {m.name}' for m in bulk.molecules)} per cell; " if bulk.molecules else "")
+             + f"requested {bulk.space_group} (#{space_group_number(bulk.space_group)}), found {found[0.01]} at "
+               f"symprec 0.01 A and {found[0.1]} at 0.1 A"]
+    i, j, d, D = neighbor_list("ijdD", atoms, 1.25 * rcov(sym))
+    for el in sorted(set(sym)):
+        parts = []
+        for nb in sorted(set(sym[j[sym[i] == el]])):
+            m = (sym[i] == el) & (sym[j] == nb)
+            cn = np.bincount(i[m], minlength=len(atoms))[sym == el]
+            parts.append(f"{cn.min()}-{cn.max()} {nb} at {d[m].min():.2f}-{d[m].max():.2f} A")
+        lines.append(f"{el}: " + ("; ".join(parts) if parts else "no neighbour within 1.25 x covalent radii"))
+    for el in sorted(set(sym)):
+        angles = {}
+        for k in np.where(sym == el)[0]:
+            m = i == k
+            for nb in set(sym[j[m]]):
+                v = D[m][sym[j[m]] == nb]
+                if len(v) == 2:
+                    cos = v[0] @ v[1] / (np.linalg.norm(v[0]) * np.linalg.norm(v[1]))
+                    angles.setdefault(nb, []).append(float(np.degrees(np.arccos(np.clip(cos, -1, 1)))))
+        lines += [f"{nb}-{el}-{nb} bridging angles: {min(a):.1f}-{max(a):.1f} deg" for nb, a in sorted(angles.items())]
+    return "\n".join(lines)
+
+
 def _check_bulk(bulk: BulkSpec) -> list[str]:
     """Build the bulk exactly as specified; a plan whose crystal cannot be built (wrong Wyckoff
     setting, overlapping sites, wrong composition) goes back to the planner, not to construction."""
-    lat = bulk.lattice
     try:
-        atoms = build_bulk(bulk.space_group, [s.species for s in bulk.sites], [list(s.coords) for s in bulk.sites],
-                           a=lat.a, b=lat.b, c=lat.c, alpha=lat.alpha, beta=lat.beta, gamma=lat.gamma,
-                           formula_units=None if bulk.molecules else bulk.formula_units,
-                           check_bonded=not bulk.molecules)
+        atoms = _build(bulk)
     except Exception as e:  # noqa: BLE001 - every builder error is a planning error here
         return [f"bulk {bulk.formula} ({bulk.space_group}) cannot be built: {e}"]
     if bulk.molecules:
@@ -132,10 +181,12 @@ def _check_molecular_crystal(bulk: BulkSpec, framework: Composition) -> list[str
     except Exception:  # noqa: BLE001
         return [f"bulk formula {bulk.formula!r} is not a chemical formula"]
     reduced, n_fu = total.get_reduced_composition_and_factor()
-    made = (f"the framework sites ({framework.formula}) and the molecules per cell "
-            f"({', '.join(f'{m.per_cell} {m.name}' for m in bulk.molecules)}) make {total.formula}")
+    made = (f"the framework sites ({framework.alphabetical_formula}) and the molecules per cell "
+            f"({', '.join(f'{m.per_cell} {m.name}' for m in bulk.molecules)}) make {total.alphabetical_formula}")
     if reduced.reduced_formula != stated.reduced_formula:
-        return [f"{made}, not the stated formula {stated.reduced_formula}: check the sites and the molecule counts"]
+        z = bulk.formula_units or 1
+        return [f"{made}, but {bulk.formula} x {z} formula units per cell is {(stated * z).alphabetical_formula}: "
+                "check the framework sites and the molecules per cell"]
     units = total.num_atoms / stated.num_atoms
     if bulk.formula_units is not None and abs(units - bulk.formula_units) > 1e-6:
         return [f"{made}: {units:g} formula units of {bulk.formula}, not {bulk.formula_units}"]
@@ -151,7 +202,7 @@ def check_plan_set(plans: PlanSet, deps: PlanningDeps) -> list[str]:
     for p in plans.plans:
         cited = (set(p.evidence_ids) | {e for c in p.crystals for e in c.lattice.evidence_ids}
                  | {e for t in p.targets for e in t.evidence_ids} | {e for c in p.checks for e in c.evidence_ids})
-        unknown = cited - deps.evidence_ids
+        unknown = cited - deps.evidence_ids - set(deps.claims)
         if unknown:
             problems.append(f"{p.plan_id}: unknown evidence IDs {sorted(unknown)} (valid: {sorted(deps.evidence_ids)})")
         if not p.evidence_ids and not p.assumptions:
@@ -219,12 +270,19 @@ class LLMPlanner(StructuredAgent):
                  overrides: OverridesConfig, max_retry: int = 3):
         super().__init__(model, effort,
                          planner_system_prompt(max_plans, max_atoms, min_vacuum, overrides.describe()),
-                         max_retry=max_retry)
+                         max_retry=max_retry, output_retries=max_retry + 2)
         self.max_plans = max_plans
         self.max_atoms = max_atoms
         self.overrides = overrides
 
     def _register(self, agent) -> None:
+        @agent.tool_plain
+        def try_crystal(crystal: BulkSpec) -> str:
+            """Build one crystal spec as the plan check will: the problems to fix, or the generated
+            framework's composition, symmetry, coordination numbers with bond lengths and bridging
+            angles, to compare with what the paper reports before you put it in a plan."""
+            return describe_crystal(crystal)
+
         @agent.output_validator
         def _validate(ctx: RunContext[PlanningDeps], output: PlanSet) -> PlanSet:
             if ctx.deps is None:
@@ -283,7 +341,8 @@ Your inputs
   and text (IDs O1, O2, ... within each report), findings, and structural constraints with their
   confidence.
 - Cite evidence as summarizer evidence IDs ("E004") or as characterization observation IDs
-  qualified by their technique ("XRD:O3"); no other IDs exist.
+  qualified by their technique ("XRD:O3"), or the structural claims below by their IDs; no other
+  IDs exist.
 - The structural claims: the facts recorded for each system and the reports' structural
   constraints, each with an ID ("S2:space_group", "XRD:C3"). The structures must agree with them,
   so every plan turns each claim about its systems into checks.
@@ -325,7 +384,8 @@ What each plan decides
   from the paper; when the
   paper does not report them, from the literature for the same compound, or idealized positions
   whose free parameters reproduce the reported bond lengths and angles (state which as an
-  assumption). Never list a partial sublattice or an isolated layer as a crystal, and never leave
+  assumption). Test every crystal with try_crystal and adjust the sites until it builds with the
+  reported composition, symmetry, coordination, bond lengths and angles. Never list a partial sublattice or an isolated layer as a crystal, and never leave
   a crystalline component out of `crystals`.
 - surface (optional helper, for a crystal listed in `crystals`): Miller index, termination
   described by its exposed species, minimum thickness (A), in-plane supercell, vacuum (at least
