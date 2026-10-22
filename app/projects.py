@@ -49,7 +49,7 @@ from paper2structure.agents.summarizer.schemas import PaperGraph
 from paper2structure.config import (DEFAULT_MODEL, CharacterizationConfig, OverridesConfig, Paper2StructureConfig,
                                     canonical_technique, get_model, load_config)
 from paper2structure.graph.nodes import characterize
-from paper2structure.graph.workflow import build_deps, run_workflow
+from paper2structure.graph.workflow import build_deps, make_planner, run_workflow
 from structure_info import compute_estimate, structure_info
 
 REPO = Path(__file__).resolve().parents[1]
@@ -239,8 +239,8 @@ class Settings:
 
 
 def available_techniques(graph: PaperGraph) -> list[str]:
-    """The techniques found in the paper that have an analysis agent, sorted."""
-    return [t for t in sorted({e.technique for e in graph.evidence}) if (spec := find_spec(t)) and spec.implemented]
+    """The techniques found in the paper that have an analysis agent (every one in the vocabulary), sorted."""
+    return [t for t in sorted({e.technique for e in graph.evidence}) if find_spec(t)]
 
 
 def resolve_techniques(graph: PaperGraph, requested: list[str]) -> list[str]:
@@ -486,8 +486,7 @@ def make_plan(project: Project, settings: Settings, evidence: ExperimentalEviden
     graph = project.focused_graph(settings.systems)
     say(f"Planning structures (Agent 3) for {', '.join(names[i] for i in settings.systems)}: "
         f"{settings.method}, at most {settings.max_atoms} atoms, {settings.max_plans} hypothesis/es...")
-    planner = LLMPlanner(model, effort, max_plans=settings.max_plans, max_atoms=settings.max_atoms, min_vacuum=15.0,
-                         overrides=settings.overrides(names), max_retry=2)
+    planner = make_planner(settings_config(project, settings, names))  # the planner the graph run would build
     started = time.time()
     plans = asyncio.run(planner.plan(graph, evidence, [], ""))
     key = settings.plan_key(model, effort, techniques)
@@ -522,14 +521,23 @@ class SavedPlanner:
         return self.planner.preflight(**kwargs)
 
 
-def build_config(project: Project, settings: Settings, paper_graph: Path, characterization: Path,
-                 names: dict[str, str]) -> Paper2StructureConfig:
+def settings_config(project: Project, settings: Settings, names: dict[str, str]) -> Paper2StructureConfig:
+    """config/config.yml with the paper's model and the page's settings: what panel 3's planner and
+    the graph run share."""
     cfg = load_config(str(BASE_CONFIG))
     cfg.campaign.model, cfg.campaign.reasoning_effort, cfg.campaign.max_retry = project.meta["model"], project.meta["effort"], 2
-    cfg.inputs.pdf, cfg.inputs.paper_graph, cfg.inputs.characterization = None, str(paper_graph), str(characterization)
+    cfg.campaign.simulation = "DFT" if settings.method == "DFT" else "MLIP"  # MD runs on a machine-learned potential
     cfg.characterization.reasoning_effort = project.meta["effort"]
     cfg.planning.max_plans, cfg.planning.max_atoms = settings.max_plans, settings.max_atoms
+    cfg.budgets.max_revisions, cfg.budgets.max_repairs = settings.max_revisions, settings.max_repairs
     cfg.overrides = settings.overrides(names)
+    return cfg
+
+
+def build_config(project: Project, settings: Settings, paper_graph: Path, characterization: Path,
+                 names: dict[str, str]) -> Paper2StructureConfig:
+    cfg = settings_config(project, settings, names)
+    cfg.inputs.pdf, cfg.inputs.paper_graph, cfg.inputs.characterization = None, str(paper_graph), str(characterization)
     sandboxed = sandbox_available()[0]
     cc = cfg.construction
     cc.sandbox = "bubblewrap" if sandboxed else "none"
@@ -567,8 +575,7 @@ def run_generate(project: Project, settings: Settings, say: Callable[[str], None
         "characterization": char_key, "sandbox": cfg.construction.sandbox, "created": _now(),
         "systems": {i: names[i] for i in settings.systems}})
     _write_json(run_dir / "config.json", {"config": cfg.model_dump(mode="json")})
-    deps = build_deps(cfg, run_dir, seed=settings.seed, max_revisions=settings.max_revisions,
-                      max_repairs=settings.max_repairs)
+    deps = build_deps(cfg, run_dir, seed=settings.seed)  # the loop budgets are in cfg.budgets
     deps.planner = SavedPlanner(PlanSet.model_validate(record["plans"]), deps.planner)
     say("Starting the graph run: the saved summary, evidence and plan are loaded from disk (Agents 1-3 are not "
         f"run again); then construction and review (Agents 4-5, {settings.method}, at most {settings.max_atoms} atoms, "
@@ -602,7 +609,7 @@ def _summary_view(project: Project, graph: PaperGraph) -> dict:
         spec = find_spec(e.technique)
         t = techniques.setdefault(e.technique, {
             "name": e.technique, "count": 0, "figures": 0,
-            "agent": "ready" if spec and spec.implemented else ("stub" if spec else "none")})
+            "agent": "ready" if spec else "none"})
         t["count"] += 1
         t["figures"] += e.source_type == "figure"
     evidence = []
@@ -648,6 +655,8 @@ def run_detail(project: Project, name: str) -> dict:
     validation = _read_json(run / "validation_reports.json", {})
     history = _read_json(run / "revision_history.json", [])
     accepted = set(result["accepted_structure_ids"]) if result else set()
+    # the latest plan set's structures, not rebuilt since (None for runs made before result.json listed them)
+    current = set(result["current_structure_ids"]) if result and "current_structure_ids" in result else None
     method = (settings.get("settings") or {}).get("method", "DFT")
     structures = []
     for a in artifacts:
@@ -655,6 +664,7 @@ def run_detail(project: Project, name: str) -> dict:
         rep = validation.get(a["structure_id"], {})
         structures.append({
             **a, "accepted": a["structure_id"] in accepted, "info": structure_info(atoms),
+            "current": None if current is None else a["structure_id"] in current,
             "estimate": compute_estimate(atoms, method), "plan": plans.get(a["plan_id"]),
             "validation": {"passed": rep.get("passed"), "checks": rep.get("checks", [])},
             "downloads": {**{fmt: f"/api/projects/{project.id}/files/runs/{name}/{p}" for fmt, p in a["files"].items()},

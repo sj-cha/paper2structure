@@ -61,7 +61,7 @@ function settingsLabel(s) {
 
 function statusText(status) {
   return {accepted: 'accepted by the reviewer', inconclusive: 'built, reviewer not convinced',
-          revision_budget_exhausted: 'built; reviewer wanted another loop', failed: 'failed', unfinished: 'unfinished'}[status] || status;
+          failed: 'failed', unfinished: 'unfinished'}[status] || status;
 }
 
 const latticeText = (l) => ['a', 'b', 'c', 'alpha', 'beta', 'gamma'].filter((k) => l[k] != null).map((k) => `${k}=${l[k]}`).join(', ');
@@ -521,7 +521,7 @@ function renderStep2() {
 
   const chips = p.summary.techniques.map((t) => {
     const ready = t.agent === 'ready', on = st.techniques.includes(t.name);
-    const why = t.agent === 'stub' ? 'no analysis agent for this technique yet' : 'not in the technique vocabulary';
+    const why = 'not in the technique vocabulary';
     return `<label class="chip ${ready ? '' : 'off'}" title="${ready ? `${t.count} evidence items` : why}">
       <input type="checkbox" data-tech="${esc(t.name)}" ${on ? 'checked' : ''} ${ready ? '' : 'disabled'}> ${esc(t.name)} <span class="muted">${t.count}</span></label>`;
   }).join('');
@@ -750,6 +750,7 @@ function structureCard(s, verdict) {
     : (verdict ? `<span class="badge ${verdict.resembles_paper ? 'ok' : 'bad'}">${verdict.resembles_paper ? 'resembles the paper' : 'does not resemble the paper'}</span>` : '');
   return `<div class="card structure" data-sid="${esc(s.structure_id)}">
     <div class="struct-head"><h3>${esc(s.structure_id)}</h3>${verdictBadge}
+      ${s.current === false && !s.accepted ? '<span class="badge" title="rebuilt, repaired or from an earlier plan set">superseded</span>' : ''}
       <span class="badge ${s.validation.passed ? 'ok' : 'bad'}">geometry ${s.validation.passed ? '✓' : '✗'}</span>
       <span class="facts">${esc(i.formula)} · ${i.atoms.toLocaleString()} atoms · ${a} × ${b} × ${c} Å · periodic ${esc(i.periodic)}</span>
       <span class="grow"></span>

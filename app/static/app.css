@@ -122,7 +122,7 @@ button.icon:hover { color: var(--bad); background: transparent; }
 .badge { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 500; padding: 2px 9px; border-radius: 999px; background: var(--chip); color: var(--muted); white-space: nowrap; }
 .badge.ok, .badge.done, .badge.status-accepted { background: var(--ok-soft); color: var(--ok); }
 .badge.bad, .badge.failed, .badge.status-failed { background: var(--bad-soft); color: var(--bad); }
-.badge.busy, .badge.running, .badge.queued, .badge.status-inconclusive, .badge.status-revision_budget_exhausted, .badge.status-unfinished { background: var(--warn-soft); color: var(--warn); }
+.badge.busy, .badge.running, .badge.queued, .badge.status-inconclusive, .badge.status-unfinished { background: var(--warn-soft); color: var(--warn); }
 .badge.conf-high { background: var(--ok-soft); color: var(--ok); } .badge.conf-medium { background: var(--warn-soft); color: var(--warn); } .badge.conf-low { background: var(--bad-soft); color: var(--bad); }
 .badge.kind { background: var(--accent-soft); color: var(--accent); }
 

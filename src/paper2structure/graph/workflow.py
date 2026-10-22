@@ -33,6 +33,15 @@ def build_graph():
     return g.build()
 
 
+def make_planner(cfg: Paper2StructureConfig, model=None) -> LLMPlanner:
+    """Agent 3 as the run config sets it up (also for planning outside a graph run, e.g. the web tool's
+    panel 3). `model` overrides cfg.campaign.model."""
+    c = cfg.campaign
+    return LLMPlanner(model or c.model, c.reasoning_effort, max_plans=cfg.planning.max_plans,
+                      max_atoms=cfg.planning.max_atoms, min_vacuum=cfg.validation.min_vacuum, overrides=cfg.overrides,
+                      max_retry=c.max_retry, simulation=c.simulation)
+
+
 def build_deps(cfg: Paper2StructureConfig, output_dir: str | Path, seed: int, max_revisions: Optional[int] = None,
                max_repairs: Optional[int] = None, models: Optional[dict] = None,
                max_rebuilds: Optional[int] = None) -> WorkflowDeps:
@@ -41,9 +50,7 @@ def build_deps(cfg: Paper2StructureConfig, output_dir: str | Path, seed: int, ma
     instances or names (tests, "dry-run"); otherwise cfg.campaign.model is used."""
     models = models or {}
     c = cfg.campaign
-    planner = LLMPlanner(models.get("planner", c.model), c.reasoning_effort, max_plans=cfg.planning.max_plans,
-                         max_atoms=cfg.planning.max_atoms, min_vacuum=cfg.validation.min_vacuum,
-                         overrides=cfg.overrides, max_retry=c.max_retry, simulation=c.simulation)
+    planner = make_planner(cfg, models.get("planner"))
     constructor = LLMConstructor(models.get("constructor", c.model), c.reasoning_effort, cfg)
     overrides = cfg.overrides.describe()
     constraints = "\n".join([
