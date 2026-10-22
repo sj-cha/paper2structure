@@ -96,7 +96,12 @@ For each panel:
 - describe what the panel shows (samples, traces, insets, annotations) in one or two sentences.
 Do NOT read values off the figure: no peak positions, spacings, sizes, or trends. The specialists
 read the image themselves.
-If the image is not a scientific figure (logo, journal banner), return no panels and
+A table is catalogued the same way: one panel per table with plot_type "table", the technique
+whose results it lists (Rietveld or diffraction refinement -> XRD, binding energies -> XPS, fitted
+shells -> XAS, ...), the systems in its rows or columns, its column headings with units as the axes,
+and what it lists in the description, without transcribing its values (its text is in the paper
+text, and the specialist reads the image).
+If the image is not a scientific figure or table (logo, journal banner), return no panels and
 useful_for_structure=false.
 {TECHNIQUE_GUIDE}
 """,

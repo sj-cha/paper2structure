@@ -383,6 +383,46 @@ def test_read_pdf_extracts_text_and_vector_figure(tmp_path, paper_pdf):
     assert read_pdf(paper_pdf, tmp_path / "none", max_figures=0).figures == []
 
 
+def test_read_pdf_keeps_table_text_and_exports_tables_as_images(tmp_path):
+    """A grid-ruled table (its rules form a drawn region, whose text used to be dropped as figure
+    text), a booktabs table (no drawn region: it used to get no image) and a figure on one page."""
+    path = tmp_path / "tables.pdf"
+    doc = pymupdf.open()
+    page = doc.new_page(width=595, height=842)
+    reference = "Table 1 lists the refined lattice parameters of both samples."
+    page.insert_text((72, 80), reference, fontsize=10)
+    page.insert_text((72, 120), "Table 1. Refined lattice parameters.", fontsize=10)
+    x, y = [72, 200, 320, 440], [130, 150, 170, 190]
+    for yy in y:
+        page.draw_line((x[0], yy), (x[-1], yy))
+    for xx in x:
+        page.draw_line((xx, y[0]), (xx, y[-1]))
+    for r, row in enumerate([("Sample", "a (A)", "c (A)"), ("S1", "5.4321", "13.2468"), ("S2", "5.4987", "13.3579")]):
+        for c, cell in enumerate(row):
+            page.insert_text((x[c] + 5, y[r] + 14), cell, fontsize=9)
+    page.insert_text((72, 240), "Table 2. Bond lengths.", fontsize=10)
+    for yy in (250, 268, 304):
+        page.draw_line((72, yy), (440, yy))
+    for r, row in enumerate([("Bond", "S1", "S2"), ("Ti-O", "1.9345", "1.9876"), ("Ti-Ti", "3.0412", "3.0587")]):
+        for c, cell in enumerate(row):
+            page.insert_text((x[c] + 5, 263 if r == 0 else 282 + 16 * (r - 1)), cell, fontsize=9)
+    page.draw_rect(pymupdf.Rect(150, 400, 450, 600))
+    page.draw_polyline([(150 + 3 * i, 590 - (150 if i in (30, 55) else 5 * (i % 3))) for i in range(101)])
+    page.insert_text((150, 630), "Fig. 1 XRD patterns of S1 and S2.", fontsize=10)
+    doc.save(path)
+    doc.close()
+
+    paper = read_pdf(path, tmp_path / "figures")
+    assert [(f.figure_id, f.kind, f.caption) for f in paper.figures] == [
+        ("p1_f1", "figure", "Fig. 1 XRD patterns of S1 and S2."),
+        ("p1_t1", "table", "Table 1. Refined lattice parameters."),
+        ("p1_t2", "table", "Table 2. Bond lengths.")]
+    assert paper.figures[1].context == [reference]  # "Table 1 lists ..." is body text citing it, not a caption
+    for value in ("5.4321", "13.2468", "5.4987", "13.3579", "1.9345", "1.9876", "3.0412", "3.0587"):
+        assert value in paper.full_text
+    assert all(f.image_path.exists() for f in paper.figures)
+
+
 def _earlier_run(tmp_path: Path, errors: str = "") -> Path:
     """The paper/ and characterization/ folders of an earlier run (optionally with summarizer errors)."""
     earlier = tmp_path / "earlier"

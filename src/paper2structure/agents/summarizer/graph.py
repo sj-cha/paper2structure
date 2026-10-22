@@ -79,7 +79,9 @@ class ReadPDF(BaseNode[SummarizerState, SummarizerDeps, PaperGraph]):
         ctx.deps.on_progress("Reading the PDF and cutting out figures...")
         doc = read_pdf(ctx.state.pdf_path, ctx.state.out_dir / "figures", max_figures=ctx.deps.max_figures)
         ctx.state.document = doc
-        ctx.deps.on_progress(f"Found {len(doc.pages)} pages and {len(doc.figures)} figure regions.")
+        n_tables = sum(f.kind == "table" for f in doc.figures)
+        ctx.deps.on_progress(f"Found {len(doc.pages)} pages, {len(doc.figures) - n_tables} figure regions and "
+                             f"{n_tables} tables.")
         return FindSystems()
 
 
@@ -158,7 +160,7 @@ class AnalyzeFigure(BaseNode[SummarizerState, SummarizerDeps, PaperGraph]):
         ctx.deps.on_progress(f"Looking at figure {fig.figure_id} (page {fig.page}) [{self.index + 1}/{len(figures)}]...")
         prompt = [
             f"Material systems in this paper:\n{state.systems_text()}\n\n"
-            f"Figure id: {fig.figure_id}\n"
+            f"Figure id: {fig.figure_id}" + (" (this image is a TABLE)" if fig.kind == "table" else "") + "\n"
             f"Most likely caption for this image: {fig.caption or '(none found)'}\n"
             f"All captions on page {fig.page}: {fig.page_captions}",
             BinaryContent(data=fig.image_path.read_bytes(), media_type="image/png"),
