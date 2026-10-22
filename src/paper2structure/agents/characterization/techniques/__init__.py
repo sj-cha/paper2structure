@@ -9,6 +9,7 @@ from .mossbauer import MOSSBAUER
 from .nmr import NMR
 from .raman import RAMAN
 from .sem import SEM
+from .structure_model import STRUCTURE_MODEL
 from .tem import TEM
 from .tga import TGA
 from .uv_vis import UV_VIS
@@ -20,7 +21,7 @@ from .xrd import XRD
 REGISTRY: dict[str, TechniqueSpec] = {
     spec.name: spec for spec in (
         XRD, TEM, SEM, AFM, XPS, XAS, RAMAN, FTIR,
-        UV_VIS, NMR, MOSSBAUER, TGA, DFT,
+        UV_VIS, NMR, MOSSBAUER, TGA, DFT, STRUCTURE_MODEL,
     )
 }
 assert set(REGISTRY) == set(TECHNIQUES), f"specs and vocabulary differ: {set(REGISTRY) ^ set(TECHNIQUES)}"

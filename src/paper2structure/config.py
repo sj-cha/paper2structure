@@ -110,6 +110,11 @@ TECHNIQUES: dict[str, tuple[TechniqueCategory, tuple[str, ...]]] = {
     "Mossbauer": ("spectroscopy", ("Mossbauer spectroscopy",)),
     "TGA": ("thermal", ("thermogravimetric analysis",)),
     "DFT": ("computational", ("density functional theory", "first-principles calculations")),
+    "Structure model": ("other", (
+        "crystal structure visualization", "crystal structure model", "crystal structure rendering",
+        "crystal structure view", "structure rendering", "structural model", "polyhedral model",
+        "polyhedral representation", "ball-and-stick model", "ORTEP", "packing diagram",
+    )),
 }
 
 
