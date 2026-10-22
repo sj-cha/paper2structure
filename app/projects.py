@@ -1,20 +1,25 @@
-"""Project store and the three stages of the web tool (app/server.py).
+"""Project store, the three stages of the web tool (app/server.py) and its job runner.
 
-    1. summarize   Agent 1 on the uploaded PDF                            -> <project>/paper/
-    2. analyze     Agent 2, cached per model and technique set, then     -> <project>/characterization/<key>/
-                   Agent 3 on the material systems the user chose         -> <project>/plans/<key>.json
-    3. generate    Agents 3-5 as one graph run (main.py's workflow):      -> <project>/runs/<time>/
-                   construction, validation and review; the plan of
-                   stage 2 is handed to the graph while the settings match
+    1. summarize     Agent 1 on the uploaded PDF                          -> <project>/paper/
+    2. characterize  Agent 2, one agent per technique, cached per model,  -> <project>/characterization/<key>/
+                     effort and technique set
+    3. generate      Agent 3 on the material systems the user chose, with  -> <project>/plans/<key>.json
+                     the atom budget and DFT/MD brief (cached per settings),
+                     then Agents 4-5 as one graph run: construction,       -> <project>/runs/<time>/
+                     validation and review (the saved plan is handed to the
+                     graph; the saved summary and evidence are loaded, not
+                     recomputed)
 
 A project is a folder under outputs/projects/ holding every stage's files, so closing the page or
-restarting the server loses nothing, and "generate again" with new settings only redoes the stages
-those settings touch (the summary never, the evidence only for a new model or technique set).
+restarting the server loses nothing, and a stage only runs again when the settings it depends on
+changed. Jobs run on a small pool of worker threads (one job per paper at a time, several papers at
+once); each job's log lines are routed to it through a ContextVar.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import hashlib
 import io
 import json
@@ -41,8 +46,8 @@ from paper2structure.agents.planner.schemas import PlanSet
 from paper2structure.agents.summarizer.graph import summarize_paper
 from paper2structure.agents.summarizer.knowledge_graph import build_graph, load_graph
 from paper2structure.agents.summarizer.schemas import PaperGraph
-from paper2structure.config import (DEFAULT_MODEL, MODEL_CHOICES, CharacterizationConfig, OverridesConfig,
-                                    Paper2StructureConfig, canonical_technique, get_model, load_config)
+from paper2structure.config import (DEFAULT_MODEL, CharacterizationConfig, OverridesConfig, Paper2StructureConfig,
+                                    canonical_technique, get_model, load_config)
 from paper2structure.graph.nodes import characterize
 from paper2structure.graph.workflow import build_deps, run_workflow
 from structure_info import compute_estimate, structure_info
@@ -50,11 +55,57 @@ from structure_info import compute_estimate, structure_info
 REPO = Path(__file__).resolve().parents[1]
 ROOT = Path(os.environ.get("P2S_WEB_ROOT", REPO / "outputs" / "projects"))
 BASE_CONFIG = REPO / "config" / "config.yml"
+WORKERS = max(1, int(os.environ.get("P2S_WORKERS", "3")))  # papers processed at the same time
 EFFORTS = ("low", "medium", "high")
 MODEL_TYPES = ["bulk", "slab", "nanocrystal", "core-shell nanocrystal", "supported nanoparticle", "slab with adsorbates"]
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
-_PRICE = re.compile(r"\$([\d.]+)/\$([\d.]+)")  # "GPT-5.6 Luna · $0.20/$1.20": USD per 1M input / output tokens
 log = logging.getLogger("webtool")  # outside the paper2structure tree: its tracebacks stay out of the job logs
+
+# Models offered in the page: (group, pydantic-ai name, title, USD per 1M input tokens, per 1M output tokens,
+# note); prices checked 2026-10-22, None = not published. "google:" names go to the Gemini API (pydantic-ai
+# reads GOOGLE_API_KEY, or the older GEMINI_API_KEY); several Gemini models have a free tier. The agents take
+# any pydantic-ai model name, so this list lives in the page, not in the library.
+MODEL_CATALOG: list[tuple[str, str, str, Optional[float], Optional[float], str]] = [
+    ("OpenAI · fast and cheap", "openai:gpt-5.6-luna", "GPT-5.6 Luna", 0.20, 1.20, ""),
+    ("OpenAI · fast and cheap", "openai:gpt-6-luna", "GPT-6 Luna", 0.10, 0.50, ""),
+    ("OpenAI · fast and cheap", "openai:gpt-5-nano", "GPT-5 nano", 0.05, 0.40, "cheap per token but slow: thinks a lot per call"),
+    ("OpenAI · fast and cheap", "openai:gpt-5.4-nano", "GPT-5.4 nano", 0.20, 1.25, ""),
+    ("OpenAI · fast and cheap", "openai:gpt-5.4-mini", "GPT-5.4 mini", 0.75, 4.50, ""),
+    ("OpenAI · advanced", "openai:gpt-6.1-sol", "GPT-6.1 Sol", 2.00, 10.00, "the newest Sol"),
+    ("OpenAI · advanced", "openai:gpt-6-sol", "GPT-6 Sol", 2.00, 10.00, ""),
+    ("OpenAI · advanced", "openai:gpt-5.6-sol", "GPT-5.6 Sol", 4.00, 20.00, "promotional price until 2026-11-21"),
+    ("OpenAI · advanced", "openai:gpt-5.6-terra", "GPT-5.6 Terra", 2.00, 12.00, ""),
+    ("OpenAI · advanced", "openai:gpt-6-astra", "GPT-6 Astra", 10.00, 50.00, "the top tier; expensive"),
+    ("Google Gemini · free tier available", "google:gemini-3.8-flash", "Gemini 3.8 Flash", None, None,
+     "free tier; paid price not published; the effort setting is ignored by the library for Gemini"),
+    ("Google Gemini · free tier available", "google:gemini-3.1-flash-lite", "Gemini 3.1 Flash-Lite", None, None, "free tier"),
+    ("Google Gemini · free tier available", "google:gemini-2.5-flash", "Gemini 2.5 Flash", 0.30, 2.50, "free tier for accounts that used it before"),
+    ("Google Gemini · paid", "google:gemini-2.5-pro", "Gemini 2.5 Pro", 1.25, 10.00, ""),
+    ("Test", "dry-run", "Dry run", 0.0, 0.0, "free; canned answers for the summary and the evidence only"),
+]
+PROVIDER_KEYS = {"openai": ("OPENAI_API_KEY",), "google": ("GOOGLE_API_KEY", "GEMINI_API_KEY")}
+
+
+def provider_of(name: str) -> str:
+    """The provider of a pydantic-ai model name ("openai", "google", ...); a bare name is OpenAI's."""
+    return name.split(":", 1)[0] if ":" in name else "openai"
+
+
+def has_key(provider: str) -> bool:
+    keys = PROVIDER_KEYS.get(provider)
+    return keys is None or any(os.getenv(k) for k in keys)
+
+
+def check_model(name: str) -> None:
+    """Raise with the variable to set when the model's provider has no API key in the environment; the
+    library's get_model only knows OpenAI's, and pydantic-ai would otherwise fail inside the job."""
+    if name == "dry-run":
+        return
+    provider = provider_of(name)
+    if not has_key(provider):
+        key = PROVIDER_KEYS[provider][0]
+        raise RuntimeError(f"{key} is not set. Put it in a .env file in the repo root ({key}=...), "
+                           "or use model 'dry-run'.")
 
 
 def _now() -> str:
@@ -73,6 +124,15 @@ def _read_json(path: Path, default=None):
     return json.loads(path.read_text()) if path.exists() else default
 
 
+def _write_json(path: Path, obj) -> None:
+    """Atomic: handlers read these files while the workers write them, and a crash mid-write must not
+    leave a truncated file behind."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(obj, indent=2))
+    os.replace(tmp, path)
+
+
 # --------------------------------------------------------------------------------------
 # Models and prices
 # --------------------------------------------------------------------------------------
@@ -83,22 +143,25 @@ def default_model() -> str:
 
 
 def model_choices() -> list[dict]:
-    """The models the page offers, with the prices from paper2structure.config."""
+    """The models the page offers, grouped, with the prices from paper2structure.config."""
     out = []
-    for name, label in MODEL_CHOICES.items():
-        title, _, price = label.partition(" · ")
-        out.append({"name": name, "title": title, "price": price, "default": name == default_model(),
-                    "note": "free; test only: it covers the summary and the evidence, not the structures"
-                    if name == "dry-run" else ""})
+    for group, name, title, price_in, price_out, note in MODEL_CATALOG:
+        price = "free" if price_in == 0 else f"${price_in:.2f} / ${price_out:.2f}" if price_in else "price not published"
+        out.append({"name": name, "title": title, "group": group, "price": price, "note": note,
+                    "provider": "none" if name == "dry-run" else provider_of(name), "default": name == default_model()})
     return out
 
 
+def key_status() -> dict[str, bool]:
+    return {provider: has_key(provider) for provider in PROVIDER_KEYS}
+
+
 def estimate_cost(model: str, input_tokens: int, output_tokens: int) -> Optional[float]:
-    """USD from the price list, or None when the model's price is unknown (cached input billed as input)."""
-    m = _PRICE.search(MODEL_CHOICES.get(model, ""))
-    if not m:
-        return None
-    return round((input_tokens * float(m[1]) + output_tokens * float(m[2])) / 1e6, 4)
+    """USD from the catalogue prices, or None when the model's price is unknown (cached input billed as input)."""
+    for _, name, _, price_in, price_out, _ in MODEL_CATALOG:
+        if name == model and price_in is not None:
+            return round((input_tokens * price_in + output_tokens * price_out) / 1e6, 4)
+    return None
 
 
 # --------------------------------------------------------------------------------------
@@ -114,9 +177,9 @@ def default_max_atoms(method: str, realism: float) -> int:
 
 @dataclass
 class Settings:
-    """Everything the user chooses on panels 2 and 3, stored with every plan and run."""
+    """Everything the user chooses on panels 2 and 3, stored with every characterization, plan and run."""
     systems: list[str] = field(default_factory=list)  # the material systems to model (summarizer IDs)
-    techniques: list[str] = field(default_factory=list)  # characterize only these; empty = every technique with an agent
+    techniques: list[str] = field(default_factory=list)  # analyze only these; empty = every technique with an agent
     max_plans: int = 1  # planning.max_plans: competing hypotheses, one structure each
     method: str = "DFT"  # what the structures are for: DFT or MD
     realism: float = 0.3  # 0 = computationally cheapest model, 1 = closest to the experiment
@@ -147,12 +210,10 @@ class Settings:
         s.max_repairs = _clamp(get("max_repairs", s.max_repairs), 0, 3)
         return s
 
-    def characterization_key(self, model: str, effort: str) -> str:
-        return _hash("characterization", model, effort, self.techniques)
-
-    def plan_key(self, model: str, effort: str) -> str:
-        return _hash("plan", model, effort, self.techniques, self.systems, self.max_plans, self.method,
-                     self.realism, self.max_atoms, self.model_type)
+    def plan_key(self, model: str, effort: str, techniques: list[str]) -> str:
+        """`techniques` is the resolved list the evidence analysis ran on (see resolve_techniques)."""
+        return _hash("plan", model, effort, techniques, self.systems, self.max_plans, self.method, self.realism,
+                     self.max_atoms, self.model_type)
 
     def overrides(self, names: dict[str, str]) -> OverridesConfig:
         """The planner's hard constraints: the chosen systems, the simulation method and the realism band."""
@@ -177,6 +238,21 @@ class Settings:
         return OverridesConfig(model_type=self.model_type, notes=notes)
 
 
+def available_techniques(graph: PaperGraph) -> list[str]:
+    """The techniques found in the paper that have an analysis agent, sorted."""
+    return [t for t in sorted({e.technique for e in graph.evidence}) if (spec := find_spec(t)) and spec.implemented]
+
+
+def resolve_techniques(graph: PaperGraph, requested: list[str]) -> list[str]:
+    """The techniques the evidence analysis runs on: every available one, or the requested ones among
+    them. The same list from either spelling keys the same cached analysis."""
+    available = available_techniques(graph)
+    if not requested:
+        return available
+    wanted = {canonical_technique(t) or t for t in requested}
+    return [t for t in available if t in wanted]
+
+
 # --------------------------------------------------------------------------------------
 # Projects
 # --------------------------------------------------------------------------------------
@@ -198,18 +274,19 @@ class Project:
         return self.dir / "paper"
 
     def save(self) -> None:
-        (self.dir / "project.json").write_text(json.dumps(self.meta, indent=2))
+        _write_json(self.dir / "project.json", self.meta)
 
     @classmethod
-    def create(cls, pdf: bytes, filename: str, model: str, effort: str, analyze_figures: bool,
-               max_figures: int) -> "Project":
+    def create(cls, pdf: bytes, filename: str, model: str, effort: str, analyze_figures: bool, max_figures: int,
+               then_characterize: bool) -> "Project":
         stem = re.sub(r"[^A-Za-z0-9]+", "_", Path(filename).stem).strip("_")[:40] or "paper"
-        directory = ROOT / f"{stem}_{time.strftime('%Y%m%d-%H%M%S')}"
+        directory = ROOT / f"{stem}_{time.strftime('%Y%m%d-%H%M%S')}_{uuid.uuid4().hex[:4]}"
         directory.mkdir(parents=True)
         (directory / "paper.pdf").write_bytes(pdf)
         meta = {"id": directory.name, "title": Path(filename).stem, "pdf_name": filename, "created": _now(),
                 "model": model, "effort": effort, "analyze_figures": analyze_figures, "max_figures": max_figures,
-                "summary": None, "current_plan": None, "current_run": None, "last_settings": None}
+                "then_characterize": then_characterize, "summary": None, "current_plan": None, "current_run": None,
+                "last_settings": None}
         (directory / "project.json").write_text(json.dumps(meta, indent=2))
         return cls(directory)
 
@@ -224,7 +301,12 @@ class Project:
     def list_all() -> list["Project"]:
         if not ROOT.exists():
             return []
-        found = [Project(p.parent) for p in ROOT.glob("*/project.json")]
+        found = []
+        for p in ROOT.glob("*/project.json"):
+            try:
+                found.append(Project(p.parent))
+            except (OSError, ValueError) as e:  # one damaged folder must not hide every other paper
+                log.warning("skipping %s: %s", p.parent.name, e)
         return sorted(found, key=lambda p: p.meta.get("created", ""), reverse=True)
 
     def delete(self) -> None:
@@ -244,12 +326,26 @@ class Project:
                     for e in graph.evidence if not e.system_ids or keep & set(e.system_ids)]
         return build_graph(graph.source_pdf, graph.model, graph.metadata, systems, evidence)
 
+    @staticmethod
+    def _plan(record: Optional[dict]) -> Optional[dict]:
+        """Records saved before the technique list was stored get it from their settings (the same
+        sorted list, so the page's match check agrees with the server's key)."""
+        if record is not None:
+            record.setdefault("techniques", record["settings"].get("techniques", []))
+        return record
+
     def plan_record(self, key: str) -> Optional[dict]:
-        return _read_json(self.dir / "plans" / f"{key}.json")
+        return self._plan(_read_json(self.dir / "plans" / f"{key}.json"))
+
+    def plans(self) -> list[dict]:
+        folder = self.dir / "plans"
+        return sorted((self._plan(_read_json(p)) for p in folder.glob("*.json")), key=lambda r: r["created"],
+                      reverse=True) if folder.exists() else []
 
     def characterizations(self) -> list[dict]:
-        return sorted((_read_json(p) for p in (self.dir / "characterization").glob("*.json")),
-                      key=lambda m: m["created"], reverse=True) if (self.dir / "characterization").exists() else []
+        folder = self.dir / "characterization"
+        return sorted((_read_json(p) for p in folder.glob("*.json")), key=lambda m: m["created"], reverse=True) \
+            if folder.exists() else []
 
     def run_dir(self, name: str) -> Path:
         directory = self.dir / "runs" / name
@@ -271,9 +367,12 @@ class Project:
 
 
 def run_summarize(project: Project, say: Callable[[str], None]) -> dict:
-    meta, out = project.meta, project.paper_dir
-    model = get_model(meta["model"])  # raises without an API key
-    (out / "errors.txt").unlink(missing_ok=True)  # the summarizer only writes it when steps fail
+    """Agent 1 into a scratch folder that replaces paper/ only on success, so a rejected summary
+    (no material systems) leaves the previous one and the caches built on it untouched."""
+    meta = project.meta
+    model = get_model(meta["model"])  # raises without the provider's API key
+    scratch = project.dir / "paper.new"
+    shutil.rmtree(scratch, ignore_errors=True)
     tokens: dict[str, int] = {}
 
     def progress(message: str) -> None:
@@ -283,13 +382,19 @@ def run_summarize(project: Project, say: Callable[[str], None]) -> dict:
             tokens.update(input=int(m[1]), output=int(m[2]))
 
     started = time.time()
-    graph = asyncio.run(summarize_paper(project.dir / "paper.pdf", out, model, on_progress=progress,
-                                        analyze_figures=meta["analyze_figures"], max_figures=meta["max_figures"]))
-    errors = (out / "errors.txt").read_text().splitlines() if (out / "errors.txt").exists() else []
-    if not graph.systems:
-        raise RuntimeError("the summarizer found no material systems in this paper")
+    try:
+        graph = asyncio.run(summarize_paper(project.dir / "paper.pdf", scratch, model, on_progress=progress,
+                                            analyze_figures=meta["analyze_figures"], max_figures=meta["max_figures"]))
+        if not graph.systems:
+            raise RuntimeError("the summarizer found no material systems in this paper")
+    except Exception:
+        shutil.rmtree(scratch, ignore_errors=True)
+        raise
+    errors = (scratch / "errors.txt").read_text().splitlines() if (scratch / "errors.txt").exists() else []
     for stale in ("characterization", "plans"):  # built on the previous summary, if any
         shutil.rmtree(project.dir / stale, ignore_errors=True)
+    shutil.rmtree(project.paper_dir, ignore_errors=True)
+    os.replace(scratch, project.paper_dir)
     meta["title"] = graph.metadata.title
     meta["summary"] = {"created": _now(), "seconds": round(time.time() - started), "tokens": tokens,
                        "cost": estimate_cost(meta["model"], tokens.get("input", 0), tokens.get("output", 0)),
@@ -298,93 +403,108 @@ def run_summarize(project: Project, say: Callable[[str], None]) -> dict:
     meta["current_plan"] = None
     project.save()
     say(f"Summary done: {len(graph.systems)} material systems, {len(graph.evidence)} evidence items.")
-    return {"systems": len(graph.systems), "evidence": len(graph.evidence)}
+    result = {"systems": len(graph.systems), "evidence": len(graph.evidence)}
+    if meta.get("then_characterize"):
+        try:
+            key, _ = ensure_characterization(project, Settings(), say)
+            result["characterization"] = key
+        except Exception as e:  # noqa: BLE001 - the summary is saved and usable; only Agent 2 failed
+            say(f"Evidence analysis skipped: {e}")
+            result["characterization_error"] = str(e)
+    return result
 
 
 # --------------------------------------------------------------------------------------
-# Stage 2: characterization (cached) + plan
+# Stage 2: characterization (cached per model, effort and technique set)
 # --------------------------------------------------------------------------------------
 
 
-def _check_systems(project: Project, settings: Settings) -> dict[str, str]:
+def _check_summary(project: Project) -> PaperGraph:
     graph = project.graph()
     if graph is None:
         raise RuntimeError("summarize the paper first (panel 1)")
-    names = {s.system_id: s.name for s in graph.systems}
-    unknown = [i for i in settings.systems if i not in names]
-    if not settings.systems or unknown:
-        raise RuntimeError(f"choose the material system(s) to model on panel 2 (unknown: {unknown})" if unknown
-                           else "choose at least one material system to model on panel 2")
-    return names
+    return graph
 
 
 def ensure_characterization(project: Project, settings: Settings,
                             say: Callable[[str], None]) -> tuple[str, ExperimentalEvidence]:
     """Agent 2's reports for this model, effort and technique set: reused when they exist."""
+    graph = _check_summary(project)
     model, effort = project.meta["model"], project.meta["effort"]
-    key = settings.characterization_key(model, effort)
+    techniques = resolve_techniques(graph, settings.techniques)
+    if not techniques:
+        raise RuntimeError("none of the chosen techniques has an analysis agent; available: "
+                           + (", ".join(available_techniques(graph)) or "none in this paper"))
+    key = _hash("characterization", model, effort, techniques)
     folder, meta_path = project.dir / "characterization" / key, project.dir / "characterization" / f"{key}.json"
-    if meta_path.exists() and any(folder.glob("*.json")):
-        say(f"Evidence already analyzed for this model and technique set ({', '.join(sorted(_read_json(meta_path)['reports']))}): reused.")
+    saved = _read_json(meta_path)
+    if saved and set(saved.get("reports", [])) >= set(techniques) and any(folder.glob("*.json")):
+        say(f"Evidence already analyzed for this model and technique set ({', '.join(techniques)}): reused, no model call.")
         return key, ExperimentalEvidence.load(folder)
-    say(f"Analyzing the evidence per technique (Agent 2, {model}, effort {effort})...")
+    say(("Some techniques failed last time; analyzing again. " if saved else "")
+        + f"Analyzing the evidence per technique (Agent 2: {', '.join(techniques)}; {model}, effort {effort})...")
     started = time.time()
-    cc = CharacterizationConfig(techniques=settings.techniques or None, reasoning_effort=effort, output_retries=1)
-    evidence = asyncio.run(characterize(project.graph(), project.paper_dir, folder, get_model(model), cc))
+    cc = CharacterizationConfig(techniques=techniques, reasoning_effort=effort, output_retries=1)
+    evidence = asyncio.run(characterize(graph, project.paper_dir, folder, get_model(model), cc))
     if not evidence.reports:
-        why = "; ".join(f"{t}: {r}" for t, r in evidence.skipped.items()) or "; ".join(evidence.errors)
-        raise RuntimeError(f"no technique could be analyzed ({why})")
-    meta_path.write_text(json.dumps({
-        "key": key, "model": model, "effort": effort, "techniques": settings.techniques, "created": _now(),
+        raise RuntimeError("no technique could be analyzed: " + ("; ".join(evidence.errors) or "unknown reason"))
+    _write_json(meta_path, {
+        "key": key, "model": model, "effort": effort, "techniques": techniques, "created": _now(),
         "seconds": round(time.time() - started), "reports": sorted(evidence.reports), "skipped": evidence.skipped,
-        "errors": evidence.errors}, indent=2))
+        "errors": evidence.errors, "complete": not evidence.errors})
+    say(f"Evidence analyzed in {round(time.time() - started)} s: " + "; ".join(
+        f"{t} {len(r.observations)} observations, {len(r.structural_constraints)} constraints"
+        for t, r in evidence.reports.items()))
     return key, evidence
 
 
+def run_characterize(project: Project, settings: Settings, say: Callable[[str], None]) -> dict:
+    key, _ = ensure_characterization(project, settings, say)
+    return {"characterization": key}
+
+
+# --------------------------------------------------------------------------------------
+# Stage 3: plan (cached per settings) + construction + review (the graph run of main.py)
+# --------------------------------------------------------------------------------------
+
+
+def _check_systems(project: Project, settings: Settings) -> dict[str, str]:
+    graph = _check_summary(project)
+    names = {s.system_id: s.name for s in graph.systems}
+    unknown = [i for i in settings.systems if i not in names]
+    if not settings.systems or unknown:
+        raise RuntimeError(f"unknown material system(s) {unknown}; this paper has {sorted(names)}" if unknown
+                           else "choose at least one material system to model")
+    return names
+
+
 def make_plan(project: Project, settings: Settings, evidence: ExperimentalEvidence, char_key: str,
-              say: Callable[[str], None]) -> dict:
+              techniques: list[str], say: Callable[[str], None]) -> dict:
     """Agent 3 on the chosen systems; the plan set is saved under its settings key."""
     model, effort = project.meta["model"], project.meta["effort"]
     names = _check_systems(project, settings)
     graph = project.focused_graph(settings.systems)
-    say(f"Planning structures for {', '.join(names[i] for i in settings.systems)} "
-        f"({settings.method}, at most {settings.max_atoms} atoms, {settings.max_plans} hypothesis/es)...")
+    say(f"Planning structures (Agent 3) for {', '.join(names[i] for i in settings.systems)}: "
+        f"{settings.method}, at most {settings.max_atoms} atoms, {settings.max_plans} hypothesis/es...")
     planner = LLMPlanner(model, effort, max_plans=settings.max_plans, max_atoms=settings.max_atoms, min_vacuum=15.0,
                          overrides=settings.overrides(names), max_retry=2)
     started = time.time()
     plans = asyncio.run(planner.plan(graph, evidence, [], ""))
-    key = settings.plan_key(model, effort)
-    record = {"key": key, "characterization": char_key, "model": model, "effort": effort, "created": _now(),
-              "seconds": round(time.time() - started), "settings": asdict(settings), "usage": planner.usage,
-              "cost": estimate_cost(model, planner.usage["input"], planner.usage["output"]),
+    key = settings.plan_key(model, effort, techniques)
+    record = {"key": key, "characterization": char_key, "techniques": techniques, "model": model, "effort": effort,
+              "created": _now(), "seconds": round(time.time() - started), "settings": asdict(settings),
+              "usage": planner.usage, "cost": estimate_cost(model, planner.usage["input"], planner.usage["output"]),
               "plans": plans.model_dump(mode="json")}
-    path = project.dir / "plans" / f"{key}.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(record, indent=2))
-    project.meta["current_plan"], project.meta["last_settings"] = key, asdict(settings)
+    _write_json(project.dir / "plans" / f"{key}.json", record)
+    project.meta["current_plan"] = key
     project.save()
-    say(f"Plan ready: {len(plans.plans)} hypothesis/es: " + "; ".join(f"{p.plan_id} ({p.model_type})" for p in plans.plans))
+    say(f"Plan ready in {record['seconds']} s: " + "; ".join(f"{p.plan_id} ({p.model_type})" for p in plans.plans))
     return record
 
 
-def run_analyze(project: Project, settings: Settings, say: Callable[[str], None]) -> dict:
-    _check_systems(project, settings)
-    char_key, evidence = ensure_characterization(project, settings, say)
-    if project.meta["model"] == "dry-run":  # canned answers exist for Agents 1-2 only
-        say("Evidence analyzed. Planning needs a real model: choose one in the Model box above and click again.")
-        return {"plan": None}
-    record = make_plan(project, settings, evidence, char_key, say)
-    return {"plan": record["key"]}
-
-
-# --------------------------------------------------------------------------------------
-# Stage 3: construction + review (the graph run of main.py, with the saved plan)
-# --------------------------------------------------------------------------------------
-
-
 class SavedPlanner:
-    """Hands the graph the plan the user reviewed on panel 2 instead of planning again; a revision
-    (reviewer feedback) goes to the real planner."""
+    """Hands the graph the saved plan instead of planning again; a revision (reviewer feedback) goes
+    to the real planner."""
 
     def __init__(self, plans: PlanSet, planner: LLMPlanner):
         self.saved, self.planner = plans, planner
@@ -407,15 +527,16 @@ def build_config(project: Project, settings: Settings, paper_graph: Path, charac
     cfg = load_config(str(BASE_CONFIG))
     cfg.campaign.model, cfg.campaign.reasoning_effort, cfg.campaign.max_retry = project.meta["model"], project.meta["effort"], 2
     cfg.inputs.pdf, cfg.inputs.paper_graph, cfg.inputs.characterization = None, str(paper_graph), str(characterization)
-    cfg.characterization.techniques = settings.techniques or None
     cfg.characterization.reasoning_effort = project.meta["effort"]
     cfg.planning.max_plans, cfg.planning.max_atoms = settings.max_plans, settings.max_atoms
     cfg.overrides = settings.overrides(names)
     sandboxed = sandbox_available()[0]
     cc = cfg.construction
     cc.sandbox = "bubblewrap" if sandboxed else "none"
-    cc.max_requests = int(30 + 30 * settings.realism)  # more realistic models get a larger coding budget
-    cc.max_tool_calls = int(80 + 70 * settings.realism)
+    # the YAML default (60 requests) at the tractable end, more for realistic models: a slab with adsorbates
+    # ran out at 39 requests, a bulk cell needs about 15
+    cc.max_requests = int(60 + 40 * settings.realism)
+    cc.max_tool_calls = int(150 + 100 * settings.realism)
     cc.code_timeout = 300.0 if settings.max_atoms <= 2000 else 600.0
     if not sandboxed:
         cc.memory_limit_gb = None  # prlimit is Linux-only
@@ -427,30 +548,31 @@ def run_generate(project: Project, settings: Settings, say: Callable[[str], None
     names = _check_systems(project, settings)
     model, effort = project.meta["model"], project.meta["effort"]
     if model == "dry-run":
-        raise RuntimeError("the dry-run model only covers the summary and the evidence; choose a real model on panel 1 "
-                           "to build structures")
+        raise RuntimeError("the dry-run model only covers the summary and the evidence; choose a real model to plan "
+                           "and build structures")
     char_key, evidence = ensure_characterization(project, settings, say)
-    record = project.plan_record(settings.plan_key(model, effort))
+    techniques = _read_json(project.dir / "characterization" / f"{char_key}.json")["techniques"]
+    record = project.plan_record(settings.plan_key(model, effort, techniques))
     if record is None:
-        say("The settings changed since the plan on panel 2: planning again with the new limits...")
-        record = make_plan(project, settings, evidence, char_key, say)
+        record = make_plan(project, settings, evidence, char_key, techniques, say)
     else:
-        say(f"Reusing the plan of panel 2 ({len(record['plans']['plans'])} hypothesis/es).")
+        say(f"A plan for exactly these settings exists ({len(record['plans']['plans'])} hypothesis/es): reused, no model call.")
     run_dir = project.dir / "runs" / time.strftime("%Y%m%d-%H%M%S")
     graph_path = run_dir / "inputs" / "paper_graph.json"
     graph_path.parent.mkdir(parents=True)
     graph_path.write_text(project.focused_graph(settings.systems).model_dump_json(indent=2))
     cfg = build_config(project, settings, graph_path, project.dir / "characterization" / char_key, names)
-    (run_dir / "settings.json").write_text(json.dumps({
+    _write_json(run_dir / "settings.json", {
         "settings": asdict(settings), "model": model, "effort": effort, "plan": record["key"],
         "characterization": char_key, "sandbox": cfg.construction.sandbox, "created": _now(),
-        "systems": {i: names[i] for i in settings.systems}}, indent=2))
-    (run_dir / "config.json").write_text(json.dumps({"config": cfg.model_dump(mode="json")}, indent=2))
+        "systems": {i: names[i] for i in settings.systems}})
+    _write_json(run_dir / "config.json", {"config": cfg.model_dump(mode="json")})
     deps = build_deps(cfg, run_dir, seed=settings.seed, max_revisions=settings.max_revisions,
                       max_repairs=settings.max_repairs)
     deps.planner = SavedPlanner(PlanSet.model_validate(record["plans"]), deps.planner)
-    say(f"Building and reviewing structures (Agents 4-5, {settings.method}, at most {settings.max_atoms} atoms, "
-        f"sandbox {cfg.construction.sandbox}); this takes a few minutes...")
+    say("Starting the graph run: the saved summary, evidence and plan are loaded from disk (Agents 1-3 are not "
+        f"run again); then construction and review (Agents 4-5, {settings.method}, at most {settings.max_atoms} atoms, "
+        f"sandbox {cfg.construction.sandbox}). A few minutes...")
     started = time.time()
     result = asyncio.run(run_workflow(deps))
     project.meta["current_run"], project.meta["last_settings"] = run_dir.name, asdict(settings)
@@ -509,10 +631,11 @@ def project_state(project: Project, active_job: Optional[str]) -> dict:
     chars = project.characterizations()
     for c in chars:
         c["reports_detail"] = _reports_view(project.dir / "characterization" / c["key"])
+    plans = [{k: v for k, v in r.items() if k != "plans"} | {"n_plans": len(r["plans"]["plans"])} for r in project.plans()]
     return {"project": project.meta, "active_job": active_job,
             "summary": _summary_view(project, graph) if graph else None,
-            "characterizations": chars,
-            "plan": project.plan_record(project.meta["current_plan"]) if project.meta.get("current_plan") else None,
+            "available_techniques": available_techniques(graph) if graph else [],
+            "characterizations": chars, "plans": plans,
             "runs": [_run_summary(project, r.parent) for r in runs]}
 
 
@@ -537,12 +660,13 @@ def run_detail(project: Project, name: str) -> dict:
             "downloads": {**{fmt: f"/api/projects/{project.id}/files/runs/{name}/{p}" for fmt, p in a["files"].items()},
                           "script": f"/api/projects/{project.id}/files/runs/{name}/{a['script']}"},
             "image_url": f"/api/projects/{project.id}/files/runs/{name}/{a['image']}" if a.get("image") else None})
-    tokens = _read_json(run / "token_log.json", {})
-    usage = {k: v for k, v in tokens.items()}
+    usage = _read_json(run / "token_log.json", {})
     total_in = sum(u.get("input", 0) for u in usage.values())
     total_out = sum(u.get("output", 0) for u in usage.values())
+    plan_record = project.plan_record(settings["plan"]) if settings.get("plan") else None
     return {"name": name, "status": result["status"] if result else "unfinished", "result": result, "settings": settings,
             "structures": structures, "plans": list(plans.values()), "decision": history[-1] if history else None,
+            "plan_record": {k: v for k, v in plan_record.items() if k != "plans"} if plan_record else None,
             "report": (run / "final_report.md").read_text() if (run / "final_report.md").exists() else "",
             "errors": result["errors"] if result else [],
             "usage": {"agents": usage, "input": total_in, "output": total_out,
@@ -575,15 +699,18 @@ def run_zip(project: Project, name: str) -> bytes:
 
 
 # --------------------------------------------------------------------------------------
-# Jobs: one worker thread, the page polls
+# Jobs: a pool of worker threads, one job per paper at a time, the page polls
 # --------------------------------------------------------------------------------------
+
+CURRENT_JOB: contextvars.ContextVar[Optional["Job"]] = contextvars.ContextVar("p2s_job", default=None)
 
 
 @dataclass
 class Job:
     id: str
     project_id: str
-    kind: str  # summarize | analyze | generate
+    title: str
+    kind: str  # summarize | characterize | generate
     status: str = "queued"  # queued | running | done | failed
     log: list[str] = field(default_factory=list)
     error: Optional[str] = None
@@ -592,54 +719,66 @@ class Job:
     started: Optional[float] = None
     finished: Optional[float] = None
 
-    def to_dict(self) -> dict:
-        return asdict(self)
+    def to_dict(self, full: bool = True) -> dict:
+        d = asdict(self)
+        if not full:
+            d["log"] = self.log[-1:]  # the list views only show the last line
+        return d
 
 
 class _JobLog(logging.Handler):
-    """Routes the workflow's log lines (the agents log from worker threads too) into the running job."""
+    """One handler for every job: a record goes to the job in the ContextVar of the thread or task that
+    logged it (asyncio tasks and pydantic-ai's worker threads inherit it), or nowhere."""
 
-    def __init__(self, job: Job):
+    def __init__(self):
         super().__init__(logging.INFO)
-        self.job = job
 
     def emit(self, record: logging.LogRecord) -> None:
+        job = CURRENT_JOB.get()
+        if job is None:
+            return
         try:  # a failing display must never fail the run
-            self.job.log.append(record.getMessage())
+            job.log.append(record.getMessage())
         except Exception:  # noqa: BLE001
             pass
 
 
 class JobManager:
-    """Runs the jobs one after another on one worker thread: the agents are already concurrent
-    inside a stage, and two runs at once would mix their log lines and compete for the API."""
+    """`workers` threads take jobs from one queue; a paper never has two jobs at once (they would write
+    the same folder), different papers run in parallel."""
 
-    def __init__(self):
+    def __init__(self, workers: int = WORKERS):
         self.jobs: dict[str, Job] = {}
         self._queue: queue.Queue = queue.Queue()
-        self._lock = threading.Lock()
-        threading.Thread(target=self._worker, name="p2s-jobs", daemon=True).start()
+        self._lock = threading.RLock()
+        logger = logging.getLogger("paper2structure")
+        logger.setLevel(logging.INFO)
+        logger.addHandler(_JobLog())
+        for i in range(workers):
+            threading.Thread(target=self._worker, name=f"p2s-job-{i}", daemon=True).start()
 
-    def submit(self, project_id: str, kind: str, fn: Callable[[Callable[[str], None]], Any]) -> Job:
+    def submit(self, project: Project, kind: str, fn: Callable[[Callable[[str], None]], Any]) -> Job:
         with self._lock:
-            if self.active(project_id):
+            if self.active(project.id):
                 raise RuntimeError("this paper already has a job running; wait for it to finish")
-            job = Job(id=uuid.uuid4().hex[:12], project_id=project_id, kind=kind)
+            job = Job(id=uuid.uuid4().hex[:12], project_id=project.id, title=project.meta["title"], kind=kind)
             self.jobs[job.id] = job
         self._queue.put((job, fn))
         return job
 
     def active(self, project_id: str) -> Optional[Job]:
-        return next((j for j in self.jobs.values() if j.project_id == project_id and j.status in ("queued", "running")),
-                    None)
+        with self._lock:
+            return next((j for j in self.jobs.values()
+                         if j.project_id == project_id and j.status in ("queued", "running")), None)
+
+    def recent(self, limit: int = 50) -> list[Job]:
+        with self._lock:
+            return sorted(self.jobs.values(), key=lambda j: j.created, reverse=True)[:limit]
 
     def _worker(self) -> None:
-        logger = logging.getLogger("paper2structure")
-        logger.setLevel(logging.INFO)
         while True:
             job, fn = self._queue.get()
-            handler = _JobLog(job)
-            logger.addHandler(handler)
+            CURRENT_JOB.set(job)
             job.status, job.started = "running", time.time()
             try:
                 job.result = fn(job.log.append)
@@ -648,7 +787,7 @@ class JobManager:
                 job.error = f"{type(e).__name__}: {e}"
                 job.log.append(f"ERROR {job.error}")
                 job.status = "failed"
-                log.error("job %s (%s) failed:\n%s", job.id, job.kind, traceback.format_exc())
+                log.error("job %s (%s, %s) failed:\n%s", job.id, job.kind, job.project_id, traceback.format_exc())
             finally:
                 job.finished = time.time()
-                logger.removeHandler(handler)
+                CURRENT_JOB.set(None)
