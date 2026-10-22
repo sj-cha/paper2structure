@@ -87,14 +87,23 @@ def formal_charge(atoms: Atoms, oxidation_states: Optional[dict[str, int]] = Non
     common positive states closest to neutral (mixed valence allowed between consecutive states).
     Metallic and covalent substrates carry no ionic charge. Returns (net charge or None when it
     cannot be assigned, how it was assigned)."""
-    from itertools import product
-
-    from pymatgen.core import Element
-
     ids = mol_ids(atoms)
     molecular = int(sum(int(m.get("charge", 0)) for m in get_molecules(atoms)))
     counts = Counter(s for s, m in zip(atoms.get_chemical_symbols(), ids) if m < 0)
     given = {**parse_oxidation_states(str(atoms.info.get("p2s_oxidation_states", ""))), **(oxidation_states or {})}
+    net, _, how = _oxidation_states(counts, given, molecular)
+    return net, how
+
+
+def _oxidation_states(counts: Counter, given: dict[str, int], molecular: int
+                      ) -> tuple[Optional[int], dict[str, float], str]:
+    """(net charge or None, oxidation state per substrate element, how) for formal_charge and the
+    bond-valence check; a mixed-valence element gets its average state."""
+    from itertools import product
+
+    from pymatgen.core import Element
+
+    given = dict(given)
     anions = [e for e in counts if e in ANION_FORMERS and e not in given]
     metals = [e for e in counts if e not in given and e not in ANION_FORMERS
               and (Element(e).is_metal or Element(e).is_metalloid)]
@@ -102,20 +111,20 @@ def formal_charge(atoms: Atoms, oxidation_states: Optional[dict[str, int]] = Non
     fixed = sum(given[e] * n for e, n in counts.items() if e in given)
     if not anions and not any(given.get(e, 0) < 0 for e in counts):  # metallic or covalent substrate
         net = molecular + fixed
-        return net, f"non-ionic substrate (charge {fixed:+d}); molecules {molecular:+d}"
+        return net, dict(given), f"non-ionic substrate (charge {fixed:+d}); molecules {molecular:+d}"
     if others:
-        return None, f"cannot assign oxidation states to {', '.join(sorted(others))} in the substrate"
+        return None, {}, f"cannot assign oxidation states to {', '.join(sorted(others))} in the substrate"
     for e in anions:
         neg = [q for q in Element(e).common_oxidation_states if q < 0]
         if not neg:
-            return None, f"no negative oxidation state for {e}"
+            return None, {}, f"no negative oxidation state for {e}"
         given[e] = min(neg)
         fixed += given[e] * counts[e]
     options = {}
     for e in metals:
         pos = [q for q in Element(e).common_oxidation_states if q > 0] or [q for q in Element(e).oxidation_states if q > 0][:3]
         if not pos:
-            return None, f"no positive oxidation state for {e}"
+            return None, {}, f"no positive oxidation state for {e}"
         options[e] = pos
     best = None
     for combo in product(*(options[e] for e in metals)):
@@ -130,8 +139,161 @@ def formal_charge(atoms: Atoms, oxidation_states: Optional[dict[str, int]] = Non
         q = chosen[e]
         room = counts[e] * ((max(pos) - q) if net < 0 else (q - min(pos)))
         if net and any(abs(a - b) == 1 for a in pos for b in pos) and abs(net) <= room:
-            return 0, text + f"; neutral with mixed-valence {e}"
-    return net, text
+            return 0, {**states, e: q - net / counts[e]}, text + f"; neutral with mixed-valence {e}"
+    return net, states, text
+
+
+_BV_B = 0.31  # A, softness of the generic bond-valence parameters (O'Keeffe & Brese 1991)
+_BV_REACH = 1.5  # x covalent sum: bonds counted in bond-valence sums (a 25%-stretched lattice still bonds)
+_R0: dict[tuple[str, str], Optional[float]] = {}
+
+
+def _r0(cation: str, anion: str) -> Optional[float]:
+    """Generic bond-valence R0 of a cation-anion pair (pymatgen's O'Keeffe-Brese parameters)."""
+    if (cation, anion) not in _R0:
+        from pymatgen.analysis.bond_valence import BV_PARAMS
+        from pymatgen.core import Element
+
+        p, q = BV_PARAMS.get(Element(cation)), BV_PARAMS.get(Element(anion))
+        if p is None or q is None:
+            _R0[(cation, anion)] = None
+        else:
+            r1, r2, c1, c2 = p["r"], q["r"], p["c"], q["c"]
+            _R0[(cation, anion)] = r1 + r2 - r1 * r2 * (np.sqrt(c1) - np.sqrt(c2)) ** 2 / (c1 * r1 + c2 * r2)
+    return _R0[(cation, anion)]
+
+
+def _depth(atoms: Atoms, sub: np.ndarray) -> np.ndarray:
+    """Distance (A) of each atom below the substrate's surface: along the normal for slabs, below
+    the convex hull for wires and particles, infinite for bulk."""
+    from paper2structure.tools.adsorption_builder import _hull_depth
+    from paper2structure.tools.structure_export import _axis_gaps
+
+    kind = structure_kind(atoms)
+    if kind == "bulk":
+        return np.full(len(atoms), np.inf)
+    pos = atoms.positions
+    if kind == "slab":
+        gaps = _axis_gaps(atoms)
+        k = max(gaps, key=gaps.get) if gaps else 2
+        cell = atoms.cell.array
+        n = np.cross(cell[(k + 1) % 3], cell[(k + 2) % 3])
+        h = pos @ (n / np.linalg.norm(n))
+        return np.minimum(h - h[sub].min(), h[sub].max() - h)
+    depth = np.zeros(len(atoms))
+    depth[sub] = _hull_depth(pos[sub])
+    return depth
+
+
+def _crystal_chemistry(atoms: Atoms, i: np.ndarray, j: np.ndarray, d: np.ndarray, ratio: np.ndarray, ids: np.ndarray,
+                       given: dict[str, int], bvs_warn: float, bvs_fail: float, bond_share_warn: float,
+                       like_contact_warn: float, like_contact_fail: float, min_depth: float = 4.0,
+                       min_cn: int = 3) -> list[CheckResult]:
+    """Crystal-chemistry checks of an ionic substrate (one with anion formers), from the shared
+    neighbor list (unordered pairs i < j):
+
+    - like_charge_contacts: cation-cation pairs (metal atoms of the substrate or of different
+      molecules) or substrate anion-anion pairs closer than like_contact_fail x the covalent sum
+      fail (warn below like_contact_warn); covalent sums put real bonds near 1, and like charges
+      never come that close.
+    - bond_valence: bond-valence sums of the framework cations (those with the strongest average
+      bond, valence / coordination, within 80% of the strongest) at interior ionic sites (at least
+      min_cn anion neighbours, min_depth A below the surface) against their oxidation states:
+      beyond bvs_fail fails, beyond bvs_warn warns (without charge-balanced oxidation states each
+      element takes its most common one, and only beyond 100% fails). A single bond carrying
+      more than bond_share_warn of its cation's valence warns, more than all of it fails. Large
+      cations in big cages (Cs, Sr, Ba, Bi on perovskite A sites) are under-bonded with generic
+      parameters and are not framework cations."""
+    sym = np.array(atoms.get_chemical_symbols())
+    sub = ids < 0
+    anion_el = {e for e in set(sym[sub]) if e in ANION_FORMERS}
+    if not anion_el:
+        return []
+    organic = {"C", "H"}
+    is_anion = np.isin(sym, list(anion_el)) & sub
+    is_cation = sub & ~is_anion & ~np.isin(sym, list(organic))
+    metal = ~np.isin(sym, list(ANION_FORMERS | organic))  # a cation wherever it was registered
+    checks = []
+
+    same_molecule = (ids[i] >= 0) & (ids[i] == ids[j])
+    like = ((metal[i] & metal[j] & ~same_molecule) | (is_anion[i] & is_anion[j])) & (ratio < like_contact_warn)
+    if len(ratio):
+        hits = np.where(like)[0]
+        status = "fail" if (ratio[hits] < like_contact_fail).any() else ("warn" if len(hits) else "pass")
+        hits = hits[np.argsort(ratio[hits])]
+        checks.append(CheckResult(
+            name="like_charge_contacts", status=status,
+            detail=(f"{len(hits)} cation-cation or anion-anion pairs below {like_contact_warn} x covalent sum "
+                    f"(fail below {like_contact_fail}): " + ", ".join(
+                        f"{_pair_text(atoms, int(i[k]), int(j[k]), float(d[k]))} (x{ratio[k]:.2f})" for k in hits[:5]))
+            if len(hits) else f"no like-charge pair below {like_contact_warn} x covalent sum"))
+
+    if (sub & np.isin(sym, ["C"])).any() and (sub & np.isin(sym, ["H"])).any():
+        checks.append(CheckResult(
+            name="bond_valence", status="warn",
+            detail="not assessed: organic atoms (C, H) are part of the substrate; register the molecules with "
+                   "add_molecule(..., role='guest') (or as adsorbates) so the inorganic framework can be checked"))
+        return checks
+
+    # cation -> anion bonds, both orientations of the unordered pairs
+    a = np.concatenate([i, j]); b = np.concatenate([j, i]); dist = np.concatenate([d, d])
+    bond = is_cation[a] & is_anion[b]
+    a, b, dist = a[bond], b[bond], dist[bond]
+    r0 = np.array([_r0(x, y) or np.nan for x, y in zip(sym[a], sym[b])])
+    s = np.where(np.isfinite(r0), np.exp((r0 - dist) / _BV_B), 0.0)
+    cn = np.bincount(a, minlength=len(atoms))
+    bvs = np.bincount(a, weights=s, minlength=len(atoms))
+    strongest = np.zeros(len(atoms))
+    np.maximum.at(strongest, a, s)
+    ionic = is_cation & (cn >= min_cn)
+    counts = Counter(sym[k] for k in np.where(is_anion | ionic)[0])
+    molecular = int(sum(int(m.get("charge", 0)) for m in get_molecules(atoms)))
+    net, states, how = _oxidation_states(counts, given, molecular)
+    if net is None:
+        checks.append(CheckResult(name="bond_valence", status="pass", detail=f"not assessed: {how}"))
+        return checks
+    if net != 0:  # no charge balance: the most common state of each element, not the least-charged mix
+        from pymatgen.core import Element
+
+        for e in states:
+            common = [q for q in Element(e).common_oxidation_states if q > 0]
+            if e not in given and states[e] > 0 and common:
+                states[e] = common[0]
+    deep = _depth(atoms, sub) >= min_depth
+    sites = {e: np.where(ionic & deep & (sym == e))[0] for e in set(sym[ionic]) if states.get(e, 0) > 0}
+    sites = {e: k for e, k in sites.items() if len(k)}
+    if not sites:
+        checks.append(CheckResult(name="bond_valence", status="pass",
+                                  detail="not assessed: no interior ionic cation sites"))
+        return checks
+    strength = {e: states[e] / float(np.median(cn[k])) for e, k in sites.items()}
+    top = max(strength.values())
+    framework = sorted(e for e in sites if strength[e] >= 0.8 * top)
+    neutral = net == 0
+    fail_at = bvs_fail if neutral else max(bvs_fail, 1.0)
+    status, lines = "pass", []
+    for e in framework:
+        dev = (float(np.median(bvs[sites[e]])) - states[e]) / states[e]
+        level = "fail" if abs(dev) > fail_at else ("warn" if abs(dev) > bvs_warn else "pass")
+        status = level if level == "fail" or (level == "warn" and status == "pass") else status
+        lines.append(f"{e} {np.median(bvs[sites[e]]):.2f} vs {states[e]:+g} ({dev:+.0%}, {len(sites[e])} interior sites, "
+                     f"CN {int(np.median(cn[sites[e]]))})")
+    share = {e: float(strongest[k].max()) / states[e] for e, k in sites.items()}
+    heavy = sorted((e for e in share if share[e] > bond_share_warn), key=lambda e: -share[e])
+    if any(share[e] > 1.0 for e in heavy):
+        status = "fail"  # one bond stronger than the whole valence of its cation
+    elif heavy and status == "pass":
+        status = "warn"
+    for e in heavy:
+        k = sites[e][int(np.argmax(strongest[sites[e]]))]
+        partner = b[a == k][int(np.argmax(s[a == k]))]
+        lines.append(f"one {e}-{sym[partner]} bond of {atoms.get_distance(int(k), int(partner), mic=True):.2f} A "
+                     f"carries {share[e]:.0%} of {e}'s valence (too short)")
+    detail = "bond-valence sums of the framework cations: " + "; ".join(lines)
+    if not neutral:
+        detail += f" (no charge-balanced oxidation states: {how}; fails only beyond {fail_at:.0%})"
+    checks.append(CheckResult(name="bond_valence", status=status, detail=detail))
+    return checks
 
 
 def _check_binding(atoms: Atoms, adsorbates: list[dict], ids: np.ndarray, r: np.ndarray, binding_scale: float,
@@ -185,6 +347,8 @@ def validate_structure(atoms: Atoms, structure_id: str, *, max_atoms: int, min_v
                        overlap_scale: float = 0.6, close_contact_scale: float = 0.85, bond_scale: float = 1.2,
                        anion_contact_scale: float = 1.3, binding_scale: float = 1.5, detached_scale: float = 2.0,
                        charge_neutrality: bool = False, oxidation_states: Optional[dict[str, int]] = None,
+                       bvs_warn: float = 0.30, bvs_fail: float = 0.40, bond_share_warn: float = 0.45,
+                       like_contact_warn: float = 0.8, like_contact_fail: float = 0.7,
                        files: Optional[dict[str, str]] = None) -> ValidationReport:
     """Geometric and chemical sanity checks. Pairs closer than overlap_scale x the covalent-radius
     sum fail; contacts involving a molecule closer than close_contact_scale x the sum (other than
@@ -193,7 +357,9 @@ def validate_structure(atoms: Atoms, structure_id: str, *, max_atoms: int, min_v
     its SMILES. Each adsorbate must touch the substrate (closest contact within binding_scale x the
     covalent sum; beyond detached_scale fails) and, on metal/metalloid compounds, an
     electronegative donor atom must not touch an electronegative substrate atom (surface_anions). With charge_neutrality the net formal charge must be zero
-    (formal_charge, using `oxidation_states` where given)."""
+    (formal_charge, using `oxidation_states` where given). Ionic substrates also get the
+    crystal-chemistry checks of _crystal_chemistry: like-charge contacts, and bond-valence sums of
+    the framework cations (bvs_warn / bvs_fail, bond_share_warn)."""
     checks: list[CheckResult] = []
     metrics: dict[str, float | int | str] = {"formula": atoms.get_chemical_formula(), "n_atoms": len(atoms)}
     pos = atoms.get_positions()
@@ -214,8 +380,8 @@ def validate_structure(atoms: Atoms, structure_id: str, *, max_atoms: int, min_v
 
     r = rcov(atoms.get_chemical_symbols())
     ids = mol_ids(atoms)
-    # one neighbor list for overlaps, close contacts, molecule bonds and like-charge contacts
-    i, j, D = neighbor_pairs(atoms, max(1.0, bond_scale, anion_contact_scale) * r)
+    # one neighbor list for overlaps, close contacts, molecule bonds, like-charge contacts and bond valences
+    i, j, D = neighbor_pairs(atoms, max(1.0, bond_scale, anion_contact_scale, _BV_REACH) * r)
     keep = i < j
     i, j, d = i[keep], j[keep], np.linalg.norm(D[keep], axis=1)
     ratio = d / (r[i] + r[j]) if len(d) else np.array([])
@@ -293,6 +459,10 @@ def validate_structure(atoms: Atoms, structure_id: str, *, max_atoms: int, min_v
     adsorbates = [m for m in molecules if m.get("role") == "adsorbate"]
     if adsorbates:
         checks.append(_check_binding(atoms, adsorbates, ids, r, binding_scale, detached_scale))
+
+    given = {**parse_oxidation_states(str(atoms.info.get("p2s_oxidation_states", ""))), **(oxidation_states or {})}
+    checks.extend(_crystal_chemistry(atoms, i, j, d, ratio, ids, given, bvs_warn, bvs_fail, bond_share_warn,
+                                     like_contact_warn, like_contact_fail))
 
     if charge_neutrality:
         net, how = formal_charge(atoms, oxidation_states)

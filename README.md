@@ -134,6 +134,21 @@ are the checks `check_structure` shows the agent while it works:
 | adsorbate binding | an adsorbate's closest substrate contact is beyond 2.0 x the covalent sum (detached; 1.5-2.0 x warns), or an electronegative donor on an ionic surface touches an anion instead of a cation |
 | charge neutrality (off by default: `validation.charge_neutrality`) | substrate formal charges (the plan's oxidation states, `carve_nanocrystal`'s, or common ones; mixed valence allowed between consecutive states) plus the SMILES charges do not sum to zero |
 | vacuum, atom budget | less than `validation.min_vacuum` between images; more than `planning.max_atoms` atoms |
+| like-charge contacts (ionic substrates) | two cations (metal atoms of the substrate or of different molecules) or two substrate anions closer than 0.7 x the covalent sum (0.7-0.8 warns) |
+| bond valence (ionic substrates) | the bond-valence sum of a framework cation at interior sites is off its oxidation state by more than 40% (30-40% warns), or one bond carries more than all of its cation's valence (more than 45% warns) |
+
+The bond-valence check uses pymatgen's generic bond-valence parameters, so it applies to any
+ionic material without per-material tables. It looks at the framework cations, the ones with the
+strongest bonds (valence / coordination, e.g. Pb in a lead halide, Ti in a titanate, Ru in a
+ruthenate), at interior sites, at least 4 A below a slab's or particle's surface, with at least
+three anion neighbours. Oxidation states come from the plan, `carve_nanocrystal` or
+charge-balanced common states (molecule charges included). Large cations in big cages (Cs, Sr, Ba
+or Bi on perovskite A sites) are under-bonded with generic parameters and are left out. Calibrated
+on 22 known-good crystals and every structure of the PDF runs, it fails the compressed, stretched
+and mis-coordinated frameworks those runs produced, and passes every correct one; one known-good
+reference, CsCl, warns. Organic atoms left in the substrate (not registered with `add_molecule`)
+make it warn instead of assessing. The thresholds are in `validation` (`bvs_warn`, `bvs_fail`,
+`bond_share_warn`, `like_contact_warn`, `like_contact_fail`).
 
 The checks share one neighbor list, so a 3000-atom particle with 80 adsorbates validates in about
 0.5 s. Failures go back to the agent in the same conversation, at most `construction.gate_retries`
@@ -234,7 +249,7 @@ field). Run-level settings are CLI flags; both are snapshotted to `<output_dir>/
 | `characterization` | `techniques` (null = every technique found), `include_stubs`, `reasoning_effort` (default high), `output_retries` |
 | `planning` | max plans, max atoms per structure (default 5000) |
 | `construction` | sandbox (`bubblewrap`/`none`), network, gpu, hidden paths, request and tool-call budget, replay timeout/memory, Planning, reminders, delegation, Memory |
-| `validation` | overlap / close-contact / bond / adsorbate-binding scale factors, minimum vacuum |
+| `validation` | overlap / close-contact / bond / adsorbate-binding scale factors, minimum vacuum, bond-valence and like-charge thresholds |
 | `revision` | whether the reviewer may read the build scripts |
 | `export` | output formats, default `[poscar]` |
 | `overrides` | user-pinned choices the planner must respect (model type, Miller index, supercell, lattice) |

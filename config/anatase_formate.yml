@@ -46,6 +46,11 @@ validation:
   detached_scale: 2.0  # ... fail beyond (detached)
   charge_neutrality: false  # gate on zero net formal charge
   min_vacuum: 15.0
+  bvs_warn: 0.30  # framework-cation bond-valence sum off by more than this warns
+  bvs_fail: 0.40  # ... and by more than this fails
+  bond_share_warn: 0.45  # one bond carrying more than this share of a cation's valence warns
+  like_contact_warn: 0.8  # cation-cation / anion-anion pairs below this x covalent sum warn
+  like_contact_fail: 0.7  # ... and below this fail
 
 revision:
   read_scripts: true  # the Revision agent may read the build scripts

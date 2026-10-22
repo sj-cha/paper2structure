@@ -228,6 +228,12 @@ class ValidationConfig(BaseModel):
     detached_scale: float = 2.0  # ... and beyond this fails (detached)
     charge_neutrality: bool = False  # gate on zero net formal charge (substrate oxidation states + SMILES charges)
     min_vacuum: float = 15.0  # A between periodic images of slabs/nanocrystals
+    # crystal chemistry of ionic substrates: bond-valence sums of the framework cations at interior sites
+    bvs_warn: float = 0.30  # warn beyond this relative deviation from the oxidation state
+    bvs_fail: float = 0.40  # ... and fail beyond this
+    bond_share_warn: float = 0.45  # warn when one bond carries more than this share of its cation's valence
+    like_contact_warn: float = 0.8  # cation-cation / anion-anion pairs below this x covalent sum warn
+    like_contact_fail: float = 0.7  # ... and fail below this
 
 
 class ExportConfig(BaseModel):

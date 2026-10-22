@@ -122,6 +122,49 @@ def test_guest_molecules_are_part_of_the_crystal(cs_bulk):
         add_molecule(host, molecule, "C[NH3+]", "MA", role="ligand")
 
 
+def _check(atoms, name):
+    return next(c for c in _validate(atoms).checks if c.name == name)
+
+
+def test_bond_valence_passes_real_crystals_and_flags_distorted_ones(cs_bulk, anatase):
+    for good in (cs_bulk.repeat(2), anatase, build_bulk("Fm-3m", ["Mg", "O"], [[0, 0, 0], [0.5, 0.5, 0.5]], a=4.21)):
+        assert _check(good, "bond_valence").status == "pass", _check(good, "bond_valence").detail
+        assert _check(good, "like_charge_contacts").status == "pass"
+    squeezed, stretched = cs_bulk.repeat(2), cs_bulk.repeat(2)
+    squeezed.set_cell(squeezed.cell * 0.8, scale_atoms=True)  # Pb-Br 2.35 A instead of 2.94
+    stretched.set_cell(stretched.cell * 1.25, scale_atoms=True)
+    for bad, sign in ((squeezed, "+"), (stretched, "-")):
+        check = _check(bad, "bond_valence")
+        assert check.status == "fail" and f"Pb" in check.detail and f"({sign}" in check.detail, check.detail
+    # only the framework cation counts: Cs in its cuboctahedral cage is under-bonded by nature
+    assert "Cs" not in _check(cs_bulk.repeat(2), "bond_valence").detail
+
+
+def test_one_overly_short_bond_and_like_charge_contacts(anatase):
+    moved = anatase.repeat((2, 2, 1))
+    ti = [a.index for a in moved if a.symbol == "Ti"]
+    o = min((a.index for a in moved if a.symbol == "O"), key=lambda k: moved.get_distance(ti[0], k, mic=True))
+    moved.set_distance(ti[0], o, 1.55, fix=0, mic=True)  # one Ti-O bond squeezed from 1.93 A
+    assert "one Ti-O bond of 1.55 A" in _check(moved, "bond_valence").detail
+    close = anatase.repeat((2, 2, 1))
+    ti0, ti1 = [a.index for a in close if a.symbol == "Ti"][:2]
+    close.set_distance(ti0, ti1, 2.0, fix=0, mic=True)  # Ti-Ti 2.0 A: x0.63 of the covalent sum
+    check = _check(close, "like_charge_contacts")
+    assert check.status == "fail" and "Ti" in check.detail, check.detail
+
+
+def test_unregistered_organics_are_flagged_not_assessed(cs_bulk):
+    ma = Adsorbate.from_smiles("C[NH3+]", BindingMotif(["N"], anchor="[NH3+]"), name="MA")
+    host = cs_bulk.repeat(2)
+    cs = next(a.index for a in host if a.symbol == "Cs")
+    centre = host.positions[cs].copy()
+    del host[cs]
+    host.extend(Atoms(ma.atoms.get_chemical_symbols(), positions=ma.atoms.positions - ma.atoms.positions.mean(0) + centre))
+    host.arrays["mol_id"][:] = -1  # no add_molecule: the MA atoms are plain substrate atoms
+    check = _check(host, "bond_valence")
+    assert check.status == "warn" and "role='guest'" in check.detail
+
+
 def test_cspbbr3_terminations_both_faces(cs_bulk):
     terms = list_terminations(cs_bulk, (0, 0, 1), min_thickness=10)
     assert {t.top for t in terms} == {"PbBr2", "CsBr"}
