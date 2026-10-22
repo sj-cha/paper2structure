@@ -12,9 +12,9 @@ from ase.io import read
 from rdkit import Chem
 
 from paper2structure.tools.schemas import CheckResult, ValidationReport
-from paper2structure.tools._geometry import (ANION_FORMERS, get_molecules, mol_ids, neighbor_pairs, rcov,
-                                             surface_anions)
-from paper2structure.tools.structure_export import grouped_order, structure_kind, vacuum_gap
+from paper2structure.tools._geometry import (ANION_CONTACT_SCALE, ANION_FORMERS, get_molecules, mol_ids,
+                                             neighbor_pairs, rcov, surface_anions)
+from paper2structure.tools.structure_export import grouped_order, structure_kind, substrate_depth, vacuum_gap
 
 
 def infer_bonds(atoms: Atoms, scale: float = 1.2) -> frozenset:
@@ -25,16 +25,40 @@ def infer_bonds(atoms: Atoms, scale: float = 1.2) -> frozenset:
     return frozenset((int(min(a, b)), int(max(a, b))) for a, b in zip(i, j) if a != b)
 
 
-_MOLECULE_REF: dict[str, Optional[tuple]] = {}
+_TEMPLATES: dict[str, Optional[Chem.Mol]] = {}
+_REFERENCES: dict[str, Optional[list[np.ndarray]]] = {}
 
 
-def _molecule_reference(smiles: str) -> Optional[tuple]:
-    """(match template, reference positions) for `smiles`: the toolkit's RDKit conformer
+def _template(smiles: str) -> Optional[Chem.Mol]:
+    """`smiles` as a bare bond graph (elements and connectivity, hydrogens explicit, in the atom
+    order of Adsorbate.from_smiles), the form a bond graph read from coordinates has: bond orders,
+    charges, aromaticity, radicals and isotopes are dropped. None when the SMILES does not parse."""
+    if smiles not in _TEMPLATES:
+        mol = Chem.MolFromSmiles(smiles) if smiles else None
+        if mol is None:
+            _TEMPLATES[smiles] = None
+            return None
+        flat = Chem.RWMol(Chem.AddHs(mol))
+        for a in flat.GetAtoms():
+            a.SetFormalCharge(0)
+            a.SetIsAromatic(False)
+            a.SetNoImplicit(True)
+            a.SetNumExplicitHs(0)
+            a.SetNumRadicalElectrons(0)
+            a.SetIsotope(0)
+        for b in flat.GetBonds():
+            b.SetBondType(Chem.BondType.SINGLE)
+            b.SetIsAromatic(False)
+        _TEMPLATES[smiles] = flat.GetMol()
+    return _TEMPLATES[smiles]
+
+
+def _references(smiles: str) -> Optional[list[np.ndarray]]:
+    """Reference positions (template order) for `smiles`: the toolkit's RDKit conformer
     (Adsorbate.from_smiles: ETKDG + UFF) and, where MMFF has parameters, the same conformer
     MMFF-optimized (the force fields differ by up to 0.2 A on resonance groups such as phosphonates).
-    The template drops bond orders, charges and aromaticity so it matches a bond graph read from
-    coordinates. None when RDKit cannot embed it."""
-    if smiles not in _MOLECULE_REF:
+    None when RDKit cannot embed it."""
+    if smiles not in _REFERENCES:
         from rdkit.Chem import AllChem
 
         from paper2structure.tools.adsorbate_builder import Adsorbate
@@ -42,7 +66,7 @@ def _molecule_reference(smiles: str) -> Optional[tuple]:
         try:
             ref = Adsorbate.from_smiles(smiles, seed=0)
         except Exception:  # noqa: BLE001 - not embeddable: geometry not assessed
-            _MOLECULE_REF[smiles] = None
+            _REFERENCES[smiles] = None
             return None
         references = [ref.mol.GetConformer().GetPositions()]
         mmff = Chem.Mol(ref.mol)
@@ -51,17 +75,8 @@ def _molecule_reference(smiles: str) -> Optional[tuple]:
                 references.append(mmff.GetConformer().GetPositions())
         except Exception:  # noqa: BLE001 - UFF reference only
             pass
-        template = Chem.RWMol(ref.mol)
-        for a in template.GetAtoms():
-            a.SetFormalCharge(0)
-            a.SetIsAromatic(False)
-            a.SetNoImplicit(True)
-            a.SetNumExplicitHs(0)
-        for b in template.GetBonds():
-            b.SetBondType(Chem.BondType.SINGLE)
-            b.SetIsAromatic(False)
-        _MOLECULE_REF[smiles] = (template.GetMol(), references)
-    return _MOLECULE_REF[smiles]
+        _REFERENCES[smiles] = references
+    return _REFERENCES[smiles]
 
 
 def _angle(a: np.ndarray, center: np.ndarray, b: np.ndarray) -> float:
@@ -69,36 +84,51 @@ def _angle(a: np.ndarray, center: np.ndarray, b: np.ndarray) -> float:
     return float(np.degrees(np.arccos(np.clip(u @ v / (np.linalg.norm(u) * np.linalg.norm(v)), -1.0, 1.0))))
 
 
-def molecule_geometry(symbols: list[str], positions: np.ndarray, bonds, smiles: str, bond_tol: float = 0.12,
-                      angle_tol: float = 20.0) -> list[str]:
-    """Bond lengths and bond angles of a molecule against RDKit conformers of its SMILES (UFF and
-    MMFF); the problems against the closer one (empty when it matches or RDKit cannot embed the
-    SMILES). Position, orientation, atom order and torsions are free: turning a torsion leaves bond
-    lengths and angles unchanged. The tolerances cover RDKit's own spread over seeds and methods
-    (ETKDG, UFF, MMFF: up to 0.09 A and 15 degrees). `positions` must be unwrapped (whole
-    molecule); `bonds` are local index pairs."""
-    ref = _molecule_reference(smiles)
-    if ref is None:
-        return []
-    template, references = ref
-    found = [_geometry_problems(template, symbols, positions, bonds, smiles, r, bond_tol, angle_tol) for r in references]
-    return min(found, key=len)
-
-
-def _geometry_problems(template, symbols, positions, bonds, smiles, ref_pos, bond_tol, angle_tol) -> list[str]:
+def molecule_match(symbols: Sequence[str], bonds, smiles: str) -> Optional[tuple[int, ...]]:
+    """The local atom index for each atom of `smiles` (in its Adsorbate.from_smiles order) when the
+    bond graph (elements and local index pairs read from coordinates) is that of the SMILES, else
+    None. Same atom and bond counts plus a full substructure match: an exact isomorphism test."""
+    template = _template(smiles)
+    bonds = {(min(int(a), int(b)), max(int(a), int(b))) for a, b in bonds}
+    if template is None or len(symbols) != template.GetNumAtoms() or len(bonds) != template.GetNumBonds():
+        return None
     rw = Chem.RWMol()
     for s in symbols:
         atom = Chem.Atom(s)
         atom.SetNoImplicit(True)
         rw.AddAtom(atom)
     for a, b in bonds:
-        rw.AddBond(int(a), int(b), Chem.BondType.SINGLE)
+        rw.AddBond(a, b, Chem.BondType.SINGLE)
     mol = rw.GetMol()
     mol.UpdatePropertyCache(strict=False)
     match = mol.GetSubstructMatch(template)
-    if len(match) != template.GetNumAtoms() or len(symbols) != template.GetNumAtoms():
+    return tuple(int(k) for k in match) if len(match) == template.GetNumAtoms() else None
+
+
+def molecule_geometry(symbols: list[str], positions: np.ndarray, bonds, smiles: str, bond_tol: float = 0.12,
+                      angle_tol: float = 20.0) -> Optional[list[str]]:
+    """Bond lengths and bond angles of a molecule against RDKit conformers of its SMILES (UFF and
+    MMFF): the problems against the closer one (empty when it matches), a bond-graph mismatch, or
+    None when RDKit cannot embed the SMILES (not assessed). Position, orientation, atom order and
+    torsions are free: turning a torsion leaves bond lengths and angles unchanged. The tolerances
+    cover RDKit's own spread over seeds and methods (ETKDG, UFF, MMFF: up to 0.09 A and 15
+    degrees). `positions` must be unwrapped (whole molecule); `bonds` are local index pairs."""
+    match = molecule_match(symbols, bonds, smiles)
+    if match is None:
         return [f"its bond graph does not match {smiles}"]
+    return _compare_geometry(match, positions, smiles, bond_tol, angle_tol)
+
+
+def _compare_geometry(match: tuple[int, ...], positions: np.ndarray, smiles: str, bond_tol: float,
+                      angle_tol: float) -> Optional[list[str]]:
+    references = _references(smiles)
+    if references is None:
+        return None
     pos = np.asarray(positions, dtype=float)[list(match)]  # in template order
+    return min((_geometry_problems(_template(smiles), pos, r, bond_tol, angle_tol) for r in references), key=len)
+
+
+def _geometry_problems(template, pos, ref_pos, bond_tol, angle_tol) -> list[str]:
     sym = [a.GetSymbol() for a in template.GetAtoms()]
     # compare within symmetry classes of the bond graph, sorted: the match may pair equivalent atoms
     # (hydrogens of a CH3, the oxygens of a phosphonate) differently from the reference conformer
@@ -149,18 +179,6 @@ def _unwrapped(atoms: Atoms, members: np.ndarray, bonds: list[tuple[int, int]]) 
                 pos[b] = pos[a] + atoms.get_distance(int(members[a]), int(members[b]), mic=True, vector=True)
                 stack.append(b)
     return pos
-
-
-def wl_certificate(symbols: list[str], bonds) -> tuple:
-    """Weisfeiler-Lehman isomorphism certificate of an element-labelled graph."""
-    adj: dict[int, list[int]] = {k: [] for k in range(len(symbols))}
-    for a, b in bonds:
-        adj[a].append(b)
-        adj[b].append(a)
-    lab = {k: symbols[k] for k in adj}
-    for _ in range(3):
-        lab = {k: lab[k] + "(" + ",".join(sorted(lab[n] for n in adj[k])) + ")" for k in adj}
-    return tuple(sorted(lab.values()))
 
 
 def _pair_text(atoms: Atoms, i: int, j: int, d: float) -> str:
@@ -289,28 +307,6 @@ def _r0(cation: str, anion: str) -> Optional[float]:
     return _R0[(cation, anion)]
 
 
-def _depth(atoms: Atoms, sub: np.ndarray) -> np.ndarray:
-    """Distance (A) of each atom below the substrate's surface: along the normal for slabs, below
-    the convex hull for wires and particles, infinite for bulk."""
-    from paper2structure.tools.adsorption_builder import _hull_depth
-    from paper2structure.tools.structure_export import _axis_gaps
-
-    kind = structure_kind(atoms)
-    if kind == "bulk":
-        return np.full(len(atoms), np.inf)
-    pos = atoms.positions
-    if kind == "slab":
-        gaps = _axis_gaps(atoms)
-        k = max(gaps, key=gaps.get) if gaps else 2
-        cell = atoms.cell.array
-        n = np.cross(cell[(k + 1) % 3], cell[(k + 2) % 3])
-        h = pos @ (n / np.linalg.norm(n))
-        return np.minimum(h - h[sub].min(), h[sub].max() - h)
-    depth = np.zeros(len(atoms))
-    depth[sub] = _hull_depth(pos[sub])
-    return depth
-
-
 def _loose_organics(sym: np.ndarray, i: np.ndarray, j: np.ndarray, ratio: np.ndarray, sub: np.ndarray,
                     bond_scale: float) -> list[tuple[int, int]]:
     """C-H and N-H bonds of the substrate in organic fragments that no heavy atom bonds to a metal:
@@ -352,7 +348,9 @@ def _crystal_chemistry(atoms: Atoms, i: np.ndarray, j: np.ndarray, d: np.ndarray
       bond, valence / coordination, within 80% of the strongest) at interior ionic sites (at least
       min_cn anion neighbours, min_depth A below the surface) against their oxidation states:
       beyond bvs_fail fails, beyond bvs_warn warns (without charge-balanced oxidation states each
-      element takes its most common one, and only beyond 100% fails). A single bond carrying
+      element is compared with its charge-minimising or its lowest common state, whichever its sums
+      are closer to, and only beyond 100% fails). Not assessed (skip) without assignable oxidation
+      states or interior cation sites (thin slabs, small particles). A single bond carrying
       more than bond_share_warn of its cation's valence warns, more than all of it fails. Large
       cations in big cages (Cs, Sr, Ba, Bi on perovskite A sites) are under-bonded with generic
       parameters and are not framework cations. Bonds to the electronegative atoms of registered
@@ -406,22 +404,26 @@ def _crystal_chemistry(atoms: Atoms, i: np.ndarray, j: np.ndarray, d: np.ndarray
     molecular = int(sum(int(m.get("charge", 0)) for m in get_molecules(atoms)))
     net, states, how = _oxidation_states(counts, given, molecular)
     if net is None:
-        checks.append(CheckResult(name="bond_valence", status="pass", detail=f"not assessed: {how}"))
+        checks.append(CheckResult(name="bond_valence", status="skip", detail=f"not assessed: {how}"))
         return checks
-    if net != 0:  # no charge balance: the most common state of each element, not the least-charged mix
-        from pymatgen.core import Element
-
-        for e in states:
-            common = [q for q in Element(e).common_oxidation_states if q > 0]
-            if e not in given and states[e] > 0 and common:
-                states[e] = common[0]
-    deep = _depth(atoms, sub) >= min_depth
+    deep = substrate_depth(atoms, sub) >= min_depth
     sites = {e: np.where(ionic & deep & (sym == e))[0] for e in set(sym[ionic]) if states.get(e, 0) > 0}
     sites = {e: k for e, k in sites.items() if len(k)}
     if not sites:
-        checks.append(CheckResult(name="bond_valence", status="pass",
+        checks.append(CheckResult(name="bond_valence", status="skip",
                                   detail="not assessed: no interior ionic cation sites"))
         return checks
+    if net != 0:
+        # No charge balance: a vacancy or an off-stoichiometric cut, or organic C/H of a framework that are
+        # not counted (which pushes the charge-minimising states up, Mn+7 in a Mn-MOF-5). Each element is
+        # compared with the charge-minimising state or its lowest common one, whichever its sums are closer to.
+        from pymatgen.core import Element
+
+        for e, k in sites.items():
+            common = [q for q in Element(e).common_oxidation_states if q > 0]
+            if e not in given and common:
+                median = float(np.median(bvs[k]))
+                states[e] = min((states[e], common[0]), key=lambda q: abs(median - q))
     strength = {e: states[e] / float(np.median(cn[k])) for e, k in sites.items()}
     top = max(strength.values())
     framework = sorted(e for e in sites if strength[e] >= 0.8 * top)
@@ -454,7 +456,10 @@ def _crystal_chemistry(atoms: Atoms, i: np.ndarray, j: np.ndarray, d: np.ndarray
 
 def _check_binding(atoms: Atoms, adsorbates: list[dict], ids: np.ndarray, r: np.ndarray, binding_scale: float,
                    detached_scale: float) -> CheckResult:
-    """Closest substrate contact of each adsorbate (of its recorded binding atoms, else of any atom)."""
+    """Closest substrate contact of each adsorbate (of its recorded binding atoms, else of any atom).
+    An electronegative atom on a surface anion is a like-charge contact, unless it carries the
+    molecule's positive charge (the N of an ammonium): that is an ion pair, bound within the van der
+    Waals sum."""
     sym = atoms.get_chemical_symbols()
     sub = ids < 0
     anions = surface_anions(s for s, k in zip(sym, sub) if k)
@@ -474,8 +479,13 @@ def _check_binding(atoms: Atoms, adsorbates: list[dict], ids: np.ndarray, r: np.
         k = np.where(sel)[0][np.argmin(ratio[sel])]
         a, b = int(i[k]), int(j[k])
         contact = f"{sym[a]}{a}-{sym[b]}{b} {d[k]:.2f} A ({ratio[k]:.2f}x)"
-        if sym[a] in ANION_FORMERS and sym[b] in anions:
+        if sym[a] in ANION_FORMERS and sym[b] in anions and sym[a] not in _positive_elements(m.get("smiles", "")):
             failed.append(f"{label}: donor {contact} touches a surface {sym[b]} (like charges), not a cation")
+        elif sym[a] in ANION_FORMERS and sym[b] in anions:  # cation on an anion
+            if d[k] <= _vdw_sum(sym[a], sym[b]) + ION_PAIR_SLACK:
+                ok += 1
+            else:
+                weak.append(f"{label}: closest contact {contact}, beyond the van der Waals sum")
         elif ratio[k] > binding_scale:
             weak.append(f"{label}: closest contact {contact}")
         else:
@@ -485,6 +495,16 @@ def _check_binding(atoms: Atoms, adsorbates: list[dict], ids: np.ndarray, r: np.
     if failed or weak:
         detail = f"{len(failed)} unbound or misplaced, {len(weak)} weakly bound of {len(adsorbates)}: " + detail
     return CheckResult(name="adsorbate_binding", status=status, detail=detail)
+
+
+ION_PAIR_SLACK = 0.2  # A beyond the van der Waals sum that still binds a cationic group to a surface anion
+
+
+def _vdw_sum(a: str, b: str) -> float:
+    from ase.data import atomic_numbers, vdw_radii
+
+    radii = [vdw_radii[atomic_numbers[s]] for s in (a, b)]
+    return float(sum(radii)) if all(np.isfinite(radii)) else float("inf")
 
 
 _POSITIVE: dict[str, frozenset[str]] = {}
@@ -501,7 +521,8 @@ def _positive_elements(smiles: str) -> frozenset[str]:
 
 def validate_structure(atoms: Atoms, structure_id: str, *, max_atoms: int, min_vacuum: float,
                        overlap_scale: float = 0.6, close_contact_scale: float = 0.85, bond_scale: float = 1.2,
-                       anion_contact_scale: float = 1.3, binding_scale: float = 1.5, detached_scale: float = 2.0,
+                       anion_contact_scale: float = ANION_CONTACT_SCALE, binding_scale: float = 1.5,
+                       detached_scale: float = 2.0,
                        charge_neutrality: bool = False, oxidation_states: Optional[dict[str, int]] = None,
                        bvs_warn: float = 0.30, bvs_fail: float = 0.40, bond_share_warn: float = 0.45,
                        like_contact_warn: float = 0.8, like_contact_fail: float = 0.7,
@@ -564,7 +585,7 @@ def validate_structure(atoms: Atoms, structure_id: str, *, max_atoms: int, min_v
     bonds_of: dict[int, list[tuple[int, int]]] = {}
     for a, b in intra_bonds:
         bonds_of.setdefault(int(ids[a]), []).append((a, b))
-    integrity_problems, geometry_problems = [], []
+    integrity_problems, geometry_problems, compared, unembeddable = [], [], 0, set()
     for m in molecules:
         members = np.where(ids == m["mol_id"])[0]
         if len(members) == 0:
@@ -575,28 +596,41 @@ def validate_structure(atoms: Atoms, structure_id: str, *, max_atoms: int, min_v
         smiles = m.get("smiles")
         if not smiles:
             continue
-        ref = Chem.AddHs(Chem.MolFromSmiles(smiles))
-        want = wl_certificate([a.GetSymbol() for a in ref.GetAtoms()],
-                              [(b.GetBeginAtomIdx(), b.GetEndAtomIdx()) for b in ref.GetBonds()])
-        got = wl_certificate([atoms[int(g)].symbol for g in members], bonds)
-        if len(members) != ref.GetNumAtoms() or got != want:
-            integrity_problems.append(f"mol {m['mol_id']} {m['name']}: {len(bonds)} bonds found vs "
-                                      f"{ref.GetNumBonds()} in {smiles}")
+        template = _template(smiles)
+        symbols = [atoms[int(g)].symbol for g in members]
+        match = molecule_match(symbols, bonds, smiles) if template is not None else None
+        if match is None:
+            integrity_problems.append(
+                f"mol {m['mol_id']} {m['name']}: " + (f"unparseable SMILES {smiles!r}" if template is None else
+                                                     f"{len(members)} atoms and {len(bonds)} bonds found, the bond "
+                                                     f"graph of {smiles} has {template.GetNumAtoms()} and "
+                                                     f"{template.GetNumBonds()}"
+                                                     if (len(members), len(bonds)) != (template.GetNumAtoms(),
+                                                                                       template.GetNumBonds())
+                                                     else f"the bonds connect the atoms differently from {smiles}"))
             continue
-        off = molecule_geometry([atoms[int(g)].symbol for g in members], _unwrapped(atoms, members, bonds), bonds,
-                                smiles, molecule_bond_tol, molecule_angle_tol)
+        off = _compare_geometry(match, _unwrapped(atoms, members, bonds), smiles, molecule_bond_tol, molecule_angle_tol)
+        if off is None:
+            unembeddable.add(smiles)
+            continue
+        compared += 1
         if off:
             geometry_problems.append(f"mol {m['mol_id']} {m['name']}: {', '.join(off[:3])}")
     if molecules:
         checks.append(CheckResult(name="molecule_integrity", status="fail" if integrity_problems else "pass",
                                   detail="; ".join(integrity_problems[:5]) if integrity_problems
                                   else f"{len(molecules)} molecules match their SMILES"))
-        checks.append(CheckResult(
-            name="molecule_geometry", status="fail" if geometry_problems else "pass",
-            detail=(f"{len(geometry_problems)} molecules differ from the RDKit conformer of their SMILES (build them "
-                    "with Adsorbate.from_smiles, then move them rigidly or turn torsions): "
-                    + "; ".join(geometry_problems[:4]))
-            if geometry_problems else "bond lengths and angles match the RDKit conformers"))
+        skipped = f"not assessed: RDKit cannot embed {', '.join(sorted(unembeddable))}" if unembeddable else ""
+        if geometry_problems:
+            status, detail = "fail", (f"{len(geometry_problems)} molecules differ from the RDKit conformer of their "
+                                      "SMILES (build them with Adsorbate.from_smiles, then move them rigidly or turn "
+                                      "torsions): " + "; ".join(geometry_problems[:4]))
+        elif compared:
+            status, detail = "pass", (f"bond lengths and angles of {compared} molecules match the RDKit conformers"
+                                      + (f"; {skipped}" if skipped else ""))
+        else:
+            status, detail = "skip", skipped or "not assessed: no molecule matches its SMILES"
+        checks.append(CheckResult(name="molecule_geometry", status=status, detail=detail))
 
     sub = ids < 0
     sym = atoms.get_chemical_symbols()
@@ -668,7 +702,7 @@ def validate_structure(atoms: Atoms, structure_id: str, *, max_atoms: int, min_v
 
     kind = structure_kind(atoms)
     metrics["kind"] = kind
-    if kind in ("slab", "wire", "nanocrystal") and any(atoms.pbc):
+    if kind in ("slab", "wire", "nanocrystal") and atoms.cell.rank == 3:  # the exported files are periodic
         gap = vacuum_gap(atoms)
         metrics["vacuum_gap"] = round(gap, 2)
         solvated = any(m.get("role") == "solvent" for m in molecules)

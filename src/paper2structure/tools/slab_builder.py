@@ -11,7 +11,8 @@ from pymatgen.core import Composition
 from pymatgen.core.surface import Slab, SlabGenerator
 from pymatgen.io.ase import AseAtomsAdaptor
 
-from paper2structure.tools._geometry import ROLE_FIXED, ROLE_SUBSTRATE, bulk_coordination, clean_arrays
+from paper2structure.tools._geometry import (ROLE_FIXED, ROLE_SUBSTRATE, bulk_coordination, clean_arrays,
+                                             require_framework)
 
 
 @dataclass(frozen=True)
@@ -77,6 +78,7 @@ def _flip(atoms: Atoms) -> Atoms:
 
 def _candidates(bulk: Atoms, miller, min_thickness: float, symmetrize: bool,
                 max_broken_bonds: int, bonds: Optional[dict]) -> list[tuple[Slab, bool]]:
+    require_framework(bulk, "build_slab")
     structure = AseAtomsAdaptor.get_structure(bulk)
     # primitive=True without lll_reduce gives the primitive surface cell (lll_reduce keeps e.g. a 2x2
     # cell for fcc(111)); _reduce_in_plane then picks its shortest basis

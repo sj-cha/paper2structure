@@ -19,7 +19,11 @@ numpy for everything else (see the `custom-structures` skill).
 - Fixed atoms: `ase.constraints.FixAtoms` (written as selective dynamics in the POSCAR), tag 0.
 - Slabs: surface normal along +z, vacuum along z. Particles: centered in a box with vacuum on all
   sides. Builders set `atoms.info["p2s_kind"]`; for custom structures `structure_kind()` infers it
-  from the vacuum.
+  from the vacuum. Vacuum is measured as the exported POSCAR will have it (periodic along all three
+  cell vectors, whatever `atoms.pbc` says), so give a slab real vacuum in its cell.
+- Oxidation states: the bond-valence check takes them from the plan (nanocrystals) or
+  `carve_nanocrystal`, else charge-balanced common states. A slab or bulk model that needs others
+  (a reduced or mixed-valence oxide) can pin them with `atoms.info["p2s_oxidation_states"] = "Ti:+3 O:-2"`.
 - `emit(atoms, name=..., plan_id=..., notes=...)` writes `structures/<name>.extxyz` (all per-atom
   data), `structures/<name>.vasp` (POSCAR) and `structures/<name>.json`, and records the emitting
   script in `structures/manifest.json`.

@@ -45,7 +45,9 @@ description: How to build what paper2structure.tools has no builder for - point 
   framework's pockets with its N-H/O-H pointing at acceptors and adds the symmetry images, so the
   crystal keeps the space group. Never place framework atoms or molecules with hand-written
   coordinates; if the framework is wrong (failing space-group, bond-angle or coordination
-  checks), fix the Wyckoff coordinates. Make supercells after filling.
+  checks), fix the Wyckoff coordinates. Make supercells after filling. For a slab or particle of such
+  a crystal, cut the empty framework (build_slab, carve_nanocrystal reject a filled crystal) and run
+  fill_cavities on the slab or particle, which places the molecules in its pockets one by one.
 - Mixtures: call add_solvent once per species with its share of the molecules; ions go in as
   SMILES (`[Na+]`, `[Cl-]`), and the whole cell should stay neutral.
 

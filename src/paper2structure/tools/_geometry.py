@@ -268,6 +268,58 @@ def substrate_mask(atoms: Atoms) -> np.ndarray:
     return mol_ids(atoms) < 0
 
 
+def register_molecules(atoms: Atoms, parts: Sequence[Atoms], records: Sequence[dict], tag: int) -> Atoms:
+    """Append molecules (each an Atoms at its final positions) with the bookkeeping validation
+    relies on: tag `tag` (ROLE_ADSORBATE or ROLE_SOLVENT), a new mol_id each, and its record (the
+    mol_id is filled in) in atoms.info["p2s_molecules"]. Returns a new Atoms."""
+    new = ensure_bookkeeping(atoms.copy())
+    molecules = get_molecules(new)
+    next_id = max(int(mol_ids(new).max()) + 1 if len(new) else 0, 1 + max((m["mol_id"] for m in molecules), default=-1))
+    for part, record in zip(parts, records):
+        piece = Atoms(part.get_chemical_symbols(), positions=part.get_positions())
+        piece.set_tags(np.full(len(piece), tag, dtype=int))
+        piece.set_array("mol_id", np.full(len(piece), next_id, dtype=int))
+        new.extend(piece)
+        molecules.append({"mol_id": next_id, **record})
+        next_id += 1
+    set_molecules(new, molecules)
+    return new
+
+
+def require_framework(crystal: Atoms, builder: str) -> None:
+    """Builders that cut a crystal (slabs, particles) handle its framework only: they would cut its
+    registered molecules apart and drop their records."""
+    molecules = get_molecules(crystal)
+    if molecules or (mol_ids(crystal) >= 0).any():
+        names = sorted({m.get("name", "?") for m in molecules}) or ["unregistered"]
+        raise ValueError(f"{builder} cuts a crystal's framework only, and this one holds molecules ({', '.join(names)}). "
+                         f"Cut the empty framework (build_bulk without fill_cavities), then add the molecules to the "
+                         f"result: fill_cavities(result, smiles, count, name=...) places them in the slab's or "
+                         f"particle's pockets; or cut the filled crystal with your own code, keeping molecules "
+                         f"whole, and register each with add_molecule(..., role='guest')")
+
+
+def solvent_mask(atoms: Atoms) -> np.ndarray:
+    """Atoms of molecules registered with role "solvent"."""
+    ids = [m["mol_id"] for m in get_molecules(atoms) if m.get("role") == "solvent"]
+    return np.isin(mol_ids(atoms), ids) if ids else np.zeros(len(atoms), dtype=bool)
+
+
+def hull_depth(points: np.ndarray, hull_points: Optional[np.ndarray] = None) -> np.ndarray:
+    """Distance of each point below the convex hull of `hull_points` (default: the points
+    themselves), 0 on or outside it, in 2 or 3 dimensions. Flat or tiny point sets have no
+    interior: every point is on the outside."""
+    from scipy.spatial import ConvexHull
+
+    hull_points = points if hull_points is None else hull_points
+    try:
+        eq = ConvexHull(hull_points).equations
+    except Exception:  # noqa: BLE001 - degenerate input (too few points, coplanar)
+        return np.zeros(len(points))
+    # inside a convex hull every facet's signed distance n.x + d is <= 0; the nearest facet is the largest
+    return np.maximum(-(points @ eq[:, :-1].T + eq[:, -1]).max(axis=1), 0.0)
+
+
 KEPT_ARRAYS = ("numbers", "positions", "tags", "mol_id", "momenta", "initial_magmoms", "initial_charges")
 
 
@@ -281,6 +333,7 @@ def clean_arrays(atoms: Atoms) -> Atoms:
 
 
 ANION_FORMERS = frozenset({"N", "O", "F", "S", "Cl", "Br", "I", "Se", "Te"})  # electronegative elements
+ANION_CONTACT_SCALE = 1.3  # x covalent sum: an electronegative molecule atom closer to a surface anion crowds it
 
 
 def cation_elements(symbols: Iterable[str]) -> frozenset[str]:

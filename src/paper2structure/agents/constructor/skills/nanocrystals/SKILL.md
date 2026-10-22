@@ -42,7 +42,9 @@ halide balances one excess cation charge).
 Build the support slab (surfaces-and-adsorbates skill) and the particle separately, orient the
 particle facet that touches the support parallel to the surface, and place it at a contact distance
 of about the sum of covalent radii above the top layer. Make the in-plane supercell large enough
-for at least 10 A between periodic images of the particle and keep the vacuum above it.
+for at least 10 A between periodic images of the particle and keep the vacuum above it. Combine them
+starting from the slab (`model = slab + particle`, or `slab.extend(particle)`), so the model keeps
+the slab's cell, periodicity and label; `particle + slab` would be treated as a free particle.
 
 ## Adsorbates on particles
 

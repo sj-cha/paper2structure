@@ -21,7 +21,7 @@ from scipy.spatial.transform import Rotation
 
 from paper2structure.tools._geometry import (ANION_FORMERS, cation_elements, default_seed, get_molecules,
                                              image_shifts, mol_ids)
-from paper2structure.tools._symmetry import orbit, symmetry_operations
+from paper2structure.tools._symmetry import hall_operations, orbit, symmetry_operations
 from paper2structure.tools.adsorbate_builder import Adsorbate
 from paper2structure.tools.adsorption_builder import add_molecule
 
@@ -180,9 +180,11 @@ def _check_symmetry(atoms: Atoms, ops: tuple[np.ndarray, np.ndarray], symbol: st
         for el in set(sym):
             diff = (img[sym == el][:, None] - frac[sym == el][None] + 0.5) % 1.0 - 0.5
             if np.linalg.norm(diff @ cell, axis=2).min(axis=1).max() > 0.1:
-                raise ValueError(f"the crystal is not invariant under the operations of {symbol} in this cell: fill "
-                                 "the conventional cell build_bulk returns (in the same setting) before making a "
-                                 "supercell, or pass space_group=None")
+                raise ValueError(f"the crystal is not invariant under the operations of {symbol} in this cell. Either "
+                                 "the cell was changed after build_bulk (a supercell, shift or rotation): fill the "
+                                 "conventional cell build_bulk returns and make supercells afterwards; or space_group "
+                                 "names another setting than the one the cell is in: pass the symbol of that setting "
+                                 "(e.g. 'Fd-3m:2', 'Pbnm'), or space_group=None to place the molecules one by one")
 
 
 def fill_cavities(crystal: Atoms, molecule: Union[Adsorbate, str], count: int, name: Optional[str] = None,
@@ -194,8 +196,9 @@ def fill_cavities(crystal: Atoms, molecule: Union[Adsorbate, str], count: int, n
     molecule: an Adsorbate (its binding atom is the anchor) or a SMILES with formal charges, e.g.
         "CCCC[NH3+]", "C[N+](C)(C)C", "[O-]C=O", "O" (the charged atom is the anchor, else the
         first heavy atom). The molecule stays the rigid RDKit conformer.
-    space_group: the framework's space group in the cell's setting; "auto" reads the symbol
-        build_bulk stored (atoms.info["p2s_space_group"]); None places the molecules one by one.
+    space_group: the framework's space group in the cell's setting; "auto" uses the setting
+        build_bulk recorded (atoms.info["p2s_hall_number"], else "p2s_space_group"); None places
+        the molecules one by one.
         With a space group each placed molecule brings its symmetry images. Molecules no orbit
         fits (e.g. 4 per cell when every orbit holds 8) are placed one by one: the full structure
         then has lower symmetry than the framework, which keeps it.
@@ -215,7 +218,8 @@ def fill_cavities(crystal: Atoms, molecule: Union[Adsorbate, str], count: int, n
     donor_h = np.isin(np.arange(len(symbols)), [h for h, _ in donors])
     cell = crystal.cell.array
     symbol = crystal.info.get("p2s_space_group") if space_group == "auto" else space_group
-    ops = symmetry_operations(symbol) if symbol else None
+    hall = crystal.info.get("p2s_hall_number") if space_group == "auto" else None
+    ops = hall_operations(int(hall)) if hall is not None else symmetry_operations(symbol) if symbol else None
     if ops is not None:
         _check_symmetry(crystal[mol_ids(crystal) < 0], ops, symbol)
     framework = set(np.array(crystal.get_chemical_symbols())[mol_ids(crystal) < 0])

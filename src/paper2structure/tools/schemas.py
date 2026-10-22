@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 class CheckResult(BaseModel):
     name: str
-    status: Literal["pass", "warn", "fail", "skip"]  # skip: the check does not apply to this kind of structure
+    status: Literal["pass", "warn", "fail", "skip"]  # skip: does not apply to this structure, or could not be assessed
     detail: str = ""
 
 
@@ -39,7 +39,8 @@ class LatticeCheck(_ClaimCheck):
 class SpaceGroupCheck(_ClaimCheck):
     """Space group of the bulk structure (spglib at symprec)."""
     kind: Literal["space_group"] = "space_group"
-    symbol: str = Field(description='Hermann-Mauguin symbol in any setting, e.g. "Pnma", "Cc2m", "C2cb"')
+    symbol: str = Field(description='Hermann-Mauguin symbol in any setting, e.g. "Pnma", "Pbnm", "P2_1/n", "C2cb", '
+                                    'or the international number')
     scope: Literal["all", "framework"] = Field("all", description="framework: without the molecules (for "
                                                                   "disordered or averaged molecules)")
     symprec: float = Field(0.1, gt=0, description="A")
@@ -142,7 +143,11 @@ class ValidationReport(BaseModel):
         return self.model_copy(update={"checks": [*self.checks, check],
                                        "passed": self.passed and check.status != "fail"})
 
-    def summary(self) -> str:
+    def summary(self, include_skipped: bool = False) -> str:
+        """PASS/FAIL with the warning and failing checks; `include_skipped` also names the gate
+        checks that could not be assessed (claim checks are reported on their own)."""
         head = "PASS" if self.passed else "FAIL"
         bad = [f"{c.name}: {c.detail}" for c in self.checks if c.status in ("warn", "fail")]
+        if include_skipped:
+            bad += [f"{c.name} {c.detail}" for c in self.checks if c.status == "skip" and not c.name.startswith("claim ")]
         return head + (" - " + "; ".join(bad) if bad else "")

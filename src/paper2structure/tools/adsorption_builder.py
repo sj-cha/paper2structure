@@ -2,6 +2,7 @@
 search (https://github.com/sj-cha/PerovKit) from perovskite X/A sites to arbitrary surface sites."""
 from __future__ import annotations
 
+import dataclasses
 import json
 import math
 import random
@@ -12,15 +13,15 @@ import numpy as np
 from ase import Atoms
 from ase.geometry import get_distances
 
-from paper2structure.tools._geometry import (ANION_FORMERS, ROLE_ADSORBATE, ROLE_SOLVENT, PeriodicTree,
-                                             coordination_pairs, default_seed, ensure_bookkeeping,
-                                             farthest_point_sampling, get_molecules, mol_ids, neighbor_pairs, rcov,
-                                             rotation_about_axis, rotation_from_u_to_v, set_molecules, signed_angle,
-                                             substrate_mask, surface_anions, unit)
-from paper2structure.tools.structure_export import structure_kind, vacuum_gap
+from paper2structure.tools._geometry import (ANION_CONTACT_SCALE, ANION_FORMERS, ROLE_ADSORBATE, ROLE_SOLVENT,
+                                             PeriodicTree, coordination_pairs, default_seed, ensure_bookkeeping,
+                                             farthest_point_sampling, neighbor_pairs, rcov, register_molecules,
+                                             rotation_about_axis, rotation_from_u_to_v, signed_angle, substrate_mask,
+                                             surface_anions, unit)
+from paper2structure.tools.structure_export import (OPEN_GAP, _axis_gaps, structure_kind, substrate_depth,
+                                                    vacuum_gap)
 
 Z = np.array([0.0, 0.0, 1.0])
-ANION_CONTACT_SCALE = 1.3  # adsorbate O/N/S/halogen - substrate anion pairs count as clashes below this x radii
 
 
 @dataclass
@@ -77,18 +78,6 @@ def _reference_cn(atoms: Atoms, symbols: list[str], cn: np.ndarray) -> dict[str,
     return out
 
 
-def _hull_depth(positions: np.ndarray) -> np.ndarray:
-    """Distance (A) of each point below the convex hull of all points (0 on the hull)."""
-    from scipy.spatial import ConvexHull
-
-    try:
-        eq = ConvexHull(positions).equations
-    except Exception:  # noqa: BLE001 - flat or tiny particle: every atom is on the outside
-        return np.zeros(len(positions))
-    # inside a convex hull every facet's signed distance n.x + d is <= 0; the nearest facet is the largest
-    return np.maximum(-(positions @ eq[:, :3].T + eq[:, 3]).max(axis=1), 0.0)
-
-
 def surface_atoms(atoms: Atoms, side: str = "auto", cutoff_scale: float = 1.2, layer_tol: float = 0.5) -> list[int]:
     """Indices of exposed substrate atoms: atoms with fewer neighbours than the same element in the
     bulk (broken bonds), plus the outermost layer - the atoms within `layer_tol` A of the top (or
@@ -97,19 +86,24 @@ def surface_atoms(atoms: Atoms, side: str = "auto", cutoff_scale: float = 1.2, l
     tolerance keeps fully coordinated atoms of polar bilayers (0.9 A below a zinc-blende (111)
     top) out.
 
-    side: "top" or "bottom" for slabs, "all" for nanocrystals; "auto" picks "top" for slabs and
-    "all" otherwise. Atoms with another substrate atom stacked right above them along the slab
-    normal are never exposed. Adsorbate and solvent atoms are ignored.
+    side: "top" or "bottom" for slabs, "all" for nanocrystals and wires (the faces around a wire's
+    axis); "auto" picks "top" for slabs and "all" otherwise. Atoms with another substrate atom
+    stacked right above them along the slab normal are never exposed. Adsorbate and solvent atoms
+    are ignored. A bulk crystal has no surface: ValueError.
     """
     idx = np.where(substrate_mask(atoms))[0]
     if len(idx) == 0:
         return []
+    kind = structure_kind(atoms)
+    if side == "auto":
+        side = "top" if kind == "slab" else "all"
+    if side == "all" and kind == "bulk":
+        raise ValueError("a bulk crystal has no surface: build a slab (build_slab) or a particle "
+                         "(carve_nanocrystal, build_cluster) first")
     cn, normals, _ = _environment(atoms, idx, cutoff_scale)
     symbols = [atoms[i].symbol for i in idx]
     ref = _reference_cn(atoms, symbols, cn)
     under = np.array([c < ref[s] for s, c in zip(symbols, cn)])
-    if side == "auto":
-        side = "top" if structure_kind(atoms) == "slab" else "all"
     if side in ("top", "bottom"):
         sign = 1.0 if side == "top" else -1.0
         h = sign * atoms.positions[idx, 2]
@@ -117,7 +111,7 @@ def surface_atoms(atoms: Atoms, side: str = "auto", cutoff_scale: float = 1.2, l
         keep = (under & (sign * normals[:, 2] > 0.3) & (h > mid)) | (h >= h.max() - layer_tol)
         keep &= ~_shadowed(atoms, idx, keep, sign)
     elif side == "all":
-        keep = under | (_hull_depth(atoms.positions[idx]) <= layer_tol)
+        keep = under | (substrate_depth(atoms, idx)[idx] <= layer_tol)
     else:
         raise ValueError(f"side must be 'auto', 'top', 'bottom' or 'all'; got {side!r}")
     return [int(i) for i in idx[keep]]
@@ -338,8 +332,13 @@ def place_adsorbates(atoms: Atoms, adsorbate, sites: Sequence[Site], count: Opti
             metal/metalloid compounds, contacts between electronegative molecule atoms (O, N, S,
             halogens) and electronegative substrate atoms must also stay above 1.3 x the radii sum.
     The binding atoms point at the site, the body away from the surface; the rotation about the
-    site normal (and small tilts) is searched to maximize clearance. Molecule atoms get tag 2 and
-    a molecule id; records are kept in atoms.info["p2s_molecules"] (read them with get_molecules).
+    site normal (and small tilts) is searched to maximize clearance, against the structure as it
+    is returned: a builder slab's vacuum is restored above the molecules, so the slab's periodic
+    image across the vacuum is not in the way. Every molecule's clearance is measured against all
+    the others, and the most crowded ones are re-posed. Molecule atoms get tag 2 and a molecule id;
+    records are kept in atoms.info["p2s_molecules"] (read them with get_molecules). Sites follow
+    their atoms when the structure moves (a particle's box is re-centered after each placement), so
+    one site list serves several adsorbates; after mode="replace" removed atoms, get new sites.
     """
     if mode not in ("adsorb", "replace"):
         raise ValueError(f"mode must be 'adsorb' or 'replace'; got {mode!r}")
@@ -350,7 +349,11 @@ def place_adsorbates(atoms: Atoms, adsorbate, sites: Sequence[Site], count: Opti
         raise ValueError("no sites to place on")
     rng = random.Random(default_seed(seed))
     atoms = ensure_bookkeeping(atoms.copy())
-    cell, pbc = atoms.cell.array, atoms.pbc
+    sites = [_current_site(atoms, s) for s in sites]
+    cell = atoms.cell.array
+    # the cell restore_vacuum will return: no periodic image across the vacuum it re-pads
+    regrown = _vacuum_axes(atoms)
+    pbc = [bool(p) and k not in regrown for k, p in enumerate(atoms.pbc)]
 
     n_target = len(sites)
     if count is not None:
@@ -361,7 +364,7 @@ def place_adsorbates(atoms: Atoms, adsorbate, sites: Sequence[Site], count: Opti
         print(f"[place_adsorbates] requested {n_target} placements but only {len(sites)} sites; using all")
         n_target = len(sites)
     pick = farthest_point_sampling(np.array([s.position for s in sites]), n_target, rng,
-                                   cell=cell if any(pbc) else None, pbc=pbc)
+                                   cell=cell if any(atoms.pbc) else None, pbc=atoms.pbc)
     chosen = [sites[k] for k in pick]
 
     removed: set[int] = set()
@@ -381,11 +384,13 @@ def place_adsorbates(atoms: Atoms, adsorbate, sites: Sequence[Site], count: Opti
     binding = list(adsorbate.binding_atoms)
 
     # like charges: electronegative adsorbate atoms keep away from electronegative substrate atoms (an O
-    # 1.9 A from a surface Br is not caught by covalent-radius clearance alone)
-    ids = mol_ids(atoms)
-    like = surface_anions(symbols[i] for i in env_idx if ids[i] < 0)
-    acceptor = [k for k, s in enumerate(ads_sym) if s in ANION_FORMERS]
-    anions = [k for k, i in enumerate(env_idx) if ids[i] < 0 and symbols[i] in like]
+    # 1.9 A from a surface Br is not caught by covalent-radius clearance alone); a positively charged
+    # atom (the N of an ammonium) is the anions' partner, not a like charge
+    sub_mask = substrate_mask(atoms)
+    like = surface_anions(symbols[i] for i in env_idx if sub_mask[i])
+    charges = [a.GetFormalCharge() for a in adsorbate.mol.GetAtoms()]
+    acceptor = [k for k, s in enumerate(ads_sym) if s in ANION_FORMERS and charges[k] <= 0]
+    anions = [k for k, i in enumerate(env_idx) if sub_mask[i] and symbols[i] in like]
     anion_tree = (PeriodicTree(atoms.positions[env_idx[anions]], env_r[anions], cell, pbc)
                   if acceptor and anions else None)
 
@@ -405,10 +410,11 @@ def place_adsorbates(atoms: Atoms, adsorbate, sites: Sequence[Site], count: Opti
         return float((d / ref).min())
 
     def score(coords: np.ndarray, excl: dict[int, set[int]], contact: list[int],
-              others: Optional[PeriodicTree]) -> float:
+              others: Optional[PeriodicTree], own: Optional[set[int]] = None) -> float:
         s = env_tree.min_normalized(coords, ads_r, exclude=excl)
-        if others is not None:
-            s = min(s, others.min_normalized(coords, ads_r))
+        if others is not None:  # `own`: the molecule's own atoms in `others`, skipped
+            skip = {a: own for a in range(len(coords))} if own else None
+            s = min(s, others.min_normalized(coords, ads_r, exclude=skip))
         if anion_tree is not None:
             s = min(s, anion_tree.min_normalized(coords[acceptor], ads_r[acceptor]) / ANION_CONTACT_SCALE)
         if contact:  # intended contacts are excluded above, but are still checked here
@@ -482,38 +488,37 @@ def place_adsorbates(atoms: Atoms, adsorbate, sites: Sequence[Site], count: Opti
         pts = np.vstack(coords_list)
         return PeriodicTree(pts, np.tile(ads_r, len(coords_list)), cell, pbc)
 
+    def clearance(k: int, everyone: Optional[PeriodicTree] = None) -> float:
+        """Molecule k's clearance against the substrate and every other placed molecule."""
+        m, contact = len(ads_sym), contacts(chosen[k])
+        return score(placed[k], {b: set(contact) for b in binding}, contact, everyone or tree_of(placed),
+                     set(range(k * m, (k + 1) * m)))
+
+    def rescore() -> list[float]:
+        everyone = tree_of(placed)
+        return [clearance(k, everyone) for k in range(len(placed))]
+
     placed: list[np.ndarray] = []
-    scores: list[float] = []
     for site in chosen:
-        c, s = best_pose(site, tree_of(placed))
-        placed.append(c)
-        scores.append(s)
+        placed.append(best_pose(site, tree_of(placed))[0])
+    scores = rescore()  # a molecule placed early also meets the ones placed after it
     for _ in range(max_refine):
-        low = [k for k, s in enumerate(scores) if s < min_clearance]
+        low = sorted((k for k, s in enumerate(scores) if s < min_clearance), key=lambda k: scores[k])
         if not low:
             break
         improved = False
         for k in low:
             c, s = best_pose(chosen[k], tree_of([p for j, p in enumerate(placed) if j != k]))
-            if s > scores[k] + 1e-3:
-                placed[k], scores[k], improved = c, s, True
+            if s > clearance(k) + 1e-3:
+                placed[k], improved = c, True
+        scores = rescore()
         if not improved:
             break
 
-    new = atoms[keep]
-    molecules = get_molecules(new)
-    next_id = int(mol_ids(new).max()) + 1 if len(new) else 0
-    next_id = max(next_id, 1 + max((m["mol_id"] for m in molecules), default=-1))
-    for site, c, s in zip(chosen, placed, scores):
-        ads = Atoms(ads_sym, positions=c)
-        ads.set_tags(np.full(len(ads), ROLE_ADSORBATE, dtype=int))
-        ads.set_array("mol_id", np.full(len(ads), next_id, dtype=int))
-        new.extend(ads)
-        molecules.append({"mol_id": next_id, "name": adsorbate.name, "smiles": adsorbate.smiles,
-                          "charge": int(adsorbate.charge), "role": "adsorbate", "mode": mode,
-                          "site": site.label, "binding_atoms": binding, "clearance": round(s, 3)})
-        next_id += 1
-    set_molecules(new, molecules)
+    records = [{"name": adsorbate.name, "smiles": adsorbate.smiles, "charge": int(adsorbate.charge), "role": "adsorbate",
+                "mode": mode, "site": site.label, "binding_atoms": binding, "clearance": round(s, 3)}
+               for site, s in zip(chosen, scores)]
+    new = register_molecules(atoms[keep], [Atoms(ads_sym, positions=c) for c in placed], records, ROLE_ADSORBATE)
     restore_vacuum(new)
     low = [s for s in scores if s < min_clearance]
     if low:
@@ -522,22 +527,50 @@ def place_adsorbates(atoms: Atoms, adsorbate, sites: Sequence[Site], count: Opti
     return new
 
 
-def restore_vacuum(atoms: Atoms) -> None:
-    """Keep the builder's vacuum after molecules were added (as PerovKit resets the cell height
-    to the adsorbate top plus the original vacuum): slabs grow along c, nanocrystal boxes are
-    re-padded."""
-    vac = atoms.info.get("p2s_vacuum")
-    if not vac:
-        return
+def _current_site(atoms: Atoms, site: Site) -> Site:
+    """The site where its atoms are now: a site from surface_sites follows a translation of the
+    structure (a particle's box is re-centered after each placement). A site whose atoms changed
+    (indices shift when atoms are removed) raises."""
+    idx = list(site.indices)
+    if not idx or len(site.offsets) != len(idx):  # hand-made site without per-atom offsets: as given
+        return site
+    if max(idx) >= len(atoms) or tuple(atoms[i].symbol for i in idx) != tuple(site.symbols):
+        raise ValueError(f"site {site.label} on atoms {idx} does not match this structure: atoms were removed or "
+                         "reordered since surface_sites (e.g. by mode='replace'); get sites from the current structure")
+    return dataclasses.replace(site, position=atoms.positions[idx[0]] - site.offsets[0])
+
+
+def _vacuum_axes(atoms: Atoms) -> tuple[int, ...]:
+    """The cell vectors restore_vacuum re-pads: c of a builder slab whose c is along z; the
+    directions in which a builder particle's substrate holds vacuum (not those of a periodic support)."""
+    if not atoms.info.get("p2s_vacuum"):
+        return ()
     kind = atoms.info.get("p2s_kind")
     if kind == "slab":
-        cell = atoms.cell.array.copy()
+        cell = atoms.cell.array
+        return (2,) if abs(cell[2, 0]) < 1e-6 and abs(cell[2, 1]) < 1e-6 else ()
+    if kind == "nanocrystal":
+        gaps = _axis_gaps(atoms, np.where(substrate_mask(atoms))[0])
+        return tuple(k for k in range(3) if not atoms.pbc[k] or gaps[k] > OPEN_GAP)
+    return ()
+
+
+def restore_vacuum(atoms: Atoms, recenter: bool = True) -> None:
+    """Keep a builder's vacuum after molecules were added (as PerovKit resets the cell height to the
+    adsorbate top plus the original vacuum): a slab's cell grows along c, which moves no atom; with
+    `recenter`, a particle's box is re-padded along the directions that hold vacuum."""
+    axes = _vacuum_axes(atoms)
+    if not axes:
+        return
+    vac = float(atoms.info["p2s_vacuum"])
+    if atoms.info.get("p2s_kind") == "slab":
         gap = vacuum_gap(atoms)
-        if gap < vac and abs(cell[2, 0]) < 1e-6 and abs(cell[2, 1]) < 1e-6:
+        if gap < vac:
+            cell = atoms.cell.array.copy()
             cell[2, 2] += vac - gap
             atoms.set_cell(cell, scale_atoms=False)
-    elif kind == "nanocrystal":
-        atoms.center(vacuum=float(vac))
+    elif recenter:
+        atoms.center(vacuum=vac, axis=axes)
 
 
 def place_adsorbate(atoms: Atoms, adsorbate, site: Site, mode: str = "adsorb", **kwargs) -> Atoms:
@@ -559,7 +592,8 @@ def add_molecule(atoms: Atoms, molecule: Atoms, smiles: str, name: str, role: st
 
     The molecule must be an RDKit conformer of `smiles` (Adsorbate.from_smiles(smiles).atoms), moved
     rigidly or with torsions turned: its bond lengths and angles are compared with RDKit's and a
-    hand-built or reshaped molecule raises ValueError.
+    hand-built or reshaped molecule raises ValueError. An adsorbate or guest on a build_slab slab
+    keeps the slab's vacuum above it (the cell grows along c; no atom moves).
     """
     from rdkit import Chem
 
@@ -573,20 +607,14 @@ def add_molecule(atoms: Atoms, molecule: Atoms, smiles: str, name: str, role: st
         raise ValueError(f"{name}: atoms {molecule.get_chemical_formula()} do not match SMILES {smiles!r}")
     from paper2structure.tools.geometry_checks import infer_bonds, molecule_geometry
 
-    loose = Atoms(molecule.get_chemical_symbols(), positions=molecule.get_positions())
-    off = molecule_geometry(loose.get_chemical_symbols(), loose.positions, sorted(infer_bonds(loose)), smiles)
+    part = Atoms(molecule.get_chemical_symbols(), positions=molecule.get_positions())
+    off = molecule_geometry(part.get_chemical_symbols(), part.positions, sorted(infer_bonds(part)), smiles)
     if off:
         raise ValueError(f"{name}: not the RDKit conformer of {smiles!r} ({'; '.join(off[:4])}). Build molecules with "
                          "Adsorbate.from_smiles(smiles, seed=SEED).atoms and move them rigidly or turn torsions")
-    new = ensure_bookkeeping(atoms.copy())
-    molecules = get_molecules(new)
-    next_id = max(int(mol_ids(new).max()) + 1 if len(new) else 0,
-                  1 + max((m["mol_id"] for m in molecules), default=-1))
-    part = Atoms(molecule.get_chemical_symbols(), positions=molecule.get_positions())
-    part.set_tags(np.full(len(part), ROLE_ADSORBATE if role == "adsorbate" else ROLE_SOLVENT, dtype=int))
-    part.set_array("mol_id", np.full(len(part), next_id, dtype=int))
-    new.extend(part)
-    molecules.append({"mol_id": next_id, "name": name, "smiles": smiles, "charge": Chem.GetFormalCharge(mol),
-                      "role": role, **record})
-    set_molecules(new, molecules)
+    new = register_molecules(atoms, [part], [{"name": name, "smiles": smiles, "charge": Chem.GetFormalCharge(mol),
+                                              "role": role, **record}],
+                             ROLE_ADSORBATE if role == "adsorbate" else ROLE_SOLVENT)
+    if role != "solvent":  # hand-packed solvent is meant to fill the vacuum
+        restore_vacuum(new, recenter=False)
     return new

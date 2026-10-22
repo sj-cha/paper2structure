@@ -6,7 +6,8 @@ description: How to build periodic slabs with a chosen termination and place ads
 ## Slab
 
 1. `bulk = build_bulk(space_group, species, coords, a=..., c=..., formula_units=...)` from the plan's
-   crystal (Wyckoff representatives in the ITA standard setting, origin choice 1).
+   crystal, with the plan's space-group symbol exactly as written (it names the setting of the
+   Wyckoff representatives, e.g. "Fd-3m:2" for origin choice 2).
 2. `for t in list_terminations(bulk, miller, min_thickness=...): print(t)` lists every cut with its
    top and bottom layers and the exposed atoms with their coordination, e.g. `O(CN 2) x1, Ti(CN 5) x1`.
    Pick the termination the plan describes by its exposed atoms, not by its index alone.
@@ -18,9 +19,11 @@ description: How to build periodic slabs with a chosen termination and place ads
 
 ## Sites and placement
 
-- Compute sites on the exact structure you place on: atom indices change when atoms are added or
-  removed. `surface_sites(slab, kinds=("top", "bridge", "hollow"), elements=[...])`,
-  `unique_sites(...)` for one representative per symmetry-distinct kind.
+- `surface_sites(slab, kinds=("top", "bridge", "hollow"), elements=[...])`,
+  `unique_sites(...)` for one representative per symmetry-distinct kind. Sites follow their atoms,
+  so one site list serves several adsorbates placed one after another (a particle is re-centered
+  in its box after each placement), but after mode="replace" or any removal of atoms the indices
+  change: get the sites from the current structure.
 - Bridge or hollow sites across non-bonded atoms (two surface halides, two cations) need
   `max_pair_distance` larger than their separation.
 - `Adsorbate.from_smiles(smiles, BindingMotif([...binding elements...], anchor=SMARTS), name=..., seed=SEED)`:

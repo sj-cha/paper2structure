@@ -5,12 +5,16 @@ description: How to add explicit solvent, solvent mixtures and ions around a sla
 
 - `add_solvent(atoms, smiles, density=..., thickness=..., seed=SEED)` packs rigid, UFF-relaxed
   copies of one molecule with random positions and orientations. Above a slab it fills a layer
-  `thickness` A thick starting `gap` A above the top atom, extending the cell along z when needed;
-  around a particle it fills the whole box. Give `density` in g/cm^3 or `n_molecules`.
+  `thickness` A thick starting `gap` A above the top substrate atom, around any adsorbates,
+  extending the cell along z when needed; around a particle (or in a porous bulk, or an empty box
+  for a pure liquid or electrolyte) it fills the whole cell. Give `density` in g/cm^3 or
+  `n_molecules`; with a density, space already taken by adsorbates or earlier species is not
+  counted.
 - It reports the count and density it reached. When it falls short, enlarge the region, lower
   `tolerance` slightly (default 2.0 A), or report the shortfall as a deviation.
-- Mixtures: call add_solvent once per species, with each one's molecule count from the
-  composition (mole fractions times the total that fits the region at the mixture density).
+- Mixtures: call add_solvent once per species into the same region, ions and minority species
+  first (random insertion into an already dense liquid falls short), each with its molecule count
+  from the composition (mole fractions times the total that fits the region at the mixture density).
 - Ions: monatomic or molecular ions are SMILES with formal charges (`[Na+]`, `[Cl-]`,
   `F[P-](F)(F)(F)(F)F`); add matching counter-ions so the whole cell stays neutral.
 - Solvent fills the vacuum, so the vacuum check only warns for solvated structures; keep a gap of

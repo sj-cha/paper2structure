@@ -13,8 +13,8 @@ from ase.constraints import FixAtoms
 from ase.geometry import get_distances
 from ase.io import read, write
 
-from paper2structure.tools._geometry import (clean_arrays, coordination_pairs, get_molecules, mol_ids, neighbor_pairs,
-                                             rcov, substrate_mask)
+from paper2structure.tools._geometry import (clean_arrays, coordination_pairs, get_molecules, hull_depth, mol_ids,
+                                             neighbor_pairs, rcov, set_molecules, solvent_mask, substrate_mask)
 
 EXTENSIONS = {"poscar": "vasp", "cif": "cif", "extxyz": "extxyz"}
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
@@ -45,6 +45,12 @@ def emit(atoms: Atoms, name: str, plan_id: str, notes: str = "", system_ids: Opt
     out = Path(os.environ.get("P2S_EMIT_DIR", "structures"))
     out.mkdir(parents=True, exist_ok=True)
     atoms = clean_arrays(atoms.copy())
+    label = atoms.info.get("p2s_kind")
+    if label and label != "bulk" and len(atoms) and _inferred_kind(atoms) != label:
+        print(f"[emit] warning: {name} carries the builder label p2s_kind={label!r} but its geometry is that of a "
+              f"{_inferred_kind(atoms)}; validation treats it as a {label}. When combining structures start from the "
+              "one whose kind the result has (slab + particle for a supported particle), or set atoms.info['p2s_kind'] "
+              "to what it is")
     script = _calling_script()
     systems = [str(s) for s in (system_ids or [])]
     atoms.info.update({"p2s_name": name, "p2s_plan_id": str(plan_id), "p2s_notes": str(notes)})
@@ -67,63 +73,170 @@ def read_structure(path: str | os.PathLike) -> Atoms:
     return read(path)
 
 
-OPEN_GAP = 5.0  # A of empty space along a periodic direction that marks it as vacuum
+OPEN_GAP = 5.0  # A of empty space along a cell vector that marks it as vacuum
+
+# Shape of a structure. Every cell vector is measured as if periodic, whatever atoms.pbc says:
+# exported POSCAR and CIF files are periodic along all three, so a slab ASE leaves non-periodic
+# along its normal still has exactly the vacuum its POSCAR will have. Positions are read on the
+# circle of fractional coordinates, so a structure wrapped across the cell boundary is one piece.
 
 
-def _axis_gaps(atoms: Atoms) -> dict[int, float]:
-    """Empty space (A) between the structure and its periodic image along each periodic cell vector."""
-    cell = atoms.cell.array
-    vol = abs(np.linalg.det(cell))
-    gaps = {}
+def _structure_atoms(atoms: Atoms) -> np.ndarray:
+    """The atoms that make up the structure's shape: all but solvent, which fills the vacuum by
+    design (all atoms when there is nothing else)."""
+    keep = ~solvent_mask(atoms)
+    return np.where(keep)[0] if keep.any() else np.arange(len(atoms))
+
+
+def _fractional(atoms: Atoms) -> np.ndarray:
+    return np.linalg.solve(atoms.cell.complete().T, atoms.positions.T).T
+
+
+def _widest_arc(f: np.ndarray) -> tuple[float, float]:
+    """(middle, width) of the widest empty arc between fractional coordinates on the unit circle."""
+    fr = np.sort(np.mod(f, 1.0))
+    arcs = np.diff(np.append(fr, fr[0] + 1.0))  # the empty arc after each point; the last one wraps
+    i = int(np.argmax(arcs))
+    return float(fr[i] + arcs[i] / 2), float(arcs[i])
+
+
+def _axis_heights(atoms: Atoms, k: int, ref: np.ndarray) -> tuple[float, np.ndarray]:
+    """Along cell vector k: the empty space (A) between the `ref` atoms and their periodic image,
+    and every atom's height (A, along the normal of the other two vectors) above the bottom of the
+    ref atoms. A zero cell vector has an infinite gap."""
+    cell = atoms.cell.complete()
+    normal = np.cross(cell[(k + 1) % 3], cell[(k + 2) % 3])
+    normal /= np.linalg.norm(normal)
+    if atoms.cell.lengths()[k] < 1e-6 or len(ref) == 0:
+        h = atoms.positions @ normal
+        gap = float("inf") if atoms.cell.lengths()[k] < 1e-6 else abs(float(cell[k] @ normal))
+        return gap, h - (h[ref].min() if len(ref) else 0.0)
+    spacing = abs(float(cell[k] @ normal))
+    f = _fractional(atoms)[:, k]
+    middle, width = _widest_arc(f[ref])
+    return width * spacing, (np.mod(f - middle, 1.0) - width / 2) * spacing
+
+
+def _axis_gaps(atoms: Atoms, ref: Optional[np.ndarray] = None) -> dict[int, float]:
+    """Empty space (A) between the structure (`ref`, default: all but solvent) and its periodic
+    image along each cell vector."""
+    ref = _structure_atoms(atoms) if ref is None else ref
+    return {k: _axis_heights(atoms, k, ref)[0] for k in range(3)}
+
+
+def _unwrapped(atoms: Atoms, ref: np.ndarray) -> np.ndarray:
+    """Cartesian positions with the `ref` atoms in one piece: along each cell vector, coordinates
+    are counted from the middle of the widest empty arc."""
+    frac = _fractional(atoms)
     for k in range(3):
-        if not atoms.pbc[k]:
-            continue
-        n = np.cross(cell[(k + 1) % 3], cell[(k + 2) % 3])
-        n /= np.linalg.norm(n)
-        h = atoms.positions @ n
-        gaps[k] = float(vol / np.linalg.norm(np.cross(cell[(k + 1) % 3], cell[(k + 2) % 3])) - (h.max() - h.min()))
-    return gaps
+        if atoms.cell.lengths()[k] >= 1e-6 and len(ref):
+            middle, _ = _widest_arc(frac[ref, k])
+            frac[:, k] = middle + np.mod(frac[:, k] - middle, 1.0)
+    return frac @ atoms.cell.complete()
+
+
+def _inferred_kind(atoms: Atoms) -> str:
+    gaps = _axis_gaps(atoms)
+    n_open = sum(1 for k in range(3) if not atoms.pbc[k] or gaps[k] > OPEN_GAP)
+    return {0: "bulk", 1: "slab", 2: "wire"}.get(n_open, "nanocrystal")
 
 
 def structure_kind(atoms: Atoms) -> str:
     """The builders' label (atoms.info["p2s_kind"]) or, for structures built with custom code, one
-    inferred from the vacuum along the periodic directions: "slab" (one open direction), "wire"
-    (two), "nanocrystal" (three, or no periodicity) or "bulk"."""
+    inferred from the vacuum around the structure (solvent left out): "slab" (one open direction),
+    "wire" (two), "nanocrystal" (three) or "bulk". A cell vector is open when it is not periodic or
+    holds more than OPEN_GAP A of vacuum. A build_bulk crystal stays "bulk" while its cell is a
+    supercell of the crystal's lattice (molecules added or atoms removed); once the cell changed (a
+    supercell given vacuum, ase.build.surface of it) the geometry decides."""
     kind = atoms.info.get("p2s_kind")
-    if kind:
-        return str(kind)
+    if not kind:
+        return _inferred_kind(atoms)
+    if kind == "bulk" and not _lattice_supercell(atoms):
+        return _inferred_kind(atoms)
+    return str(kind)
+
+
+def _lattice_supercell(atoms: Atoms) -> bool:
+    """Whether the cell is an integer supercell of the lattice build_bulk recorded (True when there
+    is no record: a custom "bulk" label is trusted)."""
+    lattice = atoms.info.get("p2s_lattice")
+    if lattice is None:
+        return True
+    lattice = np.asarray(lattice, dtype=float).reshape(3, 3)
+    if atoms.cell.rank < 3 or abs(np.linalg.det(lattice)) < 1e-6:
+        return False
+    n = atoms.cell.array @ np.linalg.inv(lattice)
+    return bool(np.allclose(n, np.round(n), atol=1e-3) and round(abs(np.linalg.det(n))) >= 1)
+
+
+def slab_axis(atoms: Atoms) -> int:
+    """The cell vector across a slab's vacuum: its only non-periodic vector, else the one with the
+    most vacuum."""
+    nonperiodic = [k for k in range(3) if not atoms.pbc[k]]
+    if len(nonperiodic) == 1:
+        return nonperiodic[0]
     gaps = _axis_gaps(atoms)
-    n_open = sum(g > OPEN_GAP for g in gaps.values()) + (3 - len(gaps))
-    return {0: "bulk", 1: "slab", 2: "wire"}.get(n_open, "nanocrystal")
+    return max(range(3), key=lambda k: (gaps[k], k))
+
+
+def wire_axis(atoms: Atoms) -> int:
+    """The cell vector along a wire: its only periodic vector without vacuum."""
+    gaps = _axis_gaps(atoms)
+    closed = [k for k in range(3) if atoms.pbc[k] and gaps[k] <= OPEN_GAP]
+    return closed[0] if len(closed) == 1 else min(range(3), key=lambda k: (not atoms.pbc[k], gaps[k]))
 
 
 def vacuum_gap(atoms: Atoms) -> float:
-    """Vacuum (A) between the structure and its nearest periodic image across its open directions:
-    along the surface normal for slabs, the smallest open direction otherwise."""
-    gaps = _axis_gaps(atoms)
-    if not gaps:
-        return float("inf")
+    """Vacuum (A) between the structure and its nearest periodic image (solvent and adsorbates
+    count as filling it): along the surface normal for slabs, across the smaller open direction for
+    wires, the smallest over all cell vectors otherwise."""
+    gaps = _axis_gaps(atoms, np.arange(len(atoms)))
     kind = structure_kind(atoms)
     if kind == "slab":
-        return gaps[2] if atoms.info.get("p2s_kind") == "slab" and 2 in gaps else max(gaps.values())
-    open_gaps = [g for g in gaps.values() if g > OPEN_GAP] if kind in ("wire", "nanocrystal") else []
-    return float(min(open_gaps or gaps.values()))
+        return float(gaps[slab_axis(atoms)])
+    if kind == "wire":
+        along = wire_axis(atoms)
+        return float(min(g for k, g in gaps.items() if k != along))
+    return float(min(gaps.values()))
+
+
+def substrate_depth(atoms: Atoms, sub: np.ndarray) -> np.ndarray:
+    """Distance (A) of every atom below the surface of the substrate atoms `sub`: along the normal
+    for slabs, below the convex hull across the axis for wires, below the convex hull for particles,
+    infinite for bulk."""
+    kind = structure_kind(atoms)
+    if kind == "bulk":
+        return np.full(len(atoms), np.inf)
+    if len(sub) == 0:
+        return np.zeros(len(atoms))
+    if kind == "slab":
+        _, h = _axis_heights(atoms, slab_axis(atoms), sub)
+        return np.minimum(h - h[sub].min(), h[sub].max() - h)
+    pos = _unwrapped(atoms, sub)
+    if kind == "wire":
+        pos = pos @ _cross_section(atoms.cell.complete()[wire_axis(atoms)]).T
+    return hull_depth(pos, pos[sub])
+
+
+def _cross_section(axis: np.ndarray) -> np.ndarray:
+    """Two orthonormal vectors perpendicular to `axis` (rows)."""
+    a = axis / np.linalg.norm(axis)
+    u = np.cross(a, [1.0, 0.0, 0.0] if abs(a[0]) < 0.9 else [0.0, 1.0, 0.0])
+    u /= np.linalg.norm(u)
+    return np.array([u, np.cross(a, u)])
 
 
 def composition_profile(atoms: Atoms, layer_tol: float = 0.6, shell_width: float = 3.0) -> str:
     """Where each element sits in the substrate: layer compositions from the top for slabs, radial
-    shells from the center for particles (e.g. a core-shell particle reads "0-3 A Cd4Se4 | ...")."""
+    shells from the center for particles (e.g. a core-shell particle reads "0-3 A Cd4Se4 | ...")
+    and from the axis for wires."""
     sub = np.where(substrate_mask(atoms))[0]
     if len(sub) < 2:
         return ""
     sym = np.array(atoms.get_chemical_symbols())[sub]
-    pos = atoms.positions[sub]
     kind = structure_kind(atoms)
     if kind == "slab":
-        axis = 2 if atoms.info.get("p2s_kind") == "slab" else max(_axis_gaps(atoms).items(), key=lambda kv: kv[1])[0]
-        cell = atoms.cell.array
-        n = np.cross(cell[(axis + 1) % 3], cell[(axis + 2) % 3])
-        h = pos @ (n / np.linalg.norm(n))
+        h = _axis_heights(atoms, slab_axis(atoms), sub)[1][sub]
         order = np.argsort(-h)
         layers, current = [], [order[0]]
         for a, b in zip(order[:-1], order[1:]):
@@ -136,14 +249,18 @@ def composition_profile(atoms: Atoms, layer_tol: float = 0.6, shell_width: float
         return (f"layers from the top ({len(layers)} in total): " + " | ".join(shown)
                 + (f" | ... | bottom {Atoms(list(sym[layers[-1]])).get_chemical_formula()}" if len(layers) > 4 else ""))
     if kind in ("nanocrystal", "wire"):
-        r = np.linalg.norm(pos - pos.mean(axis=0), axis=1)
+        rel = _unwrapped(atoms, sub)[sub]
+        rel = rel - rel.mean(axis=0)
+        if kind == "wire":
+            rel = rel @ _cross_section(atoms.cell.complete()[wire_axis(atoms)]).T
+        r = np.linalg.norm(rel, axis=1)
         width = max(shell_width, float(r.max()) / 6 + 1e-9)
         bins = []
         for k in range(int(np.ceil((r.max() + 1e-9) / width))):
             inside = (r >= k * width) & (r < (k + 1) * width)
             if inside.any():
                 bins.append(f"{k * width:.0f}-{(k + 1) * width:.0f} A {Atoms(list(sym[inside])).get_chemical_formula()}")
-        return "radial composition from the center: " + " | ".join(bins)
+        return f"radial composition from the {'axis' if kind == 'wire' else 'center'}: " + " | ".join(bins)
     return ""
 
 
@@ -237,7 +354,7 @@ def describe(atoms: Atoms) -> str:
     profile = composition_profile(atoms)
     if profile:
         lines.append(profile)
-    if any(atoms.pbc):
+    if kind != "bulk" and atoms.cell.rank == 3:
         lines.append(f"vacuum gap: {vacuum_gap(atoms):.1f} A")
     if len(atoms) > 1:
         r = rcov(atoms.get_chemical_symbols())
@@ -277,7 +394,9 @@ def export_structure(atoms: Atoms, out_dir: str | os.PathLike, stem: str,
     unknown = set(formats) - set(EXTENSIONS)
     if unknown:
         raise ValueError(f"unknown formats {sorted(unknown)}; choose from {sorted(EXTENSIONS)}")
-    ordered = clean_arrays(atoms[grouped_order(atoms)])
+    order = grouped_order(atoms)
+    ordered = clean_arrays(atoms[order])
+    _reorder_records(atoms, ordered, order)
     files: dict[str, str] = {}
     for fmt in formats:
         path = out / f"{stem}.{EXTENSIONS[fmt]}"
@@ -296,6 +415,25 @@ def export_structure(atoms: Atoms, out_dir: str | os.PathLike, stem: str,
     meta_path.write_text(json.dumps(meta, indent=1, default=_json_default))
     files["metadata"] = str(meta_path)
     return files
+
+
+def _reorder_records(atoms: Atoms, ordered: Atoms, order: np.ndarray) -> None:
+    """Molecule records name their binding atoms by position within the molecule; `ordered` is
+    `atoms` reordered (order[k] = old index of new atom k), so those positions are translated."""
+    molecules = get_molecules(atoms)
+    if not any(m.get("binding_atoms") for m in molecules):
+        return
+    new_index = np.empty(len(order), dtype=int)
+    new_index[order] = np.arange(len(order))
+    old_ids, new_ids = mol_ids(atoms), mol_ids(ordered)
+    records = []
+    for m in molecules:
+        if m.get("binding_atoms"):
+            old = np.where(old_ids == m["mol_id"])[0]
+            local = {int(g): k for k, g in enumerate(np.where(new_ids == m["mol_id"])[0])}
+            m = {**m, "binding_atoms": [local[int(new_index[old[b]])] for b in m["binding_atoms"] if b < len(old)]}
+        records.append(m)
+    set_molecules(ordered, records)
 
 
 def _json_default(obj):

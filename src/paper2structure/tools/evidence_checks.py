@@ -21,7 +21,7 @@ from paper2structure.tools._symmetry import space_group_number
 from paper2structure.tools.schemas import (BondAngleCheck, BondLengthCheck, CheckResult, ClaimCheck,
                                            CompositionCheck, CoordinationCheck, HydrogenBondCheck, LatticeCheck,
                                            LayerCheck, SpaceGroupCheck)
-from paper2structure.tools.structure_export import structure_kind
+from paper2structure.tools.structure_export import structure_kind, substrate_depth
 
 BOND_SCALE = 1.25  # x covalent-radius sum: the first coordination shell
 INTERIOR_DEPTH = 4.0  # A below the surface of slabs and particles
@@ -140,10 +140,8 @@ def _bond_angle(atoms: Atoms, c: BondAngleCheck) -> tuple[str, str]:
 
 
 def _interior(atoms: Atoms) -> np.ndarray:
-    from paper2structure.tools.geometry_checks import _depth
-
     sub = np.where(mol_ids(atoms) < 0)[0]
-    return _depth(atoms, sub) >= INTERIOR_DEPTH
+    return substrate_depth(atoms, sub) >= INTERIOR_DEPTH
 
 
 def _coordination(atoms: Atoms, c: CoordinationCheck) -> tuple[str, str]:

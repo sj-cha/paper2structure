@@ -13,7 +13,7 @@ from paper2structure.agents.planner.schemas import BulkSpec, PlanSet, StructureP
 from paper2structure.agents.structured_agent import StructuredAgent
 from paper2structure.agents.summarizer.schemas import PaperGraph
 from paper2structure.config import OverridesConfig
-from paper2structure.tools._symmetry import space_group_number
+from paper2structure.tools._symmetry import resolve, space_group_number
 from paper2structure.tools.bulk_builder import build_bulk
 
 log = logging.getLogger(__name__)
@@ -55,23 +55,31 @@ def describe_crystal(bulk: BulkSpec) -> str:
     import io
     from contextlib import redirect_stdout
 
+    with redirect_stdout(io.StringIO()):
+        problems, atoms = _built(bulk)
+    if problems:
+        return "PROBLEMS:\n- " + "\n- ".join(problems)
+    try:
+        return _crystal_report(bulk, atoms)
+    except Exception as e:  # noqa: BLE001 - a failed analysis is feedback, not the end of the planning run
+        log.warning("try_crystal analysis failed for %s: %s", bulk.space_group, e)
+        return f"the crystal builds and passes the plan check ({atoms.get_chemical_formula()}), but its analysis failed: {e}"
+
+
+def _crystal_report(bulk: BulkSpec, atoms) -> str:
     import numpy as np
     import spglib
     from ase.neighborlist import neighbor_list
 
     from paper2structure.tools._geometry import rcov
 
-    problems = _check_bulk(bulk)
-    if problems:
-        return "PROBLEMS:\n- " + "\n- ".join(problems)
-    with redirect_stdout(io.StringIO()):
-        atoms = _build(bulk)
     sym = np.array(atoms.get_chemical_symbols())
     found = {p: spglib.get_spacegroup((atoms.cell.array, atoms.get_scaled_positions(), atoms.numbers), symprec=p)
              for p in (0.01, 0.1)}
+    setting = resolve(bulk.space_group)
     lines = [f"framework {atoms.get_chemical_formula()} ({len(atoms)} atoms), "
              + (f"plus {', '.join(f'{m.per_cell} {m.name}' for m in bulk.molecules)} per cell; " if bulk.molecules else "")
-             + f"requested {bulk.space_group} (#{space_group_number(bulk.space_group)}), found {found[0.01]} at "
+             + f"requested {bulk.space_group} = {setting.label}, found {found[0.01]} at "
                f"symprec 0.01 A and {found[0.1]} at 0.1 A"]
     i, j, d, D = neighbor_list("ijdD", atoms, 1.25 * rcov(sym))
     for el in sorted(set(sym)):
@@ -97,25 +105,30 @@ def describe_crystal(bulk: BulkSpec) -> str:
 def _check_bulk(bulk: BulkSpec) -> list[str]:
     """Build the bulk exactly as specified; a plan whose crystal cannot be built (wrong Wyckoff
     setting, overlapping sites, wrong composition) goes back to the planner, not to construction."""
+    return _built(bulk)[0]
+
+
+def _built(bulk: BulkSpec):
+    """(problems, atoms): the plan check's problems with the crystal, and the crystal when it builds."""
     try:
         atoms = _build(bulk)
     except Exception as e:  # noqa: BLE001 - every builder error is a planning error here
-        return [f"bulk {bulk.formula} ({bulk.space_group}) cannot be built: {e}"]
+        return [f"bulk {bulk.formula} ({bulk.space_group}) cannot be built: {e}"], None
     if bulk.molecules:
-        return _check_molecular_crystal(bulk, Composition(atoms.get_chemical_formula()))
+        return _check_molecular_crystal(bulk, Composition(atoms.get_chemical_formula())), atoms
     ordered = ("a crystal is the ordered cell its sites generate: give that formula and put doping, substitution "
                "or partial occupancy in the description (the Construction agent makes it in a supercell)")
     try:
         stated = Composition(bulk.formula)
     except Exception:  # noqa: BLE001
-        return [f"bulk formula {bulk.formula!r} is not a chemical formula; {ordered}"]
+        return [f"bulk formula {bulk.formula!r} is not a chemical formula; {ordered}"], atoms
     generated = Composition(atoms.get_chemical_formula())
     if generated.reduced_formula != stated.reduced_formula:
         doped = (not set(stated.elements) <= set(generated.elements)
                  or any(abs(n - round(n)) > 1e-6 for n in stated.values()))
         return [f"bulk sites generate {generated.reduced_formula}, not the stated formula {stated.reduced_formula}; "
-                + (ordered if doped else "check the Wyckoff positions")]
-    return []
+                + (ordered if doped else "check the Wyckoff positions")], atoms
+    return [], atoms
 
 
 def _check_claims(p: StructurePlan, deps: PlanningDeps) -> list[str]:
@@ -367,13 +380,14 @@ What each plan decides
   (which crystal forms the core, the shell, the support; orientation relationships; where
   defects sit), precise enough to build without the paper.
 - crystals: every crystalline component, each named ("bulk", "core", "shell", "support") as the
-  space group (Hermann-Mauguin symbol as pymatgen spells it, e.g. "Fm-3m", "Pm-3m", "P4_2/mnm",
-  "I4_1/amd", "P6_3mc", "F-43m"), its asymmetric unit as Wyckoff representatives with fractional
-  coordinates in the ITA standard setting (origin choice 1 where a group has two origins;
-  hexagonal axes for rhombohedral groups) or in the paper's own setting written as its symbol
-  ("Pbnm", "Pcab", "Cc2m"; lattice parameters and coordinates in that same setting), lattice parameters and formula units per conventional
-  cell. Use lattice parameters reported in the evidence (source "paper", cite the evidence ID);
-  otherwise literature values (source "literature", listed as an assumption). Each crystal is
+  space group, its asymmetric unit as Wyckoff representatives with fractional coordinates, lattice
+  parameters and formula units per conventional cell. Write the space group so that it names the
+  setting the coordinates are in, as the paper reports them: the Hermann-Mauguin symbol ("Fm-3m",
+  "P4_2/mnm", "P6_3mc", "Pnma", or a non-standard setting such as "Pbnm", "P2_1/n", "C2cb"), with
+  ":2" for origin choice 2 and ":R" for rhombohedral axes ("Fd-3m:2", "R-3m:R"); without a suffix a
+  symbol means origin choice 1 and hexagonal axes. Never transform a paper's coordinates by hand:
+  name its setting instead. Lattice parameters are those of that setting. Use lattice parameters
+  reported in the evidence (source "paper", cite the evidence ID); otherwise literature values (source "literature", listed as an assumption). Each crystal is
   built from its sites exactly as written and must be complete: every atom of its formula, bonded
   neighbours, no overlaps. A hybrid organic-inorganic or molecular crystal (organic cations
   between or inside inorganic layers, a framework with guest molecules) is a crystal too: its

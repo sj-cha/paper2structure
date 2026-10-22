@@ -170,7 +170,7 @@ def reviser_prompt(state: ReconstructionState, revisions_left: int, rebuilds_lef
             "measured targets: " + ("; ".join(f"{t.property} {t.measured} ({'met' if t.satisfied else 'NOT met'})"
                                               for t in a.target_checks) or "none reported"),
             f"deviations from plan: {'; '.join(a.deviations) or 'none reported'}",
-            f"deterministic validation: {rep.summary() if rep else 'not run'}",
+            f"deterministic validation: {rep.summary(include_skipped=True) if rep else 'not run'}",
             *(["paper claims tested (the plan's checks):"] + [f"- {c.name.removeprefix('claim ')} {c.status}: {c.detail}"
                                                               for c in rep.checks if c.name.startswith("claim ")]
               if rep and any(c.name.startswith("claim ") for c in rep.checks) else []),
@@ -286,7 +286,8 @@ def save_report(state: ReconstructionState, store: ArtifactStore) -> Path:
         rep = state.validation_reports.get(a.structure_id)
         files = ", ".join(f"[{k}]({v})" for k, v in a.files.items())
         lines.append(f"| {a.structure_id} | {a.plan_id} | {a.formula} | {a.n_atoms} | "
-                     f"{rep.summary() if rep else 'not validated'} | {'yes' if a.structure_id in accepted else ''} | "
+                     f"{rep.summary(include_skipped=True) if rep else 'not validated'} | "
+                     f"{'yes' if a.structure_id in accepted else ''} | "
                      f"{files} | [{Path(a.script).name}]({a.script}) |")
     claim_rows = [(a.structure_id, c) for a in state.artifacts if (rep := state.validation_reports.get(a.structure_id))
                   for c in rep.checks if c.name.startswith("claim ")]

@@ -13,7 +13,9 @@ from paper2structure.tools import (Adsorbate, BindingMotif, add_solvent, build_b
                                    carve_nanocrystal, list_terminations, place_adsorbates, surface_atoms, surface_sites,
                                    unique_sites)
 from paper2structure.tools._geometry import get_molecules, neighbor_pairs, rcov
+from paper2structure.tools.evidence_checks import run_claim_checks
 from paper2structure.tools.geometry_checks import validate_structure
+from paper2structure.tools.schemas import CoordinationCheck
 from paper2structure.tools.structure_export import describe, export_structure, grouped_order
 
 
@@ -580,3 +582,209 @@ def test_linkers_bonded_into_a_framework_are_not_loose_molecules():
     with_loose = mof + loose
     with_loose.set_array("mol_id", np.full(len(with_loose), -1))
     assert _check(with_loose, "unregistered_molecules").status == "fail"
+
+
+# ---------------------------------------------------------------------------------------------
+# Periodicity: every cell vector is measured as the exported (fully periodic) files will have it
+# ---------------------------------------------------------------------------------------------
+
+
+def test_ase_slabs_left_non_periodic_along_the_normal_are_measured_like_their_poscar():
+    from ase.build import fcc111
+
+    from paper2structure.tools import composition_profile, structure_kind, vacuum_gap
+
+    slab = fcc111("Pt", (3, 3, 4), vacuum=10.0)  # ASE leaves pbc (T, T, F)
+    assert structure_kind(slab) == "slab" and vacuum_gap(slab) == pytest.approx(20.0, abs=0.05)
+    assert composition_profile(slab) == "layers from the top (4 in total): Pt9 | Pt9 | Pt9 | Pt9"
+    assert _validate(slab, min_vacuum=15.0).passed
+    tight = fcc111("Pt", (3, 3, 4), vacuum=2.0)  # its POSCAR has 4 A between images
+    assert next(c for c in _validate(tight, min_vacuum=15.0).checks if c.name == "vacuum").status == "fail"
+    wrapped = slab.copy()  # a slab shifted across the cell boundary is still one slab
+    wrapped.pbc = True
+    wrapped.translate([0, 0, -slab.positions[:, 2].mean()])
+    wrapped.wrap()
+    assert structure_kind(wrapped) == "slab" and vacuum_gap(wrapped) == pytest.approx(20.0, abs=0.05)
+    assert composition_profile(wrapped) == composition_profile(slab)
+
+
+def test_a_bulk_label_holds_only_for_the_crystals_own_lattice(pt_bulk):
+    from ase.build import surface
+
+    from paper2structure.tools import structure_kind
+
+    assert structure_kind(pt_bulk.repeat((2, 2, 2))) == "bulk"
+    opened = pt_bulk.repeat((3, 3, 3))
+    opened.center(vacuum=10.0, axis=2)
+    cut = surface(pt_bulk, (1, 1, 1), 4, vacuum=10.0)
+    assert structure_kind(opened) == structure_kind(cut) == "slab"  # both carry the stale "bulk" label
+    assert "vacuum" in {c.name for c in _validate(opened, min_vacuum=15.0).checks}
+
+
+def test_wire_interiors_are_measured_across_the_axis(cs_bulk):
+    from paper2structure.tools import structure_kind
+
+    wire = cs_bulk.repeat((4, 4, 1))
+    wire.center(vacuum=10.0, axis=(0, 1))
+    wire.info = {}
+    assert structure_kind(wire) == "wire"
+    check = CoordinationCheck(id="C", claim="PbBr6 octahedra", center="Pb", neighbor="Br", number=6)
+    [result] = run_claim_checks(wire, [check])
+    assert result.status == "pass", result.detail  # was "no interior framework Pb": the periodic ends are no surface
+    exposed = set(surface_atoms(wire))
+    assert not exposed & {a.index for a in wire if a.symbol == "Pb" and 5 < a.position[0] - wire.positions[:, 0].min() < 13
+                         and 5 < a.position[1] - wire.positions[:, 1].min() < 13}
+    with pytest.raises(ValueError, match="no surface"):
+        surface_atoms(cs_bulk.repeat(2))
+
+
+def test_a_particle_on_a_support_keeps_the_support_periodic(pt_bulk, co):
+    support = build_slab(pt_bulk, (1, 1, 1), min_thickness=6, vacuum=20, supercell=(6, 6))
+    particle = build_cluster("Pt", "cuboctahedron", 2, 3.924)
+    top = support.positions[:, 2].max()
+    particle.translate(support.cell.array[:2].sum(axis=0) / 2 + [0, 0, top + 2.4] - particle.positions.mean(axis=0)
+                       + [0, 0, np.ptp(particle.positions[:, 2]) / 2])
+    model = particle + support  # the order the review found: the particle's label and vacuum come along
+    model.set_cell(support.cell)
+    model.pbc = True
+    sites = [s for s in surface_sites(model) if s.position[2] > top + 4][:1]
+    covered = place_adsorbates(model, co, sites, bond_length=1.85, seed=0)
+    assert np.allclose(covered.cell.array[:2], support.cell.array[:2])  # was re-boxed into a finite flake
+
+
+# ---------------------------------------------------------------------------------------------
+# Placement, solvent and the molecule bookkeeping
+# ---------------------------------------------------------------------------------------------
+
+
+def test_crowded_adsorbates_are_rescored_against_each_other(pt_bulk):
+    slab = build_slab(pt_bulk, (1, 1, 1), min_thickness=6, vacuum=15, supercell=(3, 3))
+    acetate = Adsorbate.from_smiles("CC(=O)[O-]", BindingMotif(["O"], anchor="C(=O)[O-]"), name="acetate", seed=0)
+    out = place_adsorbates(slab, acetate, surface_sites(slab), count=8, seed=0)
+    assert _check(out, "overlaps").status == "pass"  # the early molecules used to be scored without the later ones
+
+
+def test_long_chains_are_not_bent_by_the_slab_image_across_the_vacuum(pt_bulk):
+    slab = build_slab(pt_bulk, (1, 1, 1), min_thickness=8, vacuum=15, supercell=(3, 3))
+    thiolate = Adsorbate.from_smiles("CCCCCCCCCCCC[S-]", BindingMotif(["S"], anchor="[S-]"), name="C12S", seed=0)
+    hollow = [s for s in surface_sites(slab, kinds=("hollow",)) if s.subtype == "fcc"][:1]
+    out = place_adsorbates(slab, thiolate, hollow, seed=0)
+    assert get_molecules(out)[0]["clearance"] > 1.2  # was 0.6 against the image the returned cell no longer has
+    assert out.cell[2, 2] > slab.cell[2, 2]  # the vacuum above the chain is restored
+
+
+def test_sites_follow_a_particle_recentered_by_earlier_placements(co):
+    pt55 = build_cluster("Pt", "cuboctahedron", 3, 3.924)
+    sites = surface_sites(pt55, kinds=("top",))
+    covered = place_adsorbates(pt55, co, sites[:3], bond_length=1.85, seed=0)
+    proton = Adsorbate.from_smiles("[H+]", name="H")
+    site = sites[20]
+    out = place_adsorbates(covered, proton, [site], bond_length=1.55, seed=0)
+    assert np.linalg.norm(out.positions[-1] - out.positions[site.indices[0]]) == pytest.approx(1.55, abs=0.02)
+    with pytest.raises(ValueError, match="does not match this structure"):  # atoms removed since surface_sites
+        place_adsorbates(covered[:site.indices[0]], proton, [site], bond_length=1.55, seed=0)
+
+
+def test_ammonium_hydrogen_bonded_to_surface_bromide_is_bound(cs_bulk):
+    k = next(t.index for t in list_terminations(cs_bulk, (0, 0, 1), min_thickness=10) if t.top == "PbBr2")
+    slab = build_slab(cs_bulk, (0, 0, 1), k, min_thickness=10, vacuum=15, supercell=(2, 2))
+    ma = Adsorbate.from_smiles("C[NH3+]", BindingMotif(["N"], anchor="[NH3+]"), name="MA")
+    site = surface_sites(slab, kinds=("top",), elements=["Br"])[:1]
+    for bond in (2.3, 3.3):  # an N-H...Br contact, from close to the usual 3.3 A
+        report = _validate(place_adsorbates(slab, ma, site, bond_length=bond))
+        binding = next(c for c in report.checks if c.name == "adsorbate_binding")
+        assert binding.status == "pass" and report.passed, binding.detail
+    water = Adsorbate.from_smiles("O", BindingMotif(["O"], anchor="[OH2]"), name="water")
+    wet = place_adsorbates(slab, water, site, bond_length=2.3)  # a neutral O on Br is still a like-charge contact
+    assert next(c for c in _validate(wet).checks if c.name == "adsorbate_binding").status == "fail"
+
+
+def test_add_molecule_keeps_a_builder_slabs_vacuum(pt_bulk, co):
+    from paper2structure.tools import add_molecule
+
+    slab = build_slab(pt_bulk, (1, 1, 1), min_thickness=6, vacuum=15, supercell=(3, 3))
+    site = surface_sites(slab)[0]
+    molecule = co.atoms.copy()
+    molecule.translate(site.position + [0, 0, 1.85] - molecule.positions[co.binding_atoms[0]])
+    model = add_molecule(slab, molecule, co.smiles, "CO")
+    assert _validate(model, min_vacuum=15.0).passed  # was 12 A: the molecule ate into the vacuum
+
+
+def test_solvent_surrounds_adsorbates_and_fills_an_empty_box(pt_bulk, co):
+    slab = build_slab(pt_bulk, (1, 1, 1), min_thickness=6, vacuum=15, supercell=(4, 4))
+    covered = place_adsorbates(slab, co, surface_sites(slab)[:1], bond_length=1.85, seed=0)
+    wet = add_solvent(covered, "O", n_molecules=40, thickness=12, seed=0)
+    water = wet.positions[[a.index for a in wet if a.tag == 3]]
+    assert water[:, 2].min() - slab.positions[:, 2].max() < 3.5  # was above the CO, a dry gap over the surface
+    box = Atoms(cell=[15.0] * 3, pbc=True)
+    liquid = add_solvent(box, "O", density=1.0, seed=0)
+    assert len(get_molecules(liquid)) > 80  # 113 at 1 g/cm^3 in 3375 A^3; was a crash on the empty cell
+
+
+def test_slabs_and_particles_of_filled_crystals_are_refused(cs_bulk):
+    from paper2structure.tools import add_molecule
+
+    ma = Adsorbate.from_smiles("C[NH3+]", BindingMotif(["N"], anchor="[NH3+]"), name="MA")
+    host = cs_bulk.repeat((2, 2, 2))
+    del host[[a.index for a in host if a.symbol == "Cs"][:1]]
+    molecule = ma.atoms.copy()
+    molecule.translate(host.cell.array.sum(axis=0) / 4 - molecule.positions.mean(axis=0))
+    filled = add_molecule(host, molecule, "C[NH3+]", "MA", role="guest")
+    with pytest.raises(ValueError, match="framework only"):
+        build_slab(filled, (0, 0, 1))
+    with pytest.raises(ValueError, match="framework only"):
+        carve_nanocrystal(filled, 12.0)
+
+
+def test_exported_files_keep_the_binding_atoms_of_reordered_molecules(tmp_path, anatase):
+    terms = list_terminations(anatase, (1, 0, 1), min_thickness=10)
+    k = next(t.index for t in terms if t.symmetric and t.stoichiometric and t.top == "TiO2"
+             and {s.coordination for s in surface_sites(build_slab(anatase, (1, 0, 1), t.index, min_thickness=10,
+                                                                   vacuum=15), elements=["Ti"])} == {(5,)})
+    slab = build_slab(anatase, (1, 0, 1), k, min_thickness=10, vacuum=15, supercell=(3, 2))
+    bridges = [s for s in surface_sites(slab, kinds=("bridge",), elements=["Ti"], max_pair_distance=4.0)
+               if s.coordination == (5, 5)]
+    fo = Adsorbate.from_smiles("[O-]C=O", BindingMotif(["O", "O"], anchor="C(=O)[O-]"), name="formate")
+    out = place_adsorbates(slab, fo, bridges[:1], count=1)
+    files = export_structure(out, tmp_path, "fo", formats=("extxyz",))
+    back = read(files["extxyz"])  # POSCAR order: each element in one block, so the formate reads O, O, C, H
+    [record] = get_molecules(back)
+    members = np.where(back.arrays["mol_id"] == record["mol_id"])[0]
+    assert [back[int(members[b])].symbol for b in record["binding_atoms"]] == ["O", "O"]
+
+
+# ---------------------------------------------------------------------------------------------
+# Checks
+# ---------------------------------------------------------------------------------------------
+
+
+def test_bond_valence_tolerates_vacancies_and_still_passes_substituted_frameworks():
+    sno2 = build_bulk("P4_2/mnm", ["Sn", "O"], [[0, 0, 0], [0.307, 0.307, 0]], a=4.737, c=3.186).repeat((3, 3, 4))
+    del sno2[next(a.index for a in sno2 if a.symbol == "O")]
+    check = _check(sno2, "bond_valence")
+    assert check.status != "fail" and "Sn 4." in check.detail and "vs +4" in check.detail, check.detail  # was vs +2
+    co_mof = build_bulk("Fm-3m", ["Co" if s == "Zn" else s for s, _ in MOF5], [c for _, c in MOF5], a=25.755)
+    assert _check(co_mof, "bond_valence").status == "pass"  # uncounted linker C/H: the lowest common state fits
+
+
+def test_radical_and_isotope_molecules_match_their_rdkit_conformers(pt_bulk):
+    from paper2structure.tools import add_molecule
+
+    slab = build_slab(pt_bulk, (1, 1, 1), min_thickness=6, vacuum=15, supercell=(3, 3))
+    for smiles in ("[O]", "[OH]"):
+        ads = Adsorbate.from_smiles(smiles, BindingMotif(["O"], anchor="[O]") if smiles == "[OH]" else None, name=smiles)
+        out = place_adsorbates(slab, ads, surface_sites(slab)[:1], seed=0)
+        assert _check(out, "molecule_geometry").status == "pass"  # was "its bond graph does not match"
+    d2o = Adsorbate.from_smiles("[2H]O[2H]", seed=0).atoms
+    d2o.translate([5.0, 5.0, slab.positions[:, 2].max() + 6.0])
+    assert len(get_molecules(add_molecule(slab, d2o, "[2H]O[2H]", "D2O", role="solvent"))) == 1
+
+
+def test_checks_that_could_not_run_say_so(anatase):
+    terms = list_terminations(anatase, (1, 0, 1), min_thickness=4)
+    thin = build_slab(anatase, (1, 0, 1), terms[0].index, min_thickness=4, vacuum=15)
+    report = _validate(thin)
+    check = next(c for c in report.checks if c.name == "bond_valence")
+    assert check.status == "skip" and "not assessed" in check.detail  # was "pass"
+    assert "bond_valence not assessed" in report.summary(include_skipped=True)
+    assert "bond_valence" not in report.summary()  # the builder's feedback stays actionable

@@ -148,6 +148,57 @@ def test_build_bulk_takes_settings_pymatgen_does_not_know():
     assert _status(atoms, SpaceGroupCheck(id="SG", claim="C2cb", symbol="C2cb")) == {"SG": "pass"}
 
 
+def test_one_resolver_names_every_setting_the_same_way():
+    from paper2structure.tools._symmetry import hall_number
+
+    halls = {"P2_1/n": 82, "P21/n": 82, "I2/a": 92, "A2/a": 93, "P2_1/b": 86, "Fd-3m": 525, "Fd-3m:2": 526,
+             "Fd-3m (origin choice 2)": 526, "R-3m": 458, "R-3m:R": 459, "R-3m (rhombohedral axes)": 459,
+             "Ccca": 322, "Ccce": 322, "Ccca:2": 323, "Cccb": 324, "Cmmb": 317, "Bmam": 321, "Bbcb": 330,
+             "Cmca": 304, "Fm3m": 523, 227: 525}
+    assert {s: hall_number(s) for s in halls} == halls  # old e-glide spellings take their ITA settings
+    with pytest.raises(ValueError, match=r"unknown space group symbol 'P2_1/q'; close: .*P 1 2_1/c 1 \(#14"):
+        hall_number("P2_1/q")
+
+
+def test_build_bulk_places_rounded_special_positions_on_them():
+    # 1/3 and 2/3 as a plan writes them (JSON floats) used to generate overlapping duplicates
+    for third in (0.333, 0.3333, 0.33333):
+        cdse = build_bulk("P6_3mc", ["Cd", "Se"], [[third, 1 - third, 0], [third, 1 - third, 0.375]], a=4.30, c=7.01)
+        assert len(cdse) == 4 and _status(cdse, SpaceGroupCheck(id="SG", claim="", symbol="P6_3mc")) == {"SG": "pass"}
+    with pytest.raises(ValueError, match="origin choice 1"):  # coordinates of the other setting still overlap
+        build_bulk("I4_1/amd", ["Ti", "O"], [[0, 0.75, 0.125], [0, 0.25, 0.0833]], a=3.785, c=9.514)
+    anatase2 = build_bulk("I4_1/amd:2", ["Ti", "O"], [[0, 0.75, 0.125], [0, 0.75, 0.3331]], a=3.785, c=9.514,
+                          formula_units=4)
+    assert len(anatase2) == 12
+
+
+def test_build_bulk_completes_and_checks_the_lattice_of_its_setting():
+    licoo2 = build_bulk("R-3m:R", ["Li", "Co", "O"], [[0.5] * 3, [0, 0, 0], [0.24] * 3], a=4.96, alpha=32.99)
+    assert len(licoo2) == 4 and np.allclose(licoo2.cell.cellpar()[3:], 32.99)
+    sites = (["Pb", "I", "I"], [[0.1, 0.2, 0.3], [0.35, 0.05, 0.2], [0.2, 0.4, 0.05]])
+    unique_c = build_bulk("P 1 1 2_1/b", *sites, a=8, b=9, c=10, gamma=100, check_bonded=False)
+    assert "p2s_warning" not in unique_c.info and unique_c.cell.cellpar()[5] == pytest.approx(100)
+    with pytest.raises(ValueError, match=r"unique axis b: gamma must be 90 .*'P 1 1 2_1/a'"):
+        build_bulk("P2_1/c", *sites, a=8, b=9, c=10, gamma=100, check_bonded=False)
+    with pytest.raises(ValueError, match="b must equal a"):
+        build_bulk("Fm-3m", ["Pt"], [[0, 0, 0]], a=3.924, b=4.1)
+    assert len(build_bulk("Fm-3m", ["Pt"], [[0, 0, 0]], a=3.924, b=3.924, alpha=90)) == 4  # redundant but consistent
+
+
+def test_origin_choice_2_round_trips_to_fill_cavities_and_try_crystal():
+    from paper2structure.agents.planner.agent import describe_crystal
+    from paper2structure.agents.planner.schemas import BulkSpec
+    from paper2structure.tools import fill_cavities, get_molecules
+
+    si = build_bulk("Fd-3m:2", ["Si"], [[0.125] * 3], a=11.0, check_bonded=False)
+    assert (si.info["p2s_space_group"], si.info["p2s_hall_number"]) == ("Fd-3m:2", 526)
+    assert len(get_molecules(fill_cavities(si, "C", 8, seed=0))) == 8  # was "not invariant" in origin 1
+    spec = BulkSpec.model_validate({"name": "Si", "formula": "Si", "space_group": "Fd-3m:2", "formula_units": 8,
+                                    "sites": [{"species": "Si", "coords": [0.125] * 3}],
+                                    "lattice": {"a": 5.431, "source": "literature"}})
+    assert "(#227, setting 2), found Fd-3m (227)" in describe_crystal(spec)  # no longer ends the planning run
+
+
 def test_planner_checks_the_formula_of_a_crystal_with_molecules():
     plan = copy.deepcopy(PT_PLAN)
     hybrid = {"name": "bulk", "formula": "(C4H9NH3)2PbI4", "space_group": "Pbca", "formula_units": 4,

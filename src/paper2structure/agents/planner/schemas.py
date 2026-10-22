@@ -42,7 +42,8 @@ class BulkSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str = Field("bulk", description='how the description refers to it, e.g. "core" or "substrate"')
     formula: str = Field(description="of the whole crystal, molecules included, e.g. '(C4H9NH3)2PbI4'")
-    space_group: str = Field(description='Hermann-Mauguin symbol in the setting of the sites, e.g. "Fm-3m", "Cc2m"')
+    space_group: str = Field(description='Hermann-Mauguin symbol of the setting of the sites, e.g. "Fm-3m", "Pbnm", '
+                                         '"P2_1/n", "Fd-3m:2" (origin choice 2), "R-3m:R" (rhombohedral axes)')
     sites: list[WyckoffSite] = Field(min_length=1, description="Wyckoff representatives of the framework atoms "
                                                                "(all atoms when the crystal has no molecules)")
     molecules: list[CrystalMolecule] = Field(default_factory=list)

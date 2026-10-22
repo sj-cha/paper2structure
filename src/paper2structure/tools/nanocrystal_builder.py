@@ -13,7 +13,7 @@ from pymatgen.core.surface import get_symmetrically_equivalent_miller_indices
 from pymatgen.io.ase import AseAtomsAdaptor
 
 from paper2structure.tools._geometry import (ROLE_SUBSTRATE, bulk_coordination, coordination_pairs,
-                                             default_seed, unit)
+                                             default_seed, require_framework, unit)
 
 CLUSTER_SHAPES = ("icosahedron", "cuboctahedron", "octahedron", "truncated_octahedron", "decahedron", "wulff")
 
@@ -87,6 +87,7 @@ def carve_nanocrystal(bulk: Atoms, diameter: float, facets: Optional[dict] = Non
         center_element: center the cut on the atom of this element nearest the middle of the
             supercell; this sets which atomic layers terminate the facets.
     """
+    require_framework(bulk, "carve_nanocrystal")
     rng = random.Random(default_seed(seed))
     bulk_cn = bulk_coordination(bulk)
     cell = bulk.cell.array

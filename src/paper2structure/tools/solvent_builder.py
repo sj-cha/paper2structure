@@ -6,15 +6,15 @@ from typing import Optional
 import numpy as np
 from ase import Atoms
 from ase.data import atomic_masses, atomic_numbers
-from scipy.spatial import ConvexHull
 from scipy.spatial.transform import Rotation
 
 from paper2structure.tools._geometry import (ROLE_SOLVENT, PeriodicTree, default_seed, ensure_bookkeeping,
-                                             get_molecules, mol_ids, set_molecules)
+                                             register_molecules, substrate_mask)
 from paper2structure.tools.adsorbate_builder import Adsorbate
 from paper2structure.tools.structure_export import structure_kind
 
 AVOGADRO = 6.02214076e23
+FREE_VOLUME_PROBES = 4000  # random points that estimate the free share of the solvent region
 
 
 def add_solvent(atoms: Atoms, smiles: str, n_molecules: Optional[int] = None, density: Optional[float] = None,
@@ -25,15 +25,18 @@ def add_solvent(atoms: Atoms, smiles: str, n_molecules: Optional[int] = None, de
     Args:
         smiles: solvent molecule (one conformer, UFF-relaxed).
         n_molecules: number of molecules; or give `density` (g/cm^3, e.g. 0.786 for acetonitrile)
-            to fill the solvent region at that density.
+            to fill the free volume of the solvent region at that density.
         thickness: slabs only - solvent layer thickness (A) starting `gap` A above the topmost
-            atom; the cell is extended along z when needed, keeping `gap` A to the periodic
-            image of the slab bottom. Default: the existing vacuum minus the gaps.
+            substrate atom, so it surrounds adsorbates; the cell is extended along z when needed,
+            keeping `gap` A to the periodic image of the slab bottom. Default: the existing vacuum
+            minus the gaps.
         tolerance: minimum distance (A) between any solvent atom and any other atom
             (Packmol's convention).
-    Non-slab structures (nanocrystals) are surrounded by solvent filling the whole cell. Inserts
-    as many molecules as fit within `max_attempts` tries each and reports the achieved count.
-    Solvent atoms get tag 3 and a molecule id.
+    Other structures (particles, wires, bulk with pores, an empty cell for a pure liquid) get
+    solvent in the whole cell. Space already taken (the substrate, adsorbates, solvent added before,
+    plus `gap`) is not counted as free volume in density mode, so mixtures can be built one species
+    after another. Inserts as many molecules as fit within `max_attempts` tries each and reports
+    the achieved count. Solvent atoms get tag 3 and a molecule id.
     """
     if n_molecules is None and density is None:
         raise ValueError("give n_molecules or density")
@@ -45,11 +48,14 @@ def add_solvent(atoms: Atoms, smiles: str, n_molecules: Optional[int] = None, de
     sym = mol.atoms.get_chemical_symbols()
     mass = float(sum(atomic_masses[atomic_numbers[s]] for s in sym))
     cell = atoms.cell.array.copy()
+    if atoms.cell.rank < 3:
+        raise ValueError("add_solvent needs a cell with three vectors (the box to fill)")
 
-    if structure_kind(atoms) == "slab":
+    if len(atoms) and structure_kind(atoms) == "slab":
         if abs(cell[2, 0]) > 1e-6 or abs(cell[2, 1]) > 1e-6:
             raise ValueError("add_solvent needs the slab's c vector along z (build_slab provides this)")
-        z = atoms.positions[:, 2]
+        sub = substrate_mask(atoms)
+        z = atoms.positions[sub if sub.any() else slice(None), 2]
         z0 = float(z.max()) + gap
         available = float(z.min()) + cell[2, 2] - gap - z0
         thick = float(thickness) if thickness is not None else available
@@ -59,26 +65,24 @@ def add_solvent(atoms: Atoms, smiles: str, n_molecules: Optional[int] = None, de
             cell[2, 2] += thick - available
             atoms.set_cell(cell, scale_atoms=False)
         region_volume = float(np.linalg.norm(np.cross(cell[0], cell[1]))) * thick
-
-        def sample() -> np.ndarray:
-            f1, f2 = rng.random(), rng.random()
-            return f1 * cell[0] + f2 * cell[1] + np.array([0.0, 0.0, z0 + rng.random() * thick])
+        span = np.array([cell[0], cell[1], [0.0, 0.0, thick]])
+        origin = np.array([0.0, 0.0, z0])
     else:
-        occupied = 0.0
-        if len(atoms) >= 4:
-            try:
-                hull = ConvexHull(atoms.positions)
-                occupied = hull.volume + hull.area * gap
-            except Exception:  # noqa: BLE001 - flat or tiny solutes
-                occupied = 0.0
-        region_volume = abs(np.linalg.det(cell)) - occupied
+        region_volume = abs(float(np.linalg.det(cell)))
+        span, origin = cell, np.zeros(3)
 
-        def sample() -> np.ndarray:
-            return np.array([rng.random(), rng.random(), rng.random()]) @ cell
+    def sample() -> np.ndarray:
+        return origin + np.array([rng.random(), rng.random(), rng.random()]) @ span
 
+    env = PeriodicTree(atoms.positions, np.ones(len(atoms)), atoms.cell.array, atoms.pbc)
+    if density is not None and env.tree is not None:  # free volume: points farther than `gap` from every atom
+        probes = origin + np.random.default_rng(default_seed(seed)).random((FREE_VOLUME_PROBES, 3)) @ span
+        region_volume *= float(np.mean(env.tree.query_ball_point(probes, r=gap, return_length=True) == 0))
     target = int(n_molecules) if n_molecules is not None else \
         int(round(float(density) * region_volume * 1e-24 * AVOGADRO / mass))
-    env = PeriodicTree(atoms.positions, np.ones(len(atoms)), atoms.cell.array, atoms.pbc)
+    if target <= 0:
+        raise ValueError(f"no room for {mol.name}: {region_volume:.0f} A^3 of free volume at {density} g/cm^3; "
+                         "enlarge the region (thickness=, a larger box) or give n_molecules")
 
     placed: list[np.ndarray] = []
     trees: dict[str, Optional[PeriodicTree]] = {"placed": None, "recent": None}
@@ -110,17 +114,8 @@ def add_solvent(atoms: Atoms, smiles: str, n_molecules: Optional[int] = None, de
         else:
             break
 
-    molecules = get_molecules(atoms)
-    next_id = max(int(mol_ids(atoms).max()) + 1, 1 + max((m["mol_id"] for m in molecules), default=-1))
-    for coords in placed:
-        m = Atoms(sym, positions=coords)
-        m.set_tags(np.full(len(m), ROLE_SOLVENT, dtype=int))
-        m.set_array("mol_id", np.full(len(m), next_id, dtype=int))
-        atoms.extend(m)
-        molecules.append({"mol_id": next_id, "name": mol.name, "smiles": smiles, "charge": int(mol.charge),
-                          "role": "solvent"})
-        next_id += 1
-    set_molecules(atoms, molecules)
+    record = {"name": mol.name, "smiles": smiles, "charge": int(mol.charge), "role": "solvent"}
+    atoms = register_molecules(atoms, [Atoms(sym, positions=c) for c in placed], [record] * len(placed), ROLE_SOLVENT)
     achieved = len(placed) * mass / AVOGADRO / (region_volume * 1e-24) if region_volume > 0 else 0.0
     msg = (f"[add_solvent] inserted {len(placed)}/{target} {mol.name} molecules "
            f"(~{achieved:.3f} g/cm^3 in {region_volume:.0f} A^3)")
