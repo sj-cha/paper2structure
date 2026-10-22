@@ -548,15 +548,19 @@ def place_adsorbate(atoms: Atoms, adsorbate, site: Site, mode: str = "adsorb", *
 def add_molecule(atoms: Atoms, molecule: Atoms, smiles: str, name: str, role: str = "adsorbate",
                  **record) -> Atoms:
     """Append a molecule you positioned with your own code, with the bookkeeping place_adsorbates and
-    add_solvent do: tag 2 (adsorbate) or 3 (solvent), a new mol_id and a molecule record whose
-    SMILES lets validation check the molecule's bonds. `molecule` holds all its atoms, hydrogens
-    included, at their final Cartesian positions (any order); extra keyword arguments (e.g.
-    site="bridge Ti-Ti") go into the record. Returns a new Atoms.
+    add_solvent do: tag 2 (adsorbate) or 3 (solvent, guest), a new mol_id and a molecule record
+    whose SMILES lets validation check the molecule's bonds. `molecule` holds all its atoms,
+    hydrogens included, at their final Cartesian positions (any order); extra keyword arguments
+    (e.g. site="bridge Ti-Ti") go into the record. Returns a new Atoms.
+
+    role: "adsorbate" (bound to a surface; validation checks the binding), "solvent", or "guest"
+        (part of the crystal: organic cations of a hybrid perovskite, guests in a framework;
+        checked for integrity and overlaps, not for surface binding).
     """
     from rdkit import Chem
 
-    if role not in ("adsorbate", "solvent"):
-        raise ValueError("role must be 'adsorbate' or 'solvent'")
+    if role not in ("adsorbate", "solvent", "guest"):
+        raise ValueError("role must be 'adsorbate', 'solvent' or 'guest'")
     mol = Chem.MolFromSmiles(smiles)
     if mol is None:
         raise ValueError(f"unparseable SMILES {smiles!r}")

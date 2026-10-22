@@ -10,7 +10,8 @@ description: How to build what paper2structure.tools has no builder for - point 
   parameters such as lattice constants or bond lengths are fine as named constants at the top of
   the script, with a comment saying where they come from.
 - Keep the bookkeeping (structure-toolkit skill): substrate tag 1 (fixed atoms 0), molecules via
-  place_adsorbates, add_solvent or `add_molecule(atoms, molecule_atoms, smiles, name, role)`.
+  place_adsorbates, add_solvent or `add_molecule(atoms, molecule_atoms, smiles, name, role)`, with
+  role "adsorbate" (surface-bound), "solvent" or "guest" (part of the crystal).
 - Deterministic: `SEED` at the top, `np.random.default_rng(SEED)`, RDKit `randomSeed=SEED`, the
   `seed=SEED` argument of every toolkit function. No time, environment or leftover-file state.
 - Self-contained: one file, imports only installed packages, reads no files.
@@ -30,6 +31,13 @@ description: How to build what paper2structure.tools has no builder for - point 
   matched by supercells.
 - Stepped or vicinal surfaces: a high Miller index in build_slab (e.g. (2,1,1), (5,3,3)).
   Reconstructions: start from the bulk-terminated slab and move or remove atoms by rule.
+- Hybrid or molecular crystals (organic cations between or inside inorganic layers, framework
+  guests): build the inorganic framework from a parent crystal with code (e.g. corner-sharing
+  octahedra from a cubic perovskite with the A sites emptied, n octahedral layers stacked along
+  the long axis), then place each molecule (RDKit conformer, hydrogens included) with its charged
+  group toward the anion sites, search orientations and offsets to clear overlaps, and register
+  it with `add_molecule(..., role="guest")`. Before emitting, check the composition against the
+  plan's formula and the coordination of the framework cations (e.g. six anions per octahedron).
 - Mixtures: call add_solvent once per species with its share of the molecules; ions go in as
   SMILES (`[Na+]`, `[Cl-]`), and the whole cell should stay neutral.
 

@@ -94,6 +94,34 @@ def test_anion_contacts_are_flagged(cs_bulk):
     assert check.status == "warn" and "-Br" in check.detail
 
 
+def test_cationic_molecule_atoms_are_not_like_charge_contacts(cs_bulk):
+    # an ammonium N close to surface Br is an attractive contact (how ammonium ligands bind), not like charges
+    k = next(t.index for t in list_terminations(cs_bulk, (0, 0, 1), min_thickness=10) if t.top == "PbBr2")
+    slab = build_slab(cs_bulk, (0, 0, 1), k, min_thickness=10, vacuum=15, supercell=(2, 2))
+    ma = Adsorbate.from_smiles("C[NH3+]", BindingMotif(["N"], anchor="[NH3+]"), name="MA")
+    near = place_adsorbates(slab, ma, surface_sites(slab, kinds=("top",), elements=["Br"])[:1], bond_length=2.3)
+    check = next(c for c in _validate(near).checks if c.name == "anion_contacts")
+    assert check.status == "pass", check.detail
+
+
+def test_guest_molecules_are_part_of_the_crystal(cs_bulk):
+    # organic cations inside a crystal: registered, checked for integrity, not for surface binding
+    from paper2structure.tools import add_molecule
+
+    ma = Adsorbate.from_smiles("C[NH3+]", BindingMotif(["N"], anchor="[NH3+]"), name="MA")
+    host = cs_bulk.repeat((2, 2, 2))
+    del host[[a.index for a in host if a.symbol == "Cs"][:1]]
+    centre = host.cell.array.sum(axis=0) / 4  # an emptied A site of the 2x2x2 cell
+    molecule = ma.atoms.copy()
+    molecule.translate(centre - molecule.positions.mean(axis=0))
+    with_guest = add_molecule(host, molecule, "C[NH3+]", "MA", role="guest")
+    assert get_molecules(with_guest)[0]["role"] == "guest" and "1 x MA (guest)" in describe(with_guest)
+    names = {c.name for c in _validate(with_guest).checks}
+    assert "adsorbate_binding" not in names and "molecule_integrity" in names
+    with pytest.raises(ValueError, match="'guest'"):
+        add_molecule(host, molecule, "C[NH3+]", "MA", role="ligand")
+
+
 def test_cspbbr3_terminations_both_faces(cs_bulk):
     terms = list_terminations(cs_bulk, (0, 0, 1), min_thickness=10)
     assert {t.top for t in terms} == {"PbBr2", "CsBr"}

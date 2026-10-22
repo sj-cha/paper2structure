@@ -169,6 +169,18 @@ def _check_binding(atoms: Atoms, adsorbates: list[dict], ids: np.ndarray, r: np.
     return CheckResult(name="adsorbate_binding", status=status, detail=detail)
 
 
+_POSITIVE: dict[str, frozenset[str]] = {}
+
+
+def _positive_elements(smiles: str) -> frozenset[str]:
+    """Elements carrying a positive formal charge in a SMILES (the N of an ammonium or pyridinium)."""
+    if smiles not in _POSITIVE:
+        mol = Chem.MolFromSmiles(smiles) if smiles else None
+        atoms = mol.GetAtoms() if mol is not None else ()
+        _POSITIVE[smiles] = frozenset(a.GetSymbol() for a in atoms if a.GetFormalCharge() > 0)
+    return _POSITIVE[smiles]
+
+
 def validate_structure(atoms: Atoms, structure_id: str, *, max_atoms: int, min_vacuum: float,
                        overlap_scale: float = 0.6, close_contact_scale: float = 0.85, bond_scale: float = 1.2,
                        anion_contact_scale: float = 1.3, binding_scale: float = 1.5, detached_scale: float = 2.0,
@@ -264,10 +276,12 @@ def validate_structure(atoms: Atoms, structure_id: str, *, max_atoms: int, min_v
         anions = surface_anions(s for s, m in zip(sym, ids) if m < 0)
         if anions:
             near = ratio < anion_contact_scale
+            cationic = {m["mol_id"]: _positive_elements(m.get("smiles", "")) for m in molecules}  # [NH3+]: no anion
             hits = set()
             for a, b, dist in zip(i[near], j[near], d[near]):
                 for x, y in ((a, b), (b, a)):  # molecule atom x, substrate atom y
-                    if ids[x] >= 0 and sym[x] in ANION_FORMERS and ids[y] < 0 and sym[y] in anions:
+                    if (ids[x] >= 0 and sym[x] in ANION_FORMERS and sym[x] not in cationic.get(int(ids[x]), ())
+                            and ids[y] < 0 and sym[y] in anions):
                         hits.add((int(x), int(y), round(float(dist), 2)))
             hits = sorted(hits)
             checks.append(CheckResult(
