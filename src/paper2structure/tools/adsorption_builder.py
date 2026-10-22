@@ -556,6 +556,10 @@ def add_molecule(atoms: Atoms, molecule: Atoms, smiles: str, name: str, role: st
     role: "adsorbate" (bound to a surface; validation checks the binding), "solvent", or "guest"
         (part of the crystal: organic cations of a hybrid perovskite, guests in a framework;
         checked for integrity and overlaps, not for surface binding).
+
+    The molecule must be an RDKit conformer of `smiles` (Adsorbate.from_smiles(smiles).atoms), moved
+    rigidly or with torsions turned: its bond lengths and angles are compared with RDKit's and a
+    hand-built or reshaped molecule raises ValueError.
     """
     from rdkit import Chem
 
@@ -567,6 +571,13 @@ def add_molecule(atoms: Atoms, molecule: Atoms, smiles: str, name: str, role: st
     want = sorted(a.GetSymbol() for a in Chem.AddHs(mol).GetAtoms())
     if sorted(molecule.get_chemical_symbols()) != want:
         raise ValueError(f"{name}: atoms {molecule.get_chemical_formula()} do not match SMILES {smiles!r}")
+    from paper2structure.tools.geometry_checks import infer_bonds, molecule_geometry
+
+    loose = Atoms(molecule.get_chemical_symbols(), positions=molecule.get_positions())
+    off = molecule_geometry(loose.get_chemical_symbols(), loose.positions, sorted(infer_bonds(loose)), smiles)
+    if off:
+        raise ValueError(f"{name}: not the RDKit conformer of {smiles!r} ({'; '.join(off[:4])}). Build molecules with "
+                         "Adsorbate.from_smiles(smiles, seed=SEED).atoms and move them rigidly or turn torsions")
     new = ensure_bookkeeping(atoms.copy())
     molecules = get_molecules(new)
     next_id = max(int(mol_ids(new).max()) + 1 if len(new) else 0,

@@ -52,6 +52,8 @@ validation:
   bond_share_warn: 0.45  # one bond carrying more than this share of a cation's valence warns
   like_contact_warn: 0.8  # cation-cation / anion-anion pairs below this x covalent sum warn
   like_contact_fail: 0.7  # ... and below this fail
+  molecule_bond_tol: 0.12  # A: molecules must match the RDKit conformer of their SMILES
+  molecule_angle_tol: 20.0  # degrees
 
 revision:
   read_scripts: true  # the Revision agent may read the build scripts

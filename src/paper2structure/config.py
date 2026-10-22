@@ -234,6 +234,8 @@ class ValidationConfig(BaseModel):
     bond_share_warn: float = 0.45  # warn when one bond carries more than this share of its cation's valence
     like_contact_warn: float = 0.8  # cation-cation / anion-anion pairs below this x covalent sum warn
     like_contact_fail: float = 0.7  # ... and fail below this
+    molecule_bond_tol: float = 0.12  # A: molecule bond lengths must match RDKit conformers of their SMILES
+    molecule_angle_tol: float = 20.0  # degrees: ... and bond angles (RDKit's own spread: 0.09 A, 15 degrees)
 
 
 class ExportConfig(BaseModel):

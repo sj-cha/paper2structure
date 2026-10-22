@@ -12,6 +12,11 @@ description: How to build what paper2structure.tools has no builder for - point 
 - Keep the bookkeeping (structure-toolkit skill): substrate tag 1 (fixed atoms 0), molecules via
   place_adsorbates, add_solvent or `add_molecule(atoms, molecule_atoms, smiles, name, role)`, with
   role "adsorbate" (surface-bound), "solvent" or "guest" (part of the crystal).
+- Every molecule is an RDKit conformer: `Adsorbate.from_smiles(smiles, seed=SEED).atoms` (hydrogens
+  included, formal charges in the SMILES), then moved rigidly (rotate, translate) or with torsions
+  turned. Never type molecular coordinates, drop hydrogens or reshape a molecule to fit:
+  add_molecule and the validation gate compare every bond length and angle with RDKit's conformer
+  and reject hand-built geometry; organic atoms left unregistered in the substrate fail the gate.
 - Deterministic: `SEED` at the top, `np.random.default_rng(SEED)`, RDKit `randomSeed=SEED`, the
   `seed=SEED` argument of every toolkit function. No time, environment or leftover-file state.
 - Self-contained: one file, imports only installed packages, reads no files.

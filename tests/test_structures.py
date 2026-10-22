@@ -165,6 +165,49 @@ def test_unregistered_organics_are_flagged_not_assessed(cs_bulk):
     assert check.status == "warn" and "role='guest'" in check.detail
 
 
+def test_molecules_must_be_rdkit_conformers(cs_bulk):
+    from paper2structure.tools import add_molecule
+
+    host = cs_bulk.repeat(2)
+    cs = next(a.index for a in host if a.symbol == "Cs")
+    centre = host.positions[cs].copy()
+    del host[cs]
+    ba = Adsorbate.from_smiles("CCCC[NH3+]", name="BA", seed=3).atoms
+    ba.rotate(70, "x", center="COM")
+    ba.translate(centre - ba.get_center_of_mass())
+    ok = add_molecule(host, ba, "CCCC[NH3+]", "BA", role="guest")  # moved rigidly: accepted
+    assert _check(ok, "molecule_geometry").status == "pass"
+
+    bent = ba.copy()  # one C-C-C angle squeezed by hand
+    c = [a.index for a in bent if a.symbol == "C"]
+    bent.set_angle(c[0], c[1], c[2], 80.0, indices=[c[0]] + [a.index for a in bent if a.symbol == "H"
+                                                             and bent.get_distance(a.index, c[0]) < 1.2])
+    with pytest.raises(ValueError, match="not the RDKit conformer"):
+        add_molecule(host, bent, "CCCC[NH3+]", "BA", role="guest")
+    # registered without add_molecule's check (e.g. set_molecules by hand): the gate fails it
+    sneaked = ok.copy()
+    sneaked.positions[-len(ba):] = bent.positions
+    assert _check(sneaked, "molecule_geometry").status == "fail"
+
+
+def test_unregistered_organics_and_isolated_atoms_fail(cs_bulk):
+    ma = Adsorbate.from_smiles("C[NH3+]", name="MA", seed=1).atoms
+    host = cs_bulk.repeat(2)
+    cs = next(a.index for a in host if a.symbol == "Cs")
+    centre = host.positions[cs].copy()
+    del host[cs]
+    host.extend(Atoms(ma.get_chemical_symbols(), positions=ma.positions - ma.positions.mean(0) + centre))
+    host.arrays["mol_id"][:] = -1  # organic atoms left in the substrate
+    assert _check(host, "unregistered_molecules").status == "fail"
+    lone = cs_bulk.repeat(2)
+    lone.center(vacuum=8.0, axis=2)
+    top = lone.positions[:, 2].max()
+    lone += Atoms("C", positions=[[1.0, 1.0, top + 4.0]])  # a placeholder atom in the vacuum, 4 A from everything
+    lone.arrays["mol_id"][-1] = -1
+    assert _check(lone, "isolated_atoms").status == "fail"
+    assert _check(cs_bulk.repeat(2), "isolated_atoms").status == "pass"  # Cs in its cage is bonded
+
+
 def test_cspbbr3_terminations_both_faces(cs_bulk):
     terms = list_terminations(cs_bulk, (0, 0, 1), min_thickness=10)
     assert {t.top for t in terms} == {"PbBr2", "CsBr"}

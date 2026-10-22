@@ -25,6 +25,132 @@ def infer_bonds(atoms: Atoms, scale: float = 1.2) -> frozenset:
     return frozenset((int(min(a, b)), int(max(a, b))) for a, b in zip(i, j) if a != b)
 
 
+_MOLECULE_REF: dict[str, Optional[tuple]] = {}
+
+
+def _molecule_reference(smiles: str) -> Optional[tuple]:
+    """(match template, reference positions) for `smiles`: the toolkit's RDKit conformer
+    (Adsorbate.from_smiles: ETKDG + UFF) and, where MMFF has parameters, the same conformer
+    MMFF-optimized (the force fields differ by up to 0.2 A on resonance groups such as phosphonates).
+    The template drops bond orders, charges and aromaticity so it matches a bond graph read from
+    coordinates. None when RDKit cannot embed it."""
+    if smiles not in _MOLECULE_REF:
+        from rdkit.Chem import AllChem
+
+        from paper2structure.tools.adsorbate_builder import Adsorbate
+
+        try:
+            ref = Adsorbate.from_smiles(smiles, seed=0)
+        except Exception:  # noqa: BLE001 - not embeddable: geometry not assessed
+            _MOLECULE_REF[smiles] = None
+            return None
+        references = [ref.mol.GetConformer().GetPositions()]
+        mmff = Chem.Mol(ref.mol)
+        try:
+            if AllChem.MMFFHasAllMoleculeParams(mmff) and AllChem.MMFFOptimizeMolecule(mmff, maxIters=2000) >= 0:
+                references.append(mmff.GetConformer().GetPositions())
+        except Exception:  # noqa: BLE001 - UFF reference only
+            pass
+        template = Chem.RWMol(ref.mol)
+        for a in template.GetAtoms():
+            a.SetFormalCharge(0)
+            a.SetIsAromatic(False)
+            a.SetNoImplicit(True)
+            a.SetNumExplicitHs(0)
+        for b in template.GetBonds():
+            b.SetBondType(Chem.BondType.SINGLE)
+            b.SetIsAromatic(False)
+        _MOLECULE_REF[smiles] = (template.GetMol(), references)
+    return _MOLECULE_REF[smiles]
+
+
+def _angle(a: np.ndarray, center: np.ndarray, b: np.ndarray) -> float:
+    u, v = a - center, b - center
+    return float(np.degrees(np.arccos(np.clip(u @ v / (np.linalg.norm(u) * np.linalg.norm(v)), -1.0, 1.0))))
+
+
+def molecule_geometry(symbols: list[str], positions: np.ndarray, bonds, smiles: str, bond_tol: float = 0.12,
+                      angle_tol: float = 20.0) -> list[str]:
+    """Bond lengths and bond angles of a molecule against RDKit conformers of its SMILES (UFF and
+    MMFF); the problems against the closer one (empty when it matches or RDKit cannot embed the
+    SMILES). Position, orientation, atom order and torsions are free: turning a torsion leaves bond
+    lengths and angles unchanged. The tolerances cover RDKit's own spread over seeds and methods
+    (ETKDG, UFF, MMFF: up to 0.09 A and 15 degrees). `positions` must be unwrapped (whole
+    molecule); `bonds` are local index pairs."""
+    ref = _molecule_reference(smiles)
+    if ref is None:
+        return []
+    template, references = ref
+    found = [_geometry_problems(template, symbols, positions, bonds, smiles, r, bond_tol, angle_tol) for r in references]
+    return min(found, key=len)
+
+
+def _geometry_problems(template, symbols, positions, bonds, smiles, ref_pos, bond_tol, angle_tol) -> list[str]:
+    rw = Chem.RWMol()
+    for s in symbols:
+        atom = Chem.Atom(s)
+        atom.SetNoImplicit(True)
+        rw.AddAtom(atom)
+    for a, b in bonds:
+        rw.AddBond(int(a), int(b), Chem.BondType.SINGLE)
+    mol = rw.GetMol()
+    mol.UpdatePropertyCache(strict=False)
+    match = mol.GetSubstructMatch(template)
+    if len(match) != template.GetNumAtoms() or len(symbols) != template.GetNumAtoms():
+        return [f"its bond graph does not match {smiles}"]
+    pos = np.asarray(positions, dtype=float)[list(match)]  # in template order
+    sym = [a.GetSymbol() for a in template.GetAtoms()]
+    # compare within symmetry classes of the bond graph, sorted: the match may pair equivalent atoms
+    # (hydrogens of a CH3, the oxygens of a phosphonate) differently from the reference conformer
+    rank = list(Chem.CanonicalRankAtoms(template, breakTies=False))
+    bonds_by_class: dict[tuple, list] = {}
+    for b in template.GetBonds():
+        i, j = b.GetBeginAtomIdx(), b.GetEndAtomIdx()
+        key = (tuple(sorted((rank[i], rank[j]))), "-".join(sorted((sym[i], sym[j]))))
+        bonds_by_class.setdefault(key, []).append((np.linalg.norm(pos[i] - pos[j]), np.linalg.norm(ref_pos[i] - ref_pos[j])))
+    angles_by_class: dict[tuple, list] = {}
+    for center in template.GetAtoms():
+        c, nbs = center.GetIdx(), [n.GetIdx() for n in center.GetNeighbors()]
+        for k, i in enumerate(nbs):
+            for j in nbs[k + 1:]:
+                ends = sorted(((rank[i], sym[i]), (rank[j], sym[j])))
+                key = (rank[c], tuple(ends), f"{ends[0][1]}-{sym[c]}-{ends[1][1]}")
+                angles_by_class.setdefault(key, []).append(
+                    (_angle(pos[i], pos[c], pos[j]), _angle(ref_pos[i], ref_pos[c], ref_pos[j])))
+    problems = []
+    for key, pairs in bonds_by_class.items():
+        got, want = sorted(g for g, _ in pairs), sorted(w for _, w in pairs)
+        worst = int(np.argmax(np.abs(np.subtract(got, want))))
+        if abs(got[worst] - want[worst]) > bond_tol:
+            problems.append(f"{key[1]} {got[worst]:.2f} A (RDKit {want[worst]:.2f})")
+    for key, pairs in angles_by_class.items():
+        got, want = sorted(g for g, _ in pairs), sorted(w for _, w in pairs)
+        worst = int(np.argmax(np.abs(np.subtract(got, want))))
+        if abs(got[worst] - want[worst]) > angle_tol:
+            problems.append(f"{key[2]} {got[worst]:.0f} deg (RDKit {want[worst]:.0f})")
+    return problems
+
+
+def _unwrapped(atoms: Atoms, members: np.ndarray, bonds: list[tuple[int, int]]) -> np.ndarray:
+    """Positions of a molecule's atoms made whole across periodic boundaries along its bonds."""
+    pos = atoms.positions[members].copy()
+    if not any(atoms.pbc):
+        return pos
+    adjacent: dict[int, list[int]] = {}
+    for a, b in bonds:
+        adjacent.setdefault(a, []).append(b)
+        adjacent.setdefault(b, []).append(a)
+    seen, stack = {0}, [0]
+    while stack:
+        a = stack.pop()
+        for b in adjacent.get(a, []):
+            if b not in seen:
+                seen.add(b)
+                pos[b] = pos[a] + atoms.get_distance(int(members[a]), int(members[b]), mic=True, vector=True)
+                stack.append(b)
+    return pos
+
+
 def wl_certificate(symbols: list[str], bonds) -> tuple:
     """Weisfeiler-Lehman isomorphism certificate of an element-labelled graph."""
     adj: dict[int, list[int]] = {k: [] for k in range(len(symbols))}
@@ -349,6 +475,7 @@ def validate_structure(atoms: Atoms, structure_id: str, *, max_atoms: int, min_v
                        charge_neutrality: bool = False, oxidation_states: Optional[dict[str, int]] = None,
                        bvs_warn: float = 0.30, bvs_fail: float = 0.40, bond_share_warn: float = 0.45,
                        like_contact_warn: float = 0.8, like_contact_fail: float = 0.7,
+                       molecule_bond_tol: float = 0.12, molecule_angle_tol: float = 20.0,
                        files: Optional[dict[str, str]] = None) -> ValidationReport:
     """Geometric and chemical sanity checks. Pairs closer than overlap_scale x the covalent-radius
     sum fail; contacts involving a molecule closer than close_contact_scale x the sum (other than
@@ -359,7 +486,10 @@ def validate_structure(atoms: Atoms, structure_id: str, *, max_atoms: int, min_v
     electronegative donor atom must not touch an electronegative substrate atom (surface_anions). With charge_neutrality the net formal charge must be zero
     (formal_charge, using `oxidation_states` where given). Ionic substrates also get the
     crystal-chemistry checks of _crystal_chemistry: like-charge contacts, and bond-valence sums of
-    the framework cations (bvs_warn / bvs_fail, bond_share_warn)."""
+    the framework cations (bvs_warn / bvs_fail, bond_share_warn). Molecules must have the geometry
+    of the RDKit conformer of their SMILES (bond lengths within molecule_bond_tol A, angles within
+    molecule_angle_tol degrees); C-H and N-H bonds in the substrate (molecules not registered) and
+    substrate atoms without any neighbour fail."""
     checks: list[CheckResult] = []
     metrics: dict[str, float | int | str] = {"formula": atoms.get_chemical_formula(), "n_atoms": len(atoms)}
     pos = atoms.get_positions()
@@ -402,7 +532,7 @@ def validate_structure(atoms: Atoms, structure_id: str, *, max_atoms: int, min_v
     bonds_of: dict[int, list[tuple[int, int]]] = {}
     for a, b in intra_bonds:
         bonds_of.setdefault(int(ids[a]), []).append((a, b))
-    integrity_problems = []
+    integrity_problems, geometry_problems = [], []
     for m in molecules:
         members = np.where(ids == m["mol_id"])[0]
         if len(members) == 0:
@@ -420,10 +550,43 @@ def validate_structure(atoms: Atoms, structure_id: str, *, max_atoms: int, min_v
         if len(members) != ref.GetNumAtoms() or got != want:
             integrity_problems.append(f"mol {m['mol_id']} {m['name']}: {len(bonds)} bonds found vs "
                                       f"{ref.GetNumBonds()} in {smiles}")
+            continue
+        off = molecule_geometry([atoms[int(g)].symbol for g in members], _unwrapped(atoms, members, bonds), bonds,
+                                smiles, molecule_bond_tol, molecule_angle_tol)
+        if off:
+            geometry_problems.append(f"mol {m['mol_id']} {m['name']}: {', '.join(off[:3])}")
     if molecules:
         checks.append(CheckResult(name="molecule_integrity", status="fail" if integrity_problems else "pass",
                                   detail="; ".join(integrity_problems[:5]) if integrity_problems
                                   else f"{len(molecules)} molecules match their SMILES"))
+        checks.append(CheckResult(
+            name="molecule_geometry", status="fail" if geometry_problems else "pass",
+            detail=(f"{len(geometry_problems)} molecules differ from the RDKit conformer of their SMILES (build them "
+                    "with Adsorbate.from_smiles, then move them rigidly or turn torsions): "
+                    + "; ".join(geometry_problems[:4]))
+            if geometry_problems else "bond lengths and angles match the RDKit conformers"))
+
+    sub = ids < 0
+    sym = atoms.get_chemical_symbols()
+    organic = [(int(a), int(b)) for a, b, q in zip(i, j, ratio)
+               if sub[a] and sub[b] and q < bond_scale and {sym[a], sym[b]} in ({"C", "H"}, {"N", "H"})]
+    if organic:
+        a, b = organic[0]
+        checks.append(CheckResult(
+            name="unregistered_molecules", status="fail",
+            detail=f"{len(organic)} C-H/N-H bonds in the substrate, e.g. "
+                   f"{_pair_text(atoms, a, b, float(atoms.get_distance(a, b, mic=True)))}: molecules must be RDKit "
+                   "conformers registered with place_adsorbates, add_solvent or add_molecule (role 'adsorbate', "
+                   "'solvent' or 'guest')"))
+    if len(atoms) > 1:
+        near = ratio < _BV_REACH
+        linked = np.bincount(np.concatenate([i[near], j[near]]), minlength=len(atoms))
+        lonely = np.where(sub & (linked == 0))[0]
+        checks.append(CheckResult(
+            name="isolated_atoms", status="fail" if len(lonely) else "pass",
+            detail=(f"{len(lonely)} substrate atoms with no neighbour within {_BV_REACH} x covalent sum, e.g. "
+                    + ", ".join(f"{sym[k]}{k}" for k in lonely[:5])) if len(lonely)
+            else "every substrate atom has a neighbour"))
     metrics["n_molecules"] = len(molecules)
     metrics["molecular_charge"] = int(sum(int(m.get("charge", 0)) for m in molecules))
 
