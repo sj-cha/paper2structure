@@ -31,7 +31,7 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest"]
-app = ["streamlit"]  # the web page in app/: streamlit run app/streamlit_app.py
+app = ["starlette", "uvicorn", "python-multipart"]  # app/server.py, the web tool
 
 [project.scripts]
 paper-summarizer = "paper2structure.agents.summarizer.cli:main"

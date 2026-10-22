@@ -68,7 +68,7 @@ You will get the paper text, the list of all systems with their IDs, and the tar
 Extract, using ONLY what the text says (never invent numbers):
 - synthesis: method, precursors, temperatures/times/atmospheres.
 - structure: crystal system, space group, lattice parameters, site occupancy, phase purity.
-- evidence: one item per technique (XRD, TEM, XPS, ...) describing what that technique showed
+- evidence: one item per technique which gives structural information (XRD, TEM, XPS, AFM, NMR, SEM, UV-Vis, TGA, XAS, Raman, and DFT ) describing what that technique showed
   for the target system. Include instrument settings in `conditions`, numbers in `measurements`,
   the figures the text cites in `figure_refs`, a short verbatim `quote` and the page number.
   If a statement applies to the whole series, put all relevant system IDs in `system_ids`

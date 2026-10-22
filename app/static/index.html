@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Paper → Structure</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">🧪 Paper → Structure</div>
+  <nav class="steps">
+    <button class="step-btn" data-step="1"><span class="n">1</span> Paper &amp; model</button>
+    <button class="step-btn" data-step="2"><span class="n">2</span> Summary &amp; system</button>
+    <button class="step-btn" data-step="3"><span class="n">3</span> Structures</button>
+  </nav>
+  <div class="proj" id="projectBar"></div>
+</header>
+
+<main>
+  <!-- Panel 1: upload, model, earlier papers -->
+  <section id="step1" class="step">
+    <div class="grid2">
+      <div class="card">
+        <h2>New paper</h2>
+        <p class="hint">Upload a materials-science paper. The assistant reads it, finds every material studied and files
+          what the text and figures say about each one. Later panels turn that into simulation-ready structures.</p>
+        <label class="drop" id="drop">
+          <input type="file" id="pdf" accept="application/pdf,.pdf">
+          <span id="dropText">Drop a PDF here or click to choose</span>
+        </label>
+        <h3>Model <span class="muted">USD per 1M tokens: input / output</span></h3>
+        <div id="modelList" class="radios"></div>
+        <div class="settings-grid">
+          <label>Reasoning effort
+            <select id="effort"><option>low</option><option>medium</option><option>high</option></select>
+            <span class="hint">Low is cheapest and fastest; high thinks longer on every step.</span>
+          </label>
+          <label>Figures
+            <span class="chk"><input type="checkbox" id="figures" checked> look at the figures (one vision call each)</span>
+            <span class="hint">Needed to read values off XRD or TEM panels; skip it for a text-only pass.</span>
+          </label>
+          <label>Max figures <input type="number" id="maxFigures" value="30" min="1" max="60"></label>
+        </div>
+        <div id="keyBox" class="notice hidden">
+          <b>No OpenAI API key found.</b> Put <code>OPENAI_API_KEY=sk-...</code> in the <code>.env</code> file of the repo, or paste it here for this server session only:
+          <div class="row"><input type="password" id="keyInput" placeholder="sk-..."><button class="ghost" id="keyBtn">Use key</button></div>
+        </div>
+        <div class="actions"><button class="primary" id="summarizeBtn">Upload &amp; summarize</button>
+          <span class="hint">About a minute for a short paper; a few minutes with many figures.</span></div>
+      </div>
+      <div class="card">
+        <h2>Earlier papers</h2>
+        <p class="hint">Everything is kept on disk: open a paper to continue where you left off.</p>
+        <div id="projectList"></div>
+      </div>
+    </div>
+    <div id="progress1" class="card progress hidden"></div>
+  </section>
+
+  <!-- Panel 2: the summary, the system to model, evidence analysis and plan -->
+  <section id="step2" class="step hidden">
+    <div id="s2top"></div>
+    <div id="progress2" class="card progress hidden"></div>
+    <div id="s2results"></div>
+  </section>
+
+  <!-- Panel 3: structure settings, generation, results -->
+  <section id="step3" class="step hidden">
+    <div class="card">
+      <h2>Structure settings</h2>
+      <div class="settings-grid">
+        <div class="field">
+          <label>Simulation</label>
+          <div class="seg" id="method"><button data-v="DFT" class="on">DFT</button><button data-v="MD">MD</button></div>
+          <span class="hint">DFT: small periodic cells, tens to a few hundred atoms. MD with a machine-learned potential: thousands of atoms are fine.</span>
+        </div>
+        <div class="field wide">
+          <label>Computationally tractable &nbsp;←→&nbsp; Closer to experiment</label>
+          <input type="range" id="realism" min="0" max="1" step="0.05" value="0.3">
+          <div class="range-labels"><span>smallest ordered cell</span><span id="realismVal">0.30</span><span>doping, surfaces, defects</span></div>
+          <span class="hint">Left: the cheapest model consistent with the evidence. Right: doping, partial occupancy, surfaces or particles within the atom budget. It also sets the builder's coding budget.</span>
+        </div>
+        <div class="field">
+          <label>Atom budget <span class="muted">max atoms per structure</span></label>
+          <div class="row"><input type="number" id="maxAtoms" min="10" max="50000" step="10">
+            <span class="chk"><input type="checkbox" id="atomsAuto" checked> from the slider</span></div>
+        </div>
+        <div class="field">
+          <label>Structure type</label>
+          <select id="modelType"><option value="">planner decides</option></select>
+          <span class="hint">Forces the planner to this kind of model.</span>
+        </div>
+      </div>
+      <details class="adv"><summary>Advanced</summary>
+        <div class="settings-grid">
+          <label>Random seed <input type="number" id="seed" value="0"><span class="hint">Conformers, adsorbate placement, solvent packing.</span></label>
+          <label>Reviewer loops <input type="number" id="maxRevisions" value="0" min="0" max="2"><span class="hint">Times the reviewer may send the structures back through planning and building.</span></label>
+          <label>Repair attempts <input type="number" id="maxRepairs" value="1" min="0" max="3"><span class="hint">Builder retries after a failed geometry check.</span></label>
+        </div>
+      </details>
+      <div id="planStatus" class="notice"></div>
+      <div class="actions"><button class="primary" id="generateBtn">Generate structures</button>
+        <span class="hint">Builds each hypothesis with its own script, checks the geometry, then the reviewer judges it against the paper. A few minutes.</span></div>
+    </div>
+    <div id="progress3" class="card progress hidden"></div>
+    <div id="runsBar" class="card slim hidden"><label>Run <select id="runSelect"></select></label></div>
+    <div id="runDetail"></div>
+  </section>
+</main>
+
+<div id="toast" class="toast hidden"></div>
+<script src="https://cdn.jsdelivr.net/npm/3dmol@2.4.2/build/3Dmol-min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

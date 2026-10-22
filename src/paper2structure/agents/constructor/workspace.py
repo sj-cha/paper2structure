@@ -101,7 +101,7 @@ async def replay(script: Path, out_dir: Path, cc: ConstructionConfig) -> Command
     out_dir.mkdir(parents=True)
     shutil.copy2(script, out_dir / script.name)
     cmd = ["python", script.name]
-    if cc.memory_limit_gb:
+    if cc.memory_limit_gb and shutil.which("prlimit"):  # util-linux; absent on macOS, where the cap is skipped
         cmd = ["prlimit", f"--as={int(cc.memory_limit_gb * 1024 ** 3)}", *cmd]
     try:
         return await make_workspace(out_dir, cc).run(cmd, timeout=cc.code_timeout)
