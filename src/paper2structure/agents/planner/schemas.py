@@ -4,6 +4,8 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from paper2structure.tools.schemas import ClaimCheck, UncheckedClaim
+
 
 class LatticeParameters(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -25,13 +27,25 @@ class WyckoffSite(BaseModel):
     wyckoff: Optional[str] = None
 
 
+class CrystalMolecule(BaseModel):
+    """A molecule of a hybrid or molecular crystal (the organic cations of a layered perovskite,
+    guests in a framework), placed into the framework's cavities by the toolkit (fill_cavities)."""
+    model_config = ConfigDict(extra="forbid")
+    name: str
+    smiles: str = Field(description="formal charges encode the protonation state, e.g. 'CCCC[NH3+]'")
+    per_cell: int = Field(ge=1, description="molecules per conventional cell")
+
+
 class BulkSpec(BaseModel):
-    """A crystal as space group + Wyckoff representatives (checked by building it)."""
+    """A crystal as space group + Wyckoff representatives (checked by building it), with the
+    molecules of a hybrid or molecular crystal listed separately."""
     model_config = ConfigDict(extra="forbid")
     name: str = Field("bulk", description='how the description refers to it, e.g. "core" or "substrate"')
-    formula: str
-    space_group: str = Field(description='Hermann-Mauguin symbol as pymatgen accepts it, e.g. "Fm-3m"')
-    sites: list[WyckoffSite] = Field(min_length=1)
+    formula: str = Field(description="of the whole crystal, molecules included, e.g. '(C4H9NH3)2PbI4'")
+    space_group: str = Field(description='Hermann-Mauguin symbol in the setting of the sites, e.g. "Fm-3m", "Cc2m"')
+    sites: list[WyckoffSite] = Field(min_length=1, description="Wyckoff representatives of the framework atoms "
+                                                               "(all atoms when the crystal has no molecules)")
+    molecules: list[CrystalMolecule] = Field(default_factory=list)
     lattice: LatticeParameters
     formula_units: Optional[int] = Field(None, description="formula units per conventional cell")
 
@@ -120,6 +134,9 @@ class StructurePlan(BaseModel):
     adsorbates: list[AdsorbateSpec] = Field(default_factory=list)
     solvent: list[SolventSpec] = Field(default_factory=list, description="solvent species and ions")
     targets: list[Target] = Field(default_factory=list)
+    checks: list[ClaimCheck] = Field(default_factory=list, description="the paper's claims about this model's "
+                                                                       "systems as tests the validation gate runs")
+    unchecked: list[UncheckedClaim] = Field(default_factory=list, description="listed claims no check can test")
     system_ids: list[str] = Field(default_factory=list, description="the paper's material systems this plan models "
                                                                     "(the summarizer's IDs, e.g. 'S2')")
     evidence_ids: list[str] = Field(default_factory=list)
@@ -135,6 +152,9 @@ class StructurePlan(BaseModel):
         names = [c.name for c in self.crystals]
         if len(names) != len(set(names)):
             raise ValueError(f"plan {self.plan_id}: crystal names must be unique")
+        ids = [c.id for c in self.checks]
+        if len(ids) != len(set(ids)):
+            raise ValueError(f"plan {self.plan_id}: check IDs must be unique")
         return self
 
 

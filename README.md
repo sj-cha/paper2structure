@@ -36,10 +36,10 @@ stateDiagram-v2
 |---|---|---|
 | SummarizePaper | Agent 1, summarizer | reads the PDF into a `PaperGraph` (material systems `S1`, `S2`, ...; text and figure evidence `E001`, ... tagged by technique) saved under `paper/`, or loads `inputs.paper_graph`; runs once |
 | AnalyzeEvidence | Agent 2, characterization | one `CharacterizationAgent` per technique found that has a filled-in spec, concurrently; each reads its figure images and text records and returns observations, findings and structural constraints (`characterization/<TECH>.json`); or loads `inputs.characterization`. Re-entered on `revisit_evidence`: the reports are kept and the reviewer's feedback goes to the planner |
-| PlanStructures | Agent 3, `LLMPlanner` | competing structural hypotheses as `StructurePlan`s: the material systems modeled (`system_ids`), a free-form model type and construction brief, named crystals (space group + Wyckoff positions + lattice with provenance), optional surface/nanocrystal/adsorbate/solvent specs, measurable targets, evidence IDs (summarizer `E004` or technique-qualified observations `XRD:O3`; unknown IDs go back to the planner), assumptions |
+| PlanStructures | Agent 3, `LLMPlanner` | competing structural hypotheses as `StructurePlan`s: the material systems modeled (`system_ids`), a free-form model type and construction brief, named crystals (space group + Wyckoff positions + lattice with provenance, and the molecules of a hybrid or molecular crystal), optional surface/nanocrystal/adsorbate/solvent specs, the paper's claims as checks for the validation gate (below), measurable targets, evidence IDs (summarizer `E004` or technique-qualified observations `XRD:O3`; unknown IDs go back to the planner), assumptions |
 | ConstructStructures | Agent 4, `LLMConstructor` | one Coder run per plan, concurrently, each in its own sandboxed workspace and request budget, writes and runs its own Python; every reported structure is rebuilt by running its script alone from scratch and must pass the validation gate; a run that fails or reports the plan as not built records the reason |
 | ValidateStructures | deterministic | the same gate checks plus the export round trip; hard failures and plans not built go back to construction with the reasons and the last attempt's scripts |
-| ScientificRevision | Agent 5, `LLMReviser` | accept / stop / rebuild structures (the plan stands, the build is wrong: back to construction with its feedback and the previous scripts; the structures it does not list are kept) / revisit evidence (back through AnalyzeEvidence -> planning -> construction); can read the build scripts; writes the final report (`write_report` tool) before ending the run |
+| ScientificRevision | Agent 5, `LLMReviser` | accept / stop / rebuild structures (the plan stands, the build is wrong: back to construction with its feedback and the previous scripts; the structures it does not list are kept) / revisit evidence (back through AnalyzeEvidence -> planning -> construction); sees every claim check's result and runs checks of its own (`check_claim` tool); can read the build scripts; writes the final report (`write_report` tool) before ending the run |
 
 The graph is built from `BaseNode` classes whose `run` return annotations are the edges
 (`src/paper2structure/graph/`). Each run renders its own diagram to `workflow.mmd`. When an agent
@@ -140,6 +140,38 @@ are the checks `check_structure` shows the agent while it works:
 | vacuum, atom budget | less than `validation.min_vacuum` between images; more than `planning.max_atoms` atoms |
 | like-charge contacts (ionic substrates) | two cations (metal atoms of the substrate or of different molecules) or two substrate anions closer than 0.7 x the covalent sum (0.7-0.8 warns) |
 | bond valence (ionic substrates) | the bond-valence sum of a framework cation at interior sites is off its oxidation state by more than 40% (30-40% warns), or one bond carries more than all of its cation's valence (more than 45% warns) |
+
+| claims (the plan's checks) | the structure contradicts a claim of the paper (below) |
+
+**The paper's claims as checks.** The structural claims of a run get IDs: the facts the summarizer
+recorded for each system (`S2:space_group`, `S2:lattice`, `S2:other1`, ...) and the structural
+constraints of the characterization reports (`XRD:C3`, ...). Every plan turns each claim about its
+systems into typed checks, or lists it under `unchecked` with the reason; the planner's output is
+sent back until every claim is covered. The check types are fixed and evaluated by code
+(`tools/evidence_checks.py`), the planner sets their values, tolerances, scope and systems:
+
+| check | passes when |
+|---|---|
+| lattice (bulk) | each cell length is the target (or an integer multiple, for supercells) within the relative tolerance, angles within 1 degree |
+| space_group (bulk) | spglib finds the reported group (any ITA setting, e.g. `Cc2m`, `C2cb`) at `symprec`; `scope: framework` leaves the molecules out, for experiments that average over disordered molecules |
+| composition (bulk) | the atomic fractions match the formula |
+| bond_length, bond_angle | every first-shell A-B distance, or A-B-C angle at vertex B, lies in the reported range |
+| coordination | every interior framework atom of the element has the reported number of neighbours |
+| hydrogen_bonds | every donor atom of the molecules (e.g. the N of an NH3+ group) has the reported number of H pointing at acceptors (H...A below the van der Waals sum, D-H...A at least 130 degrees) |
+| layers | each connected framework block holds the reported number of planes of the element along the stacking axis (a block bonded to its own periodic image is not a layer) |
+
+A failing check of severity `fail` sends the structure back to construction like any gate failure;
+`warn` is for approximate claims; checks of bulk properties are `skip` on slabs and particles.
+The final report tabulates every check on every structure, and the reviewer can run further
+checks with `check_claim`.
+
+**Crystals with molecules** (organic cations in layered or 3D frameworks, templates in zeolites,
+intercalated or guest molecules, molecular salts) are crystals in the plan: Wyckoff sites for the
+framework and a list of molecules per cell. The construction script builds the framework with
+`build_bulk` and adds each molecule with `fill_cavities`, which puts its charged or binding atom
+at van der Waals contact with the most framework atoms of opposite character, turns it so the
+most N-H/O-H donors point at acceptors, and adds its images under the space group, so the
+crystal keeps the framework's symmetry.
 
 The bond-valence check uses pymatgen's generic bond-valence parameters, so it applies to any
 ionic material without per-material tables. It looks at the framework cations, the ones with the

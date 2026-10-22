@@ -16,7 +16,7 @@ from pydantic_ai import BinaryContent
 from pydantic_ai.messages import ModelResponse, RetryPromptPart, ToolCallPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from helpers import GOOD_SCRIPT, PT_PLAN, coding_model, constructor_model, reviser_model
+from helpers import GOOD_SCRIPT, PT_PLAN, coding_model, constructor_model, cover_claims, reviser_model
 from paper2structure.agents.characterization import (REGISTRY, CharacterizationReport, ExperimentalEvidence,
                                                      Observation, TechniqueSpec)
 from paper2structure.agents.planner import LLMPlanner, PlanningDeps, PlanSet, check_plan_set
@@ -72,6 +72,7 @@ def _plan(evidence_ids: list[str], system_ids: list[str]) -> dict:
     plans = copy.deepcopy(PT_PLAN)
     for p in plans["plans"]:
         p["evidence_ids"], p["system_ids"] = list(evidence_ids), list(system_ids)
+        p["checks"], p["unchecked"] = [], []  # PT_PLAN's address the pt111_co fixture's claims
         for crystal in p.get("crystals", []):
             crystal["lattice"]["evidence_ids"] = list(evidence_ids[:1])
         for target in p.get("targets", []):
@@ -79,7 +80,9 @@ def _plan(evidence_ids: list[str], system_ids: list[str]) -> dict:
     return plans
 
 
-def _final(info: AgentInfo, payload: dict) -> ModelResponse:
+def _final(info: AgentInfo, payload: dict, messages=None) -> ModelResponse:
+    if messages is not None and "plans" in payload:  # scripted plans address the dry-run paper's claims
+        payload = cover_claims(payload, messages)
     return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, payload)])
 
 
@@ -163,7 +166,7 @@ def test_pdf_to_structures_in_one_graph_run(tmp_path, paper_pdf):
 
     def planner(messages, info):
         prompts.append(_text(_user_items(messages)))
-        return _final(info, _plan(["E001", "XRD:O1"], ["S1"]))
+        return _final(info, _plan(["E001", "XRD:O1"], ["S1"]), messages)
 
     run = tmp_path / "run"
     deps = build_deps(_config(inputs={"pdf": str(paper_pdf)}), run, seed=7,
@@ -258,7 +261,7 @@ def test_summarization_failure_ends_the_run_before_planning(tmp_path, inputs):
 
     def planner(messages, info):
         planned.append(messages)
-        return _final(info, _plan(["E001"], ["S1"]))
+        return _final(info, _plan(["E001"], ["S1"]), messages)
 
     inputs = {k: str(tmp_path / v) for k, v in inputs.items()}
     run = tmp_path / "run"
@@ -293,7 +296,7 @@ def test_saved_summary_and_reports_replace_agents_1_and_2(tmp_path):
 
     def planner(messages, info):
         prompts.append(_text(_user_items(messages)))
-        return _final(info, _plan(["E001", "XRD:O1"], ["S1"]))
+        return _final(info, _plan(["E001", "XRD:O1"], ["S1"]), messages)
 
     def constructor(messages, info):  # reports the plan as unbuildable without running anything
         return _final(info, {"structures": [], "failed": [{"plan_id": "P1", "reason": "scripted failure"}]})
@@ -336,7 +339,7 @@ def test_planner_cites_summary_and_technique_qualified_ids():
     def fn(messages, info):
         retried = [str(p.content) for m in messages for p in m.parts if isinstance(p, RetryPromptPart)]
         retries.append(retried)
-        return _final(info, good if retried else bad)
+        return _final(info, good if retried else bad, messages)
 
     planner = LLMPlanner(FunctionModel(fn), None, max_plans=3, max_atoms=5000, min_vacuum=15.0,
                          overrides=OverridesConfig())
@@ -400,7 +403,7 @@ def test_crashing_construction_run_is_recorded_and_retried(tmp_path):
     runs = []
 
     def planner(messages, info):
-        return _final(info, _plan(["E001", "XRD:O1"], ["S1"]))
+        return _final(info, _plan(["E001", "XRD:O1"], ["S1"]), messages)
 
     def constructor(messages, info):
         runs.append(_text(_user_items(messages)))

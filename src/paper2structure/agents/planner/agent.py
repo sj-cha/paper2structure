@@ -8,10 +8,12 @@ from pymatgen.core import Composition
 from rdkit import Chem
 
 from paper2structure.agents.characterization.schemas import ExperimentalEvidence
-from paper2structure.agents.planner.schemas import BulkSpec, PlanSet
+from paper2structure.agents.planner.claims import Claim, claims_text, structural_claims
+from paper2structure.agents.planner.schemas import BulkSpec, PlanSet, StructurePlan
 from paper2structure.agents.structured_agent import StructuredAgent
 from paper2structure.agents.summarizer.schemas import PaperGraph
 from paper2structure.config import OverridesConfig
+from paper2structure.tools._symmetry import space_group_number
 from paper2structure.tools.bulk_builder import build_bulk
 
 log = logging.getLogger(__name__)
@@ -24,6 +26,7 @@ class PlanningDeps:
     overrides: OverridesConfig
     max_atoms: int = 5000
     system_ids: set[str] = field(default_factory=set)  # the summarizer's material systems; empty skips the check
+    claims: dict[str, Claim] = field(default_factory=dict)  # every plan checks the claims about its systems
 
 
 def _smiles_atoms(smiles: str) -> int:
@@ -45,9 +48,12 @@ def _check_bulk(bulk: BulkSpec) -> list[str]:
     try:
         atoms = build_bulk(bulk.space_group, [s.species for s in bulk.sites], [list(s.coords) for s in bulk.sites],
                            a=lat.a, b=lat.b, c=lat.c, alpha=lat.alpha, beta=lat.beta, gamma=lat.gamma,
-                           formula_units=bulk.formula_units)
+                           formula_units=None if bulk.molecules else bulk.formula_units,
+                           check_bonded=not bulk.molecules)
     except Exception as e:  # noqa: BLE001 - every builder error is a planning error here
         return [f"bulk {bulk.formula} ({bulk.space_group}) cannot be built: {e}"]
+    if bulk.molecules:
+        return _check_molecular_crystal(bulk, Composition(atoms.get_chemical_formula()))
     ordered = ("a crystal is the ordered cell its sites generate: give that formula and put doping, substitution "
                "or partial occupancy in the description (the Construction agent makes it in a supercell)")
     try:
@@ -63,6 +69,79 @@ def _check_bulk(bulk: BulkSpec) -> list[str]:
     return []
 
 
+def _check_claims(p: StructurePlan, deps: PlanningDeps) -> list[str]:
+    """The plan's claim checks are well formed, and every listed claim about its systems is checked
+    or listed as unchecked with a reason."""
+    from ase.data import chemical_symbols
+
+    problems = []
+    for c in p.checks:
+        where = f"{p.plan_id}: check {c.id}"
+        unknown = set(c.claim_ids) - set(deps.claims) if deps.claims else set()
+        if unknown:
+            problems.append(f"{where}: unknown claim IDs {sorted(unknown)}")
+        if set(c.system_ids) - set(p.system_ids):
+            problems.append(f"{where}: system_ids {sorted(set(c.system_ids) - set(p.system_ids))} are not the plan's")
+        elements = [*getattr(c, "elements", ()), *(getattr(c, k, None) for k in ("center", "neighbor", "element", "donor")),
+                    *getattr(c, "acceptors", ())]
+        bad = sorted({e for e in elements if e is not None and e not in chemical_symbols[1:]})
+        if bad:
+            problems.append(f"{where}: unknown elements {bad}")
+        if c.kind == "space_group":
+            try:
+                space_group_number(c.symbol)
+            except ValueError as e:
+                problems.append(f"{where}: {e}")
+        if c.kind == "composition":
+            try:
+                Composition(c.formula)
+            except Exception:  # noqa: BLE001
+                problems.append(f"{where}: {c.formula!r} is not a chemical formula")
+        if c.kind in ("bond_length", "bond_angle") and c.min > c.max:
+            problems.append(f"{where}: min {c.min} is above max {c.max}")
+        if c.kind == "lattice" and all(getattr(c, k) is None for k in ("a", "b", "c", "alpha", "beta", "gamma")):
+            problems.append(f"{where}: give at least one lattice parameter")
+    for u in p.unchecked:
+        unknown = set(u.claim_ids) - set(deps.claims) if deps.claims else set()
+        if unknown:
+            problems.append(f"{p.plan_id}: unchecked claims {sorted(unknown)} are not listed claims")
+    covered = {i for c in p.checks for i in c.claim_ids} | {i for u in p.unchecked for i in u.claim_ids}
+    mine = [c for c in deps.claims.values() if not c.system_ids or set(c.system_ids) & set(p.system_ids)]
+    missing = [c for c in mine if c.claim_id not in covered]
+    if missing:
+        problems.append(f"{p.plan_id}: {len(missing)} claims about its systems are neither tested by a check "
+                        "(claim_ids) nor listed in unchecked with a reason: "
+                        + "; ".join(f"{c.claim_id} ({c.text[:80]})" for c in missing))
+    return problems
+
+
+def _check_molecular_crystal(bulk: BulkSpec, framework: Composition) -> list[str]:
+    """Framework atoms from the sites plus the molecules per cell make the stated formula (times
+    the formula units)."""
+    total = framework
+    for m in bulk.molecules:
+        mol = Chem.MolFromSmiles(m.smiles)
+        if mol is None:
+            return [f"molecule {m.name}: unparseable SMILES {m.smiles!r}"]
+        counts: dict[str, int] = {}
+        for a in Chem.AddHs(mol).GetAtoms():
+            counts[a.GetSymbol()] = counts.get(a.GetSymbol(), 0) + 1
+        total = total + Composition(counts) * m.per_cell
+    try:
+        stated = Composition(bulk.formula)
+    except Exception:  # noqa: BLE001
+        return [f"bulk formula {bulk.formula!r} is not a chemical formula"]
+    reduced, n_fu = total.get_reduced_composition_and_factor()
+    made = (f"the framework sites ({framework.formula}) and the molecules per cell "
+            f"({', '.join(f'{m.per_cell} {m.name}' for m in bulk.molecules)}) make {total.formula}")
+    if reduced.reduced_formula != stated.reduced_formula:
+        return [f"{made}, not the stated formula {stated.reduced_formula}: check the sites and the molecule counts"]
+    units = total.num_atoms / stated.num_atoms
+    if bulk.formula_units is not None and abs(units - bulk.formula_units) > 1e-6:
+        return [f"{made}: {units:g} formula units of {bulk.formula}, not {bulk.formula_units}"]
+    return []
+
+
 def check_plan_set(plans: PlanSet, deps: PlanningDeps) -> list[str]:
     """Deterministic checks of a plan set against the evidence snapshot and user overrides."""
     problems = []
@@ -71,7 +150,7 @@ def check_plan_set(plans: PlanSet, deps: PlanningDeps) -> list[str]:
     ov = deps.overrides
     for p in plans.plans:
         cited = (set(p.evidence_ids) | {e for c in p.crystals for e in c.lattice.evidence_ids}
-                 | {e for t in p.targets for e in t.evidence_ids})
+                 | {e for t in p.targets for e in t.evidence_ids} | {e for c in p.checks for e in c.evidence_ids})
         unknown = cited - deps.evidence_ids
         if unknown:
             problems.append(f"{p.plan_id}: unknown evidence IDs {sorted(unknown)} (valid: {sorted(deps.evidence_ids)})")
@@ -80,13 +159,14 @@ def check_plan_set(plans: PlanSet, deps: PlanningDeps) -> list[str]:
         unknown_systems = set(p.system_ids) - deps.system_ids if deps.system_ids else set()
         if unknown_systems:
             problems.append(f"{p.plan_id}: unknown system IDs {sorted(unknown_systems)} (valid: {sorted(deps.system_ids)})")
+        problems.extend(_check_claims(p, deps))
         for crystal in p.crystals:
             if crystal.lattice.source == "paper" and not crystal.lattice.evidence_ids:
                 problems.append(f"{p.plan_id}: lattice of {crystal.name!r} has source 'paper' but cites no evidence")
             problems.extend(f"{p.plan_id}: crystal {crystal.name!r}: {msg}" for msg in _check_bulk(crystal))
         if (p.surface is not None or p.nanocrystal is not None) and not p.crystals:
             problems.append(f"{p.plan_id}: a surface or nanocrystal spec needs the crystal it is cut from in `crystals`; "
-                            "for a crystal without complete Wyckoff sites, drop the spec and describe the slab or "
+                            "(a hybrid crystal with its molecules); if it has no complete Wyckoff sites, drop the spec and describe the slab or "
                             "particle (orientation, thickness, vacuum, size) in the description")
         if ov.model_type and p.model_type.strip().lower() != ov.model_type.strip().lower():
             problems.append(f"{p.plan_id}: user override requires model_type {ov.model_type!r}")
@@ -158,18 +238,24 @@ class LLMPlanner(StructuredAgent):
 
     async def plan(self, summary: PaperGraph, evidence: ExperimentalEvidence,
                    history: list[PlanSet], feedback: str) -> PlanSet:
+        claims = structural_claims(summary, evidence)
         deps = PlanningDeps(evidence_ids={e.evidence_id for e in summary.evidence} | evidence.ids,
                             max_plans=self.max_plans, overrides=self.overrides, max_atoms=self.max_atoms,
-                            system_ids={s.system_id for s in summary.systems})
-        return await self.arun(planner_prompt(summary, evidence, history, feedback), deps=deps)
+                            system_ids={s.system_id for s in summary.systems},
+                            claims={c.claim_id: c for c in claims})
+        return await self.arun(planner_prompt(summary, evidence, history, feedback, claims), deps=deps)
 
 
 def planner_prompt(summary: PaperGraph, evidence: ExperimentalEvidence, history: list[PlanSet],
-                   feedback: str) -> str:
+                   feedback: str, claims: list[Claim] | None = None) -> str:
+    claims = structural_claims(summary, evidence) if claims is None else claims
     parts = ["## Paper summary (Agent 1: metadata, material systems, text and figure evidence)",
              summary.model_dump_json(indent=1, exclude={"nodes", "edges"}),
              "## Characterization reports (Agent 2: observations, findings and structural constraints per technique)",
              evidence.model_dump_json(indent=1)]
+    if claims:
+        parts += ["## Structural claims (every plan tests each claim about its systems with a check, "
+                  "or lists it in unchecked with the reason)", claims_text(claims)]
     if history:
         parts += ["## Previous plan sets (oldest first)"] + [h.model_dump_json(indent=1) for h in history]
     if feedback:
@@ -198,6 +284,9 @@ Your inputs
   confidence.
 - Cite evidence as summarizer evidence IDs ("E004") or as characterization observation IDs
   qualified by their technique ("XRD:O3"); no other IDs exist.
+- The structural claims: the facts recorded for each system and the reports' structural
+  constraints, each with an ID ("S2:space_group", "XRD:C3"). The structures must agree with them,
+  so every plan turns each claim about its systems into checks.
 - A paper may study several material systems (a doping or homologous series, several phases or
   substrates). Give every plan the system_ids it models, and spend the plan limit on the systems
   and hypotheses that matter most for the paper's question.
@@ -227,12 +316,17 @@ What each plan decides
   cell. Use lattice parameters reported in the evidence (source "paper", cite the evidence ID);
   otherwise literature values (source "literature", listed as an assumption). Each crystal is
   built from its sites exactly as written and must be complete: every atom of its formula, bonded
-  neighbours, no overlaps. A crystal you cannot give complete Wyckoff sites for - hybrid
-  organic-inorganic or molecular crystals (e.g. organic cations between inorganic layers),
-  frameworks with guest molecules, cells the paper only partly determines - stays out of
-  `crystals`: give its space group, lattice parameters, layer stacking or connectivity and its
-  molecules (SMILES with formal charges, number per cell) in the description, and the Construction
-  agent builds it in code. Never list a partial sublattice or an isolated layer as a crystal.
+  neighbours, no overlaps. A hybrid organic-inorganic or molecular crystal (organic cations
+  between or inside inorganic layers, a framework with guest molecules) is a crystal too: its
+  sites are the framework atoms and `molecules` lists the molecules (SMILES with formal charges,
+  number per conventional cell); the formula is the whole crystal's, and the Construction agent
+  fills the framework's cavities with the molecules, keeping the space group. The framework
+  coordinates fix its distortions (polyhedral tilts, bond angles) and its symmetry, so take them
+  from the paper; when the
+  paper does not report them, from the literature for the same compound, or idealized positions
+  whose free parameters reproduce the reported bond lengths and angles (state which as an
+  assumption). Never list a partial sublattice or an isolated layer as a crystal, and never leave
+  a crystalline component out of `crystals`.
 - surface (optional helper, for a crystal listed in `crystals`): Miller index, termination
   described by its exposed species, minimum thickness (A), in-plane supercell, vacuum (at least
   {min_vacuum} A) and a fixed bottom region (A).
@@ -250,9 +344,27 @@ What each plan decides
   are separate monatomic adsorbates.
 - solvent: only when explicit solvent is essential to the question; one entry per species (ions
   included) with a density or a number of molecules, and a layer thickness for slabs.
-- targets: the quantitative features the evidence fixes and the built structure must show (core
-  diameter, shell thickness, coverage, exposed sites, dopant fraction, ...), each with its value,
-  tolerance and evidence IDs. The Construction agent measures them on the built structure.
+- checks: the paper's claims as tests the validation gate runs on every structure built from the
+  plan; a failing check sends the structure back to construction. Each check cites the listed
+  claims it tests (claim_ids) and the evidence IDs, takes its values from the claim (never
+  invented) and a tolerance from the reported uncertainty or the precision of the value. Kinds:
+  lattice (a, b, c, alpha, beta, gamma of a bulk model, relative tolerance), space_group (the
+  symbol in the paper's setting; scope "framework" when the experiment averages over disordered
+  molecules), composition (a bulk model's formula), bond_length (an element pair with the reported
+  min and max), bond_angle (A, vertex, C with the reported range, e.g. M-O-M bridge angles),
+  coordination (center, neighbor, number), hydrogen_bonds (donor, acceptors and hydrogen bonds per
+  donor, when the paper reports hydrogen bonding, e.g. N-H...O or O-H...Cl) and layers (element,
+  number of planes per framework block, stacking axis: the slab thickness of a layered
+  material). Also turn the quantitative structural facts in the evidence (tables of bond lengths
+  and angles, layer spacings) into checks. When a plan models several systems, scope each check
+  to its systems with system_ids. Severity "warn" only for approximate or low-confidence claims.
+- unchecked: every listed structural claim about the plan's systems that no check can test (phase
+  purity, morphology, disorder an ordered model cannot show, a technique's statement that it does
+  not constrain the structure), with the reason. Every claim about the plan's systems appears in a
+  check's claim_ids or in unchecked.
+- targets: the other quantitative features the evidence fixes (core diameter, shell thickness,
+  coverage, exposed sites, dopant fraction, ...), each with its value, tolerance and evidence IDs.
+  The Construction agent measures them on the built structure.
 
 Scientific rules
 - Distinguish observations from interpretations. Every plan states its hypothesis, cites the

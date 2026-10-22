@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
-from typing import Optional
+from typing import Optional, Sequence
 
 import numpy as np
 from ase import Atoms
@@ -476,7 +476,8 @@ def validate_structure(atoms: Atoms, structure_id: str, *, max_atoms: int, min_v
                        bvs_warn: float = 0.30, bvs_fail: float = 0.40, bond_share_warn: float = 0.45,
                        like_contact_warn: float = 0.8, like_contact_fail: float = 0.7,
                        molecule_bond_tol: float = 0.12, molecule_angle_tol: float = 20.0,
-                       files: Optional[dict[str, str]] = None) -> ValidationReport:
+                       files: Optional[dict[str, str]] = None, claim_checks: Sequence = (),
+                       system_ids: Optional[Sequence[str]] = None) -> ValidationReport:
     """Geometric and chemical sanity checks. Pairs closer than overlap_scale x the covalent-radius
     sum fail; contacts involving a molecule closer than close_contact_scale x the sum (other than
     the molecule's own bonds) warn, as do electronegative molecule atoms (O, N, S, halogens) closer
@@ -489,7 +490,8 @@ def validate_structure(atoms: Atoms, structure_id: str, *, max_atoms: int, min_v
     the framework cations (bvs_warn / bvs_fail, bond_share_warn). Molecules must have the geometry
     of the RDKit conformer of their SMILES (bond lengths within molecule_bond_tol A, angles within
     molecule_angle_tol degrees); C-H and N-H bonds in the substrate (molecules not registered) and
-    substrate atoms without any neighbour fail."""
+    substrate atoms without any neighbour fail. `claim_checks` are the plan's tests of the paper's
+    claims (evidence_checks.run_claim_checks), for the structure's `system_ids`."""
     checks: list[CheckResult] = []
     metrics: dict[str, float | int | str] = {"formula": atoms.get_chemical_formula(), "n_atoms": len(atoms)}
     pos = atoms.get_positions()
@@ -645,6 +647,11 @@ def validate_structure(atoms: Atoms, structure_id: str, *, max_atoms: int, min_v
         checks.append(CheckResult(name="vacuum", status=status,
                                   detail=f"{gap:.1f} A between periodic images (minimum {min_vacuum})"
                                   + ("; solvent fills the gap" if solvated and not ok else "")))
+
+    if claim_checks:
+        from paper2structure.tools.evidence_checks import run_claim_checks
+
+        checks.extend(run_claim_checks(atoms, claim_checks, system_ids))
 
     counts = Counter(atoms.get_chemical_symbols())
     metrics["composition"] = " ".join(f"{e}{n}" for e, n in sorted(counts.items()))

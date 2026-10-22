@@ -1,6 +1,6 @@
 ---
 name: structure-toolkit
-description: Reference for paper2structure.tools, the helper library for construction scripts (bulk crystals from Wyckoff positions, slab terminations, surface sites, adsorbate placement, nanocrystals, solvent, add_molecule, describe, emit), and the bookkeeping conventions every emitted structure follows. Load it before writing the first script.
+description: Reference for paper2structure.tools, the helper library for construction scripts (bulk crystals from Wyckoff positions, molecules in crystal cavities, slab terminations, surface sites, adsorbate placement, nanocrystals, solvent, add_molecule, describe, emit), and the bookkeeping conventions every emitted structure follows. Load it before writing the first script.
 ---
 
 `from paper2structure.tools import ...` works in every script. The functions cover steps that are
@@ -26,7 +26,10 @@ numpy for everything else (see the `custom-structures` skill).
 - The validation gate (check_structure, and again on your final report): no atoms closer than 0.6 x
   the covalent-radius sum; molecules matching their SMILES; every adsorbate bound to the
   substrate (closest contact within 1.5 x the covalent sum, never beyond 2.0 x; an electronegative
-  donor on an ionic surface binds a cation, not an anion); vacuum; the atom budget.
+  donor on an ionic surface binds a cation, not an anion); vacuum; the atom budget; and the plan's
+  checks of the paper's claims ("claim C1": lattice, space group, composition, bond lengths and
+  angles, coordination, hydrogen bonds, layer counts), for the systems passed to
+  `emit(..., system_ids=[...])`.
 - `describe(atoms)` prints composition, cell, molecules, substrate coordination, layer or radial
   composition, vacuum, the closest pair and the binding contacts.
 

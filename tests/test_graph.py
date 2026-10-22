@@ -30,8 +30,9 @@ def test_accept_path_writes_structures_and_report(tmp_path):
     sid = result.accepted_structure_ids[0]
     run = tmp_path / "run"
     assert (run / result.structure_files[sid]["poscar"]).exists() and state["validation_reports"][sid]["passed"]
-    checks = {c["name"] for c in state["validation_reports"][sid]["checks"]}
-    assert {"overlaps", "adsorbate_binding", "export_roundtrip"} <= checks  # the gate's report + the round trip
+    checks = {c["name"]: c for c in state["validation_reports"][sid]["checks"]}
+    assert {"overlaps", "adsorbate_binding", "export_roundtrip"} <= set(checks)  # the gate's report + the round trip
+    assert checks["claim C1"]["status"] == "pass" and "Pt-Pt 2.77" in checks["claim C1"]["detail"]  # the plan's claim
     for name in ("plans.json", "artifacts.json", "validation_reports.json", "revision_history.json",
                  "token_log.json", "result.json", "workflow.mmd", "final_report.md",
                  "inputs/experimental_evidence_v1.json"):
@@ -41,6 +42,7 @@ def test_accept_path_writes_structures_and_report(tmp_path):
     assert set(state["evidence"]["reports"]) == {"FTIR", "LEED", "XPS", "XRD"} and state["evidence_version"] == 1
     report = (run / "final_report.md").read_text()
     assert sid in report and "**Status:** accepted" in report and "## 1. Summary\nscripted summary" in report
+    assert f"| {sid} | C1 | pass |" in report and "unchecked claims: S1:occupancy1" in report
 
 
 def test_revisit_evidence_reruns_agents_2_to_4_but_not_agent_1(tmp_path):
@@ -160,3 +162,30 @@ def test_rebuild_keeps_the_structures_the_reviewer_did_not_list(tmp_path):
     assert result.status == "accepted"
     assert sorted(calls[0]) == ["pt111_co_copy_r0a0", "pt111_co_top_r0a0"]
     assert sorted(result.accepted_structure_ids) == ["pt111_co_copy_r0a0", "pt111_co_top_r0a1"]  # copy kept
+
+
+def test_reviewer_runs_its_own_claim_checks(tmp_path):
+    results = []
+
+    def reviewer(messages, info):
+        sid = re.findall(r"### (\S+) \(plan", _user_text(messages))[0]
+        returns = [p.content for m in messages for p in m.parts if p.part_kind == "tool-return"
+                   and p.tool_name == "check_claim"]
+        if not returns:
+            return ModelResponse(parts=[ToolCallPart("check_claim", {"structure_id": sid, "check": {
+                "kind": "coordination", "id": "R1", "claim": "Pt is 12-coordinated in the bulk",
+                "center": "Pt", "neighbor": "Pt", "number": 12}})])
+        results.extend(returns)
+        if not reported(messages):
+            return ModelResponse(parts=[ToolCallPart("write_report", REPORT)])
+        return _final(info, {"action": "accept_candidates", "reasoning": "fine", "accepted_structure_ids": [sid]})
+
+    deps = build_deps(make_config(), tmp_path / "run", seed=7,
+                      models={"planner": planner_model(), "constructor": constructor_model([GOOD_SCRIPT]),
+                              "reviser": coding_model(reviewer)})
+    result = asyncio.run(run_workflow(deps, run_id="claims"))
+    assert result.status == "accepted"
+    # the thin slab has no Pt deep enough to count as bulk: the reviewer's check says so
+    assert results and results[0].startswith("fail: Pt is 12-coordinated") and "no interior framework Pt" in results[0]
+    prompt = (tmp_path / "run" / "final_report.md").read_text()
+    assert "| C1 | pass |" in prompt

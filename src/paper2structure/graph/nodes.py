@@ -235,7 +235,8 @@ class ConstructStructures(BaseNode[ReconstructionState, WorkflowDeps, Reconstruc
                 script = store.path("structures", f"{sid}.py")
                 shutil.copyfile(cdeps.scripts[built.name], script)
                 artifact = StructureArtifact(
-                    structure_id=sid, plan_id=built.plan_id, name=built.name, revision=st.revision,
+                    structure_id=sid, plan_id=built.plan_id, name=built.name, system_ids=built.system_ids,
+                    revision=st.revision,
                     attempt=st.attempt, files={k: store.rel(v) for k, v in files.items()}, source=store.rel(source),
                     script=store.rel(script), image=store.rel(image), method=built.method,
                     target_checks=built.target_checks, formula=atoms.get_chemical_formula(), n_atoms=len(atoms),

@@ -29,6 +29,12 @@ PT_PLAN = {
                         "mode": "adsorb", "site_kind": "top", "site_elements": ["Pt"], "site": "atop Pt",
                         "count": 1, "bond_length": 1.85}],
         "targets": [{"property": "CO coverage", "value": "0.25 ML", "evidence_ids": ["E2"]}],
+        "checks": [{"kind": "bond_length", "id": "C1", "claim": "fcc Pt, a = 3.924 A: Pt-Pt 2.775 A",
+                    "elements": ["Pt", "Pt"], "min": 2.77, "max": 2.78, "tolerance": 0.01, "evidence_ids": ["E1"],
+                    "claim_ids": ["S1:space_group", "S1:lattice", "S1:other1", "XRD:C1"]}],
+        "unchecked": [{"claim_ids": ["S1:occupancy1", "S1:occupancy2", "S1:other2", "FTIR:C1", "FTIR:C2", "FTIR:C3",
+                                     "FTIR:C4", "LEED:C1", "LEED:C2", "XPS:C1"],
+                       "reason": "adsorption site, orientation and coverage come from the adsorbate spec"}],
         "system_ids": ["S1"],
         "evidence_ids": ["E2", "E3"],
         "assumptions": ["CO is upright"],
@@ -81,6 +87,22 @@ def _user_text(messages) -> str:
             content = part.content
             return content if isinstance(content, str) else " ".join(c for c in content if isinstance(c, str))
     return ""
+
+
+def cover_claims(plan_set: dict, messages) -> dict:
+    """The plan set with every structural claim listed in the planner prompt that its plans do not
+    address added to their unchecked claims (scripted plans for prompts they were not written for)."""
+    text = _user_text(messages)
+    section = text.split("## Structural claims", 1)[1].split("\n## ", 1)[0] if "## Structural claims" in text else ""
+    ids = re.findall(r"^- (\S+) \[", section, re.M)
+    out = copy.deepcopy(plan_set)
+    for p in out["plans"]:
+        covered = {i for c in p.get("checks", []) for i in c.get("claim_ids", [])} | {
+            i for u in p.get("unchecked", []) for i in u["claim_ids"]}
+        rest = [i for i in ids if i not in covered]
+        if rest:
+            p.setdefault("unchecked", []).append({"claim_ids": rest, "reason": "scripted test plan"})
+    return out
 
 
 def planner_model(plans: list[dict] | None = None) -> FunctionModel:

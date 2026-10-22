@@ -17,6 +17,8 @@ class BuiltStructure(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str = Field(description="the name passed to emit()")
     plan_id: str
+    system_ids: list[str] = Field(default_factory=list, description="the paper's systems it models, as passed to "
+                                                                    "emit() (needed when the plan covers several)")
     script: str = Field(description="workspace path of the standalone script that builds it")
     method: str = Field(description="how it was built: which steps used paper2structure.tools and which "
                                     "used your own code")
@@ -44,6 +46,7 @@ class StructureArtifact(BaseModel):
     structure_id: str
     plan_id: str
     name: str
+    system_ids: list[str] = Field(default_factory=list)
     revision: int
     attempt: int
     files: dict[str, str]

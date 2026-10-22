@@ -5,7 +5,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import Sequence
+from typing import Optional, Sequence
 
 import numpy as np
 from ase import Atoms
@@ -30,13 +30,15 @@ def _calling_script() -> str:
     return path if rel.startswith("..") else rel
 
 
-def emit(atoms: Atoms, name: str, plan_id: str, notes: str = "") -> str:
+def emit(atoms: Atoms, name: str, plan_id: str, notes: str = "", system_ids: Optional[Sequence[str]] = None) -> str:
     """Register a finished structure for the plan `plan_id`: writes structures/<name>.extxyz (all
     per-atom metadata), structures/<name>.vasp (POSCAR) and its .json sidecar under the working
     directory, and records the structure and the emitting script in structures/manifest.json.
     Emitting the same name again replaces it.
 
     name: short identifier (letters, digits, "_", "-", "."), unique per structure.
+    system_ids: the paper's systems this structure models (e.g. ["S2"]) when the plan covers
+        several; the plan's checks scoped to other systems are then not applied to it.
     """
     if not _NAME.match(name) or name == "manifest":
         raise ValueError(f"invalid structure name {name!r}: use letters, digits, '_', '-', '.' (max 64)")
@@ -44,7 +46,10 @@ def emit(atoms: Atoms, name: str, plan_id: str, notes: str = "") -> str:
     out.mkdir(parents=True, exist_ok=True)
     atoms = clean_arrays(atoms.copy())
     script = _calling_script()
+    systems = [str(s) for s in (system_ids or [])]
     atoms.info.update({"p2s_name": name, "p2s_plan_id": str(plan_id), "p2s_notes": str(notes)})
+    if systems:
+        atoms.info["p2s_system_ids"] = ",".join(systems)
     path = out / f"{name}.extxyz"
     write(path, atoms, format="extxyz")
     export_structure(atoms, out, name, formats=("poscar",))
@@ -52,7 +57,7 @@ def emit(atoms: Atoms, name: str, plan_id: str, notes: str = "") -> str:
     entries = json.loads(manifest.read_text()) if manifest.exists() else []
     entries = [e for e in entries if e["name"] != name]
     entries.append({"name": name, "plan_id": str(plan_id), "path": path.name, "script": script, "notes": str(notes),
-                    "formula": atoms.get_chemical_formula(), "n_atoms": len(atoms)})
+                    "system_ids": systems, "formula": atoms.get_chemical_formula(), "n_atoms": len(atoms)})
     manifest.write_text(json.dumps(entries, indent=2))
     print(f"[emit] {name} (plan {plan_id}): {atoms.get_chemical_formula()}, {len(atoms)} atoms -> {path}")
     return str(path)

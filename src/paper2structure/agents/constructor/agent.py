@@ -107,14 +107,18 @@ def _same_atoms(x, y, tol: float = 1e-3) -> bool:
             and np.allclose(x.cell.array, y.cell.array, atol=tol) and np.allclose(x.positions, y.positions, atol=tol))
 
 
-def _validate(deps: ConstructionDeps, atoms, name: str, plan_id: str) -> ValidationReport:
+def _validate(deps: ConstructionDeps, atoms, name: str, plan_id: str,
+              system_ids: Optional[list[str]] = None) -> ValidationReport:
     """The validation gate on one structure: tools.geometry_checks with the campaign's `validation`
-    settings (and the plan's oxidation states for the optional charge check). A structure the
-    checks cannot process fails."""
+    settings, the plan's oxidation states for the optional charge check and the plan's checks of the
+    paper's claims for the systems the structure models (as emitted; default the plan's). A
+    structure the checks cannot process fails."""
     plan = deps.plan(plan_id)
+    systems = system_ids or deps.manifest().get(name, {}).get("system_ids") or (plan.system_ids if plan else [])
     try:
         return validate_structure(atoms, name, max_atoms=deps.cfg.planning.max_atoms,
                                   oxidation_states=plan.oxidation_states() if plan else None,
+                                  claim_checks=plan.checks if plan else (), system_ids=systems,
                                   **deps.cfg.validation.model_dump())
     except Exception as e:  # noqa: BLE001 - a broken structure is the agent's to fix, not the end of the run
         log.warning("validating %s failed: %s", name, e)
@@ -231,7 +235,7 @@ def gate_report(deps: ConstructionDeps, output: ConstructionReport, atoms: dict)
     ValidateStructures (repair loop, reviewer) so the gate never stalls a run."""
     failing = {}
     for s in output.structures:
-        report = deps.reports[s.name] = _validate(deps, atoms[s.name], s.name, s.plan_id)
+        report = deps.reports[s.name] = _validate(deps, atoms[s.name], s.name, s.plan_id, s.system_ids)
         if not report.passed:
             failing[s.name] = "; ".join(f"{c.name}: {c.detail}" for c in report.failures())
     if not failing:
@@ -276,7 +280,8 @@ class LLMConstructor(StructuredAgent):
             """Summarize an emitted structure (structures/<name>.extxyz) and run the workflow's
             deterministic validation on it (the gate your final report must pass): overlaps,
             molecule integrity against the SMILES, adsorbate-substrate binding, close and
-            like-charge contacts, vacuum and the atom budget. Fix every FAIL."""
+            like-charge contacts, vacuum, the atom budget and the plan's checks of the paper's
+            claims ("claim C1", ...). Fix every FAIL."""
             return check_emitted(ctx.deps, name)
 
         if self.cfg.campaign.use_images:
@@ -395,7 +400,7 @@ You are the Structure Construction agent of Paper2Structure. You turn constructi
 atomic structures for machine-learned interatomic potential (MLIP) simulations by writing and
 running Python in this workspace. Any Python with ASE, pymatgen, RDKit, numpy and scipy is
 available. paper2structure.tools is a helper library for the common steps (crystals from Wyckoff
-positions, slab terminations, surface sites, adsorbate placement, particles, solvent, bookkeeping):
+positions, molecules in crystal cavities, slab terminations, surface sites, adsorbate placement, particles, solvent, bookkeeping):
 use it where it fits and write your own code for everything else (core-shell particles,
 interfaces, defects, supported particles, ...). The skills describe the library and recipes; load
 structure-toolkit before writing the first script.
@@ -411,18 +416,24 @@ structures), e.g. build_P1_core_shell.py. Users will run and modify these script
   (lattice constants, sizes, coverage, SEED = the given seed) with comments tying them to the plan,
   then clear steps. Pass SEED to every random step.
 - Atomic positions come from code: crystal symmetry, lattice vectors, geometry and searches.
-  Never type coordinate lists from memory.
+  Never type coordinate lists from memory. Crystals come from the plan's Wyckoff sites
+  (build_bulk); the molecules of a hybrid or molecular crystal go in with fill_cavities.
 - Molecules are placed with place_adsorbates or add_solvent, or registered with add_molecule, so
   validation can check their bonds.
 - Each finished structure is registered with emit(atoms, name=..., plan_id=..., notes=...), which
-  writes structures/<name>.extxyz and .vasp.
+  writes structures/<name>.extxyz and .vasp. When a plan models several systems, pass the ones
+  each structure models: emit(..., system_ids=["S2"]).
 
 How to work
 - Run each script with the shell (`python build_P1_....py`), print what you need (describe(),
   measurements), then call check_structure(name) on every emitted structure and fix every
   FAIL. The same deterministic checks gate your final report: no overlapping atoms, molecules
   matching their SMILES, every adsorbate bound to the substrate (an electronegative donor on an
-  ionic surface binds a cation), vacuum and the atom budget{charge}.{views}
+  ionic surface binds a cation), vacuum and the atom budget{charge}, and the plan's checks: the
+  paper's claims (lattice, space group, composition, bond lengths and angles, coordination,
+  hydrogen bonds, layer counts). A failing claim check means the structure contradicts the
+  paper: change how it is built (e.g. Wyckoff coordinates that give the reported space group and
+  bond angles), never the check.{views}
 - Measure every plan target on the built structure with code and report the values.
 - Change only technical parameters (search settings, rounding of thickness or supercell, a
   truncated adsorbate) and report every deviation from the plan. If a plan cannot be built as

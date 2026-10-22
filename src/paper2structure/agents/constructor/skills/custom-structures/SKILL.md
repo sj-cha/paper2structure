@@ -36,13 +36,16 @@ description: How to build what paper2structure.tools has no builder for - point 
   matched by supercells.
 - Stepped or vicinal surfaces: a high Miller index in build_slab (e.g. (2,1,1), (5,3,3)).
   Reconstructions: start from the bulk-terminated slab and move or remove atoms by rule.
-- Hybrid or molecular crystals (organic cations between or inside inorganic layers, framework
-  guests): build the inorganic framework from a parent crystal with code (e.g. corner-sharing
-  octahedra from a cubic perovskite with the A sites emptied, n octahedral layers stacked along
-  the long axis), then place each molecule (RDKit conformer, hydrogens included) with its charged
-  group toward the anion sites, search orientations and offsets to clear overlaps, and register
-  it with `add_molecule(..., role="guest")`. Before emitting, check the composition against the
-  plan's formula and the coordination of the framework cations (e.g. six anions per octahedron).
+- Crystals with molecules (organic cations between or inside inorganic layers, templates in
+  zeolites, intercalated molecules, guests and solvent in porous frameworks, molecular salts): the
+  plan's crystal gives the framework's Wyckoff sites and its `molecules`. Build the framework with
+  `build_bulk` from those sites (its symmetry and distortions come from the space group and the
+  coordinates), then `fill_cavities(framework, smiles, per_cell, name=..., seed=SEED)` once per
+  molecule, larger molecules first. It puts each molecule's charged or binding atom in the
+  framework's pockets with its N-H/O-H pointing at acceptors and adds the symmetry images, so the
+  crystal keeps the space group. Never place framework atoms or molecules with hand-written
+  coordinates; if the framework is wrong (failing space-group, bond-angle or coordination
+  checks), fix the Wyckoff coordinates. Make supercells after filling.
 - Mixtures: call add_solvent once per species with its share of the molecules; ions go in as
   SMILES (`[Na+]`, `[Cl-]`), and the whole cell should stay neutral.
 

@@ -12,6 +12,7 @@ from pydantic_ai_harness import FileSystem
 
 from paper2structure.agents.reviser.schemas import ReportNarrative, RevisionDecision
 from paper2structure.agents.structured_agent import StructuredAgent
+from paper2structure.tools.schemas import ClaimCheck
 
 if TYPE_CHECKING:  # graph.state imports this package's schemas
     from paper2structure.graph.state import ArtifactStore, ReconstructionState
@@ -84,6 +85,25 @@ class LLMReviser(StructuredAgent):
                     "next steps with the run's evidence, plans, structures, validation and scripts. It is "
                     "finalized with your decision when the run ends.")
 
+        @agent.tool
+        def check_claim(ctx: RunContext[RevisionDeps], structure_id: str, check: ClaimCheck) -> str:
+            """Run one deterministic check of a claim on a constructed structure, the same checks the
+            validation gate runs for the plans: lattice, space_group, composition, bond_length,
+            bond_angle, coordination, hydrogen_bonds or layers. Use it to test what the plan's checks
+            leave open (a claim listed as unchecked, a reported bond angle) instead of judging it
+            from the description."""
+            from ase.io import read
+
+            from paper2structure.tools.evidence_checks import run_claim_checks
+
+            deps = ctx.deps
+            if structure_id not in deps.structure_ids:
+                raise ModelRetry(f"unknown structure {structure_id!r} (valid: {sorted(deps.structure_ids)})")
+            a = deps.state.artifact(structure_id)
+            atoms = read(deps.store.root / a.source)
+            result = run_claim_checks(atoms, [check.model_copy(update={"system_ids": []})])[0]
+            return f"{result.status}: {result.detail}"
+
         @agent.output_validator
         def _validate(ctx: RunContext[RevisionDeps], output: RevisionDecision) -> RevisionDecision:
             deps = ctx.deps
@@ -151,6 +171,9 @@ def reviser_prompt(state: ReconstructionState, revisions_left: int, rebuilds_lef
                                               for t in a.target_checks) or "none reported"),
             f"deviations from plan: {'; '.join(a.deviations) or 'none reported'}",
             f"deterministic validation: {rep.summary() if rep else 'not run'}",
+            *(["paper claims tested (the plan's checks):"] + [f"- {c.name.removeprefix('claim ')} {c.status}: {c.detail}"
+                                                              for c in rep.checks if c.name.startswith("claim ")]
+              if rep and any(c.name.startswith("claim ") for c in rep.checks) else []),
         ]))
     if state.failed_plans:
         parts += ["## Plans that could not be built"] + [f"- {k}: {v}" for k, v in state.failed_plans.items()]
@@ -184,7 +207,10 @@ Rules
   experimentally established. List the observations it does not explain and the assumptions it
   rests on under `unresolved`.
 - Give a verdict for every structure. Check the measured targets against the plan and the
-  evidence.""" + scripts + """
+  evidence. The plans' checks test the paper's claims on every structure (listed under each
+  structure); a failing claim means the structure contradicts the paper. check_claim runs any
+  such check yourself: use it for claims a plan listed as unchecked that a check can test, and
+  for quantitative statements in the evidence the plans did not turn into checks.""" + scripts + """
 
 Actions
 - accept_candidates: one or more structures pass validation and represent the paper's system;
@@ -249,6 +275,8 @@ def save_report(state: ReconstructionState, store: ArtifactStore) -> Path:
             lines += [f"- **{p.plan_id}** ({p.model_type}): {p.hypothesis}",
                       f"  - model: {p.description}",
                       f"  - targets: {'; '.join(f'{t.property} {t.value}' for t in p.targets) or 'none'}",
+                      f"  - claim checks: {'; '.join(f'{c.id} {c.kind}: {c.claim}' for c in p.checks) or 'none'}",
+                      f"  - unchecked claims: {'; '.join(f'{', '.join(u.claim_ids)} ({u.reason})' for u in p.unchecked) or 'none'}",
                       f"  - evidence: {', '.join(p.evidence_ids) or 'none'}",
                       f"  - assumptions: {'; '.join(p.assumptions) or 'none stated'}"]
     lines += ["", "## 5. Constructed structures and validation",
@@ -260,6 +288,12 @@ def save_report(state: ReconstructionState, store: ArtifactStore) -> Path:
         lines.append(f"| {a.structure_id} | {a.plan_id} | {a.formula} | {a.n_atoms} | "
                      f"{rep.summary() if rep else 'not validated'} | {'yes' if a.structure_id in accepted else ''} | "
                      f"{files} | [{Path(a.script).name}]({a.script}) |")
+    claim_rows = [(a.structure_id, c) for a in state.artifacts if (rep := state.validation_reports.get(a.structure_id))
+                  for c in rep.checks if c.name.startswith("claim ")]
+    if claim_rows:
+        lines += ["", "Paper claims tested on each structure (the plans' checks; skip: not applicable to that kind of "
+                  "structure):", "", "| structure | check | result | detail |", "|---|---|---|---|"]
+        lines += [f"| {sid} | {c.name.removeprefix('claim ')} | {c.status} | {c.detail} |" for sid, c in claim_rows]
     for a in state.artifacts:
         lines += ["", f"**{a.structure_id}** - {a.method or 'no method reported'}"]
         lines += [f"- target {t.property}: {t.measured} ({'met' if t.satisfied else 'NOT met'}"
