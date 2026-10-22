@@ -10,8 +10,10 @@ Every structure comes with the standalone Python script that generated it.
   technique on the figures and text; then the Planner (Agent 3), the Construction agent (Agent 4, a
   [pydantic-ai-harness](https://pydantic.dev/docs/ai/harness/) coding agent), deterministic
   structure validation and a minimal Scientific Revision agent (Agent 5).
-- **Partial:** technique knowledge is filled in for XRD, TEM, SEM and FTIR only; the other
-  techniques are stubs, skipped unless `characterization.include_stubs`.
+- **Techniques:** every technique in the vocabulary (`config.TECHNIQUES`: XRD, TEM, SEM, AFM, XPS,
+  XAS, Raman, FTIR, UV-Vis, NMR, Mossbauer, TGA, DFT, Structure model) has a filled-in spec.
+  Techniques outside it (e.g. PL, ICP-OES, magnetization) get no characterization agent; a spec
+  marked as a stub (`implemented=False`) is skipped unless `characterization.include_stubs`.
 - **Inputs:** a paper PDF, or one of the scenarios in `examples/fixtures/`, which stand in for the
   output of Agents 1-2 and are hand-written synthetic inputs, not extracted from real papers.
 
@@ -140,7 +142,6 @@ are the checks `check_structure` shows the agent while it works:
 | vacuum, atom budget | less than `validation.min_vacuum` between images; more than `planning.max_atoms` atoms |
 | like-charge contacts (ionic substrates) | two cations (metal atoms of the substrate or of different molecules) or two substrate anions closer than 0.7 x the covalent sum (0.7-0.8 warns) |
 | bond valence (ionic substrates) | the bond-valence sum of a framework cation at interior sites is off its oxidation state by more than 40% (30-40% warns), or one bond carries more than all of its cation's valence (more than 45% warns) |
-
 | claims (the plan's checks) | the structure contradicts a claim of the paper (below) |
 
 **The paper's claims as checks.** The structural claims of a run get IDs: the facts the summarizer
@@ -208,11 +209,11 @@ conda install -c conda-forge bubblewrap   # the sandbox (bwrap); needs unprivile
 pip install -e . --extra-index-url https://download.pytorch.org/whl/cu126   # ".[app]" adds the web tool's server, ".[test]" pytest
 ```
 
-Torch and Warp are pinned to **CUDA 12 builds** (`torch==2.14.1+cu126`, `warp-lang 1.18.0+cu12`),
-because the cluster driver (550.x) supports CUDA <= 12.4 and the default CUDA 13 wheels cannot use
-the GPUs. Large neighbor searches use NVIDIA ALCHEMI Toolkit-Ops on the GPU when one is visible,
-and ASE otherwise. `pydantic-ai` and `pydantic-ai-harness[coder]` are pinned (the harness is 0.x).
-The summarizer reads PDFs with pymupdf.
+Torch and Warp are pinned to **CUDA 12 builds** (`torch==2.10.0` from the cu126 index above,
+`warp-lang 1.18.0+cu12`), because the cluster driver (550.x) supports CUDA <= 12.4 and CUDA 13
+wheels cannot use the GPUs. Large neighbor searches use NVIDIA ALCHEMI Toolkit-Ops on the GPU when
+one is visible, and ASE otherwise. `pydantic-ai` and `pydantic-ai-harness[coder]` are pinned (the
+harness is 0.x). The summarizer reads PDFs with pymupdf.
 
 The API key goes in `.env` in the repo root (git-ignored):
 
@@ -234,7 +235,7 @@ python main.py --paper_graph runs/x/paper/paper_graph.json --characterization ru
 python main.py --config config/cdse_zns_coreshell.yml --random_seed 0     # synthetic fixture campaign
 ```
 
-`main.py` replaces `run_construction.py`. Settings come from the campaign YAML (`--config`); the
+Settings come from the campaign YAML (`--config`); the
 flags set the run-level values and override the YAML where they overlap.
 
 | flag | meaning |
@@ -247,7 +248,7 @@ flags set the run-level values and override the YAML where they overlap.
 | `--random_seed` | the `SEED` the build scripts use (conformers, placement, packing) (required) |
 | `--model` | every agent's model, e.g. `openai:gpt-5.6-luna` (sets `campaign.model`) |
 | `--techniques` | characterize only these, e.g. `XRD TEM` (aliases work); default: every technique found |
-| `--include_stubs` | also run the technique agents whose spec is a stub |
+| `--include_stubs` | also run the technique agents whose spec is a stub (none at present) |
 | `--no_figures` | the summarizer skips figure cataloguing, so Agent 2 reads only the text |
 | `--max_figures` | max figure regions cut from the PDF (default 30) |
 | `--max_revisions` | loops the reviewer may take back through evidence -> planning -> construction (default 1) |
@@ -271,7 +272,7 @@ want to touch the CLI or the YAML. Everything it makes is kept under `outputs/pr
 so a paper can be reopened later and each step is reused rather than repeated:
 
 ```bash
-.venv/bin/python app/server.py            # then open http://127.0.0.1:8600
+python app/server.py            # then open http://127.0.0.1:8600
 ```
 
 | panel | does | runs | reused when |
@@ -325,7 +326,7 @@ Without it, sandboxed scripts compute neighbor lists on the CPU.
 | `construction/r<rev>_a<attempt>/replay/<script>/` | the from-scratch re-run of each final script |
 | `plans.json`, `artifacts.json`, `validation_reports.json`, `revision_history.json`, `construction_reports.json` | full history; nothing is overwritten across revisions |
 | `state/NN_<node>.json` | graph-state snapshot after every node |
-| `result.json`, `token_log.json`, `config.json`, `workflow.mmd` | run summary, LLM usage, config snapshot, graph (the log goes to the console; redirect it to keep it) |
+| `result.json`, `token_log.json`, `config.json`, `workflow.mmd` | run summary, LLM usage of Agents 3-5 (Agent 1 logs its token count in its last progress line; Agent 2's usage is not recorded), config snapshot, graph (the log goes to the console; redirect it to keep it) |
 
 ## Helper library (`paper2structure.tools`)
 
@@ -368,9 +369,8 @@ checks.
   one image per figure, so its cost grows with both (`--no_figures`, `summarizer.max_figures`).
 - Characterization runs once per run: on `revisit_evidence` the reports are kept, not re-analyzed,
   and only the reviewer's feedback reaches the planner.
-- Only the XRD, TEM, SEM and FTIR specs are filled in; other techniques reach the planner only
-  through the summarizer's evidence items (or, with `include_stubs`, through agents without
-  technique knowledge).
+- Techniques outside the vocabulary (e.g. PL, ICP-OES, magnetization) have no characterization
+  agent; they reach the planner only through the summarizer's evidence items.
 - Structures are unrelaxed starting geometries; no MLIP/DFT relaxation and no simulated observables
   (XPS, IR, XRD). Agreement with experiment is judged qualitatively, and an accepted structure is a
   plausible starting point, not an experimentally established one.
