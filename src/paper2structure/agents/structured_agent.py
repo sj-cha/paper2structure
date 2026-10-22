@@ -20,6 +20,19 @@ TRANSIENT_ERRORS = (ModelConnectionError, ModelRateLimitError, ModelRequestTimeo
                     ModelUnavailableError)
 
 
+def new_usage() -> dict[str, int]:
+    """Token usage as token_log.json records it per agent."""
+    return {"input": 0, "cached_input": 0, "output": 0, "calls": 0, "tool_calls": 0}
+
+
+def add_usage(total: dict[str, int], u: RunUsage) -> None:
+    total["input"] += u.input_tokens
+    total["cached_input"] += u.cache_read_tokens  # part of input, billed at the cached rate
+    total["output"] += u.output_tokens
+    total["calls"] += u.requests
+    total["tool_calls"] += u.tool_calls
+
+
 class StructuredAgent:
     """Shared class for the structured-output LLM agents. Each subclass sets `_output_type` and
     `_preflight_probe`; agents with tools or output validators also set `_deps_type` and
@@ -37,7 +50,7 @@ class StructuredAgent:
         self.output_retries = output_retries
         self.system_prompt = (f"{system_prompt}\n\n{system_context}" if system_context
                               else system_prompt)
-        self.usage = {"input": 0, "cached_input": 0, "output": 0, "calls": 0, "tool_calls": 0}
+        self.usage = new_usage()
 
     @cached_property
     def agent(self) -> Agent:
@@ -64,13 +77,6 @@ class StructuredAgent:
     def _register(self, agent: Agent) -> None:
         """Hook for subclasses to add tools and output validators."""
 
-    def _accumulate(self, u: RunUsage) -> None:
-        self.usage["input"] += u.input_tokens
-        self.usage["cached_input"] += u.cache_read_tokens  # part of input, billed at the cached rate
-        self.usage["output"] += u.output_tokens
-        self.usage["calls"] += u.requests
-        self.usage["tool_calls"] += u.tool_calls
-
     async def arun(self, prompt, deps=None, usage_limits=None, **run_kwargs):
         """One agent run returning the validated output; transient API errors are retried with
         exponential backoff, everything else is raised. `run_kwargs` go to Agent.run (e.g. the
@@ -88,7 +94,7 @@ class StructuredAgent:
                             type(self).__name__, attempt, self.max_attempts, e, delay)
                 await asyncio.sleep(delay)
             finally:
-                self._accumulate(usage)
+                add_usage(self.usage, usage)
         return result.output
 
     def preflight(self, **run_kwargs) -> tuple[bool, str]:

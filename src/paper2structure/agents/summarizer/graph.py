@@ -8,7 +8,8 @@ Each step is a class that inherits from ``BaseNode``. Its ``run`` method does th
 learns the edges of the graph, so the hints are not just documentation: they are required.
 
 ``ctx.state`` (``SummarizerState``) is the shared notebook every step reads and writes.
-``ctx.deps`` (``SummarizerDeps``) holds fixed settings: which LLM to use, a progress callback.
+``ctx.deps`` (``SummarizerDeps``) holds fixed settings: which LLM to use, a progress callback,
+and the token usage every LLM call adds to.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from pathlib import Path
 
 from pydantic_ai import BinaryContent
 from pydantic_ai.models import Model
+from pydantic_ai.usage import RunUsage
 from pydantic_graph import BaseNode, End, GraphBuilder, GraphRunContext
 
 from .agents import AgentDeps, figure_analyst, system_finder, text_extractor
@@ -37,15 +39,9 @@ class SummarizerState:
     systems: list[MaterialSystem] = field(default_factory=list)
     evidence: list[Evidence] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
-    input_tokens: int = 0
-    output_tokens: int = 0
 
     def new_evidence_id(self) -> str:
         return f"E{len(self.evidence) + 1:03d}"
-
-    def add_usage(self, result) -> None:
-        self.input_tokens += result.usage.input_tokens or 0
-        self.output_tokens += result.usage.output_tokens or 0
 
     def systems_text(self) -> str:
         return "\n".join(f"- {s.system_id}: {s.name} {s.composition_variables or ''} ({s.form or 'form not stated'})" for s in self.systems)
@@ -57,6 +53,7 @@ class SummarizerDeps:
     on_progress: Callable[[str], None] = print
     analyze_figures: bool = True
     max_figures: int = 30
+    usage: RunUsage = field(default_factory=RunUsage)
 
     @property
     def model_name(self) -> str:
@@ -91,8 +88,8 @@ class FindSystems(BaseNode[SummarizerState, SummarizerDeps, PaperGraph]):
 
     async def run(self, ctx: Ctx) -> ExtractTextEvidence | BuildGraph:
         ctx.deps.on_progress("Identifying the material systems studied...")
-        result = await system_finder.run(ctx.state.document.full_text, model=ctx.deps.model, deps=AgentDeps())
-        ctx.state.add_usage(result)
+        result = await system_finder.run(ctx.state.document.full_text, model=ctx.deps.model, deps=AgentDeps(),
+                                         usage=ctx.deps.usage)
         ctx.state.metadata = result.output.metadata
         ctx.state.systems = [
             MaterialSystem(system_id=f"S{i}", **c.model_dump(exclude={"why_distinct"}))
@@ -121,8 +118,8 @@ class ExtractTextEvidence(BaseNode[SummarizerState, SummarizerDeps, PaperGraph])
             f"PAPER TEXT:\n{state.document.full_text}"
         )
         try:
-            result = await text_extractor.run(prompt, model=ctx.deps.model, deps=AgentDeps({s.system_id for s in state.systems}))
-            state.add_usage(result)
+            result = await text_extractor.run(prompt, model=ctx.deps.model, deps=AgentDeps({s.system_id for s in state.systems}),
+                                              usage=ctx.deps.usage)
             out = result.output
             system.synthesis = out.synthesis
             system.structure = out.structure
@@ -166,8 +163,8 @@ class AnalyzeFigure(BaseNode[SummarizerState, SummarizerDeps, PaperGraph]):
             BinaryContent(data=fig.image_path.read_bytes(), media_type="image/png"),
         ]
         try:
-            result = await figure_analyst.run(prompt, model=ctx.deps.model, deps=AgentDeps({s.system_id for s in state.systems}))
-            state.add_usage(result)
+            result = await figure_analyst.run(prompt, model=ctx.deps.model, deps=AgentDeps({s.system_id for s in state.systems}),
+                                              usage=ctx.deps.usage)
             out = result.output
             for panel in out.panels:
                 ref = f"{out.figure_label}" + (f" panel {panel.panel_label}" if panel.panel_label else "") + f" (page {fig.page})"
@@ -210,7 +207,7 @@ class BuildGraph(BaseNode[SummarizerState, SummarizerDeps, PaperGraph]):
             (state.out_dir / "errors.txt").write_text("\n".join(state.errors))
         ctx.deps.on_progress(
             f"Done. {len(graph.systems)} systems, {len(graph.evidence)} evidence items. "
-            f"Tokens: {state.input_tokens} in / {state.output_tokens} out. Saved to {path}"
+            f"Tokens: {ctx.deps.usage.input_tokens} in / {ctx.deps.usage.output_tokens} out. Saved to {path}"
         )
         return End(graph)
 
@@ -262,10 +259,13 @@ async def summarize_paper(
     on_progress: Callable[[str], None] = print,
     analyze_figures: bool = True,
     max_figures: int = 30,
+    usage: RunUsage | None = None,
 ) -> PaperGraph:
-    """Run the whole workflow on one PDF and return the PaperGraph (also saved in ``out_dir``)."""
+    """Run the whole workflow on one PDF and return the PaperGraph (also saved in ``out_dir``).
+    The token usage of every LLM call is added to ``usage`` when given."""
     state = SummarizerState(pdf_path=Path(pdf_path), out_dir=Path(out_dir))
-    deps = SummarizerDeps(model=model, on_progress=on_progress, analyze_figures=analyze_figures, max_figures=max_figures)
+    deps = SummarizerDeps(model=model, on_progress=on_progress, analyze_figures=analyze_figures, max_figures=max_figures,
+                          usage=usage if usage is not None else RunUsage())
     Path(out_dir).mkdir(parents=True, exist_ok=True)
     return await summarizer_graph.run(state=state, deps=deps, inputs=ReadPDF())
 

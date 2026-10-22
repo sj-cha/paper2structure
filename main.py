@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import datetime as dt
 import json
 import logging
 import os
@@ -38,7 +39,8 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="paper_graph.json of an earlier run: skips the summarizer (sets inputs.paper_graph)")
     p.add_argument("--characterization", default=None,
                    help="folder of saved characterization reports: skips Agent 2 (sets inputs.characterization)")
-    p.add_argument("--output_dir", default=None, help="default: runs/<pdf or paper name>")
+    p.add_argument("--output_dir", default=None,
+                   help="a new or empty folder; default: runs/<pdf or paper name>_<date-time>")
     p.add_argument("--random_seed", type=int, required=True,
                    help="seeds conformer embedding, adsorbate placement and solvent packing")
     p.add_argument("--model", default=None, help="every agent's model, e.g. openai:gpt-5.6-luna (sets campaign.model)")
@@ -83,8 +85,15 @@ def main() -> int:
 
     cfg = load_config(args.config)
     inputs = cfg.inputs
+    if args.pdf and args.characterization:
+        print("ERROR: --characterization needs the summary its reports were made from: give --paper_graph "
+              "instead of --pdf.", file=sys.stderr)
+        return 2
     if args.pdf:
-        inputs.pdf, inputs.paper_graph = args.pdf, None
+        if inputs.characterization:
+            print(f"[paper2structure] --pdf: ignoring the config's inputs.characterization ({inputs.characterization}); "
+                  "its reports belong to another summary", flush=True)
+        inputs.pdf, inputs.paper_graph, inputs.characterization = args.pdf, None, None
     if args.paper_graph:
         inputs.paper_graph, inputs.pdf = args.paper_graph, None
     if args.characterization:
@@ -111,12 +120,21 @@ def main() -> int:
     if args.gpu is not None:
         cfg.construction.gpu = True  # the agent's sandboxed scripts may use it too
 
+    if inputs.pdf and inputs.characterization:
+        print("ERROR: inputs.characterization needs the summary its reports were made from: set inputs.paper_graph "
+              "instead of inputs.pdf.", file=sys.stderr)
+        return 2
+
     if args.output_dir is None:
+        stamp = f"{dt.datetime.now():%Y%m%d-%H%M%S}"
         if inputs.pdf:
-            args.output_dir = str(Path("runs") / Path(inputs.pdf).stem)
+            args.output_dir = str(Path("runs") / f"{Path(inputs.pdf).stem}_{stamp}")
         else:  # a summary saved by an earlier run sits in <run>/paper/
             src = Path(inputs.paper_graph).parent
-            args.output_dir = str(Path("runs") / f"{src.parent.name if src.name == 'paper' else src.name}_replan")
+            args.output_dir = str(Path("runs") / f"{src.parent.name if src.name == 'paper' else src.name}_replan_{stamp}")
+    elif Path(args.output_dir).is_dir() and any(Path(args.output_dir).iterdir()):
+        print(f"ERROR: --output_dir {args.output_dir} is not empty: a run needs a new or empty folder.", file=sys.stderr)
+        return 2
     os.makedirs(args.output_dir, exist_ok=True)
     os.environ.setdefault("MPLCONFIGDIR", str(Path(args.output_dir).resolve() / ".mpl"))
 
@@ -128,7 +146,8 @@ def main() -> int:
     deps = build_deps(cfg, args.output_dir, seed=args.random_seed, max_revisions=args.max_revisions,
                       max_repairs=args.max_repairs, max_rebuilds=args.max_rebuilds)
     cc = cfg.construction
-    print(f"[paper2structure] paper={inputs.pdf or inputs.paper_graph} out={args.output_dir} "
+    print(f"[paper2structure] paper={inputs.pdf or inputs.paper_graph} "
+          f"characterization={inputs.characterization or 'run Agent 2'} out={args.output_dir} "
           f"model={cfg.campaign.model or 'default'} seed={args.random_seed} "
           f"techniques={cfg.characterization.techniques or 'all found'} "
           f"budget(revisions={args.max_revisions}, rebuilds={args.max_rebuilds}, repairs={args.max_repairs}, "
@@ -156,9 +175,14 @@ def main() -> int:
 
     print("\n================ PAPER2STRUCTURE SUMMARY ================", flush=True)
     print(f"status: {result.status}   revisions: {result.revisions}", flush=True)
-    for sid, files in result.structure_files.items():
+    shown = [*result.current_structure_ids,
+             *(i for i in result.accepted_structure_ids if i not in result.current_structure_ids)]
+    for sid in shown:
         mark = "*" if sid in result.accepted_structure_ids else " "
-        print(f" {mark} {sid}: {', '.join(files.values())}", flush=True)
+        print(f" {mark} {sid}: {', '.join(result.structure_files[sid].values())}", flush=True)
+    superseded = [i for i in result.structure_files if i not in shown]
+    if superseded:
+        print(f"   superseded (in the report and structures/): {', '.join(superseded)}", flush=True)
     for e in result.errors:
         print(f"error: {e}", flush=True)
     print(f"\nreport: {os.path.join(result.run_dir, result.report)} (* = accepted)", flush=True)

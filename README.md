@@ -6,7 +6,7 @@ Every structure comes with the standalone Python script that generated it.
 
 **Current slice.**
 - **Implemented:** all five agents in one graph run: the summarizer (Agent 1) reads the PDF into a
-  knowledge graph of material systems and evidence; characterization (Agent 2) runs one agent per
+  summary of material systems and evidence (`PaperGraph`); characterization (Agent 2) runs one agent per
   technique on the figures and text; then the Planner (Agent 3), the Construction agent (Agent 4, a
   [pydantic-ai-harness](https://pydantic.dev/docs/ai/harness/) coding agent), deterministic
   structure validation and a minimal Scientific Revision agent (Agent 5).
@@ -37,11 +37,11 @@ stateDiagram-v2
 | node | agent | does |
 |---|---|---|
 | SummarizePaper | Agent 1, summarizer | reads the PDF into a `PaperGraph` (material systems `S1`, `S2`, ...; text and figure evidence `E001`, ... tagged by technique) saved under `paper/`, or loads `inputs.paper_graph`; runs once |
-| AnalyzeEvidence | Agent 2, characterization | one `CharacterizationAgent` per technique found that has a filled-in spec, concurrently; each reads its figure images and text records and returns observations, findings and structural constraints (`characterization/<TECH>.json`); or loads `inputs.characterization`. Re-entered on `revisit_evidence`: the reports are kept and the reviewer's feedback goes to the planner |
+| AnalyzeEvidence | Agent 2, characterization | one `CharacterizationAgent` per technique found that has a filled-in spec, concurrently; each reads its figure images and text records and returns observations, findings and structural constraints (`characterization/<TECH>.json`); or loads `inputs.characterization` (checked against the summary). The reports, restricted to the summary's systems, are saved once to `inputs/experimental_evidence.json`. Re-entered on `revisit_evidence`: the reports are kept and the reviewer's feedback goes to the planner |
 | PlanStructures | Agent 3, `LLMPlanner` | competing structural hypotheses as `StructurePlan`s: the material systems modeled (`system_ids`), a free-form model type and construction brief, named crystals (space group + Wyckoff positions + lattice with provenance, and the molecules of a hybrid or molecular crystal), optional surface/nanocrystal/adsorbate/solvent specs, the paper's claims as checks for the validation gate (below), measurable targets, evidence IDs (summarizer `E004` or technique-qualified observations `XRD:O3`; unknown IDs go back to the planner), assumptions |
-| ConstructStructures | Agent 4, `LLMConstructor` | one Coder run per plan, concurrently, each in its own sandboxed workspace and request budget, writes and runs its own Python; every reported structure is rebuilt by running its script alone from scratch and must pass the validation gate; a run that fails or reports the plan as not built records the reason |
-| ValidateStructures | deterministic | the same gate checks plus the export round trip; hard failures and plans not built go back to construction with the reasons and the last attempt's scripts |
-| ScientificRevision | Agent 5, `LLMReviser` | accept / stop / rebuild structures (the plan stands, the build is wrong: back to construction with its feedback and the previous scripts; the structures it does not list are kept) / revisit evidence (back through AnalyzeEvidence -> planning -> construction); sees every claim check's result and runs checks of its own (`check_claim` tool); can read the build scripts; writes the final report (`write_report` tool) before ending the run |
+| ConstructStructures | Agent 4, `LLMConstructor` | one Coder run per plan, concurrently, each in its own sandboxed workspace and request budget, writes and runs its own Python; every reported structure is rebuilt by running its script alone from scratch and must pass the validation gate; a run that fails or reports the plan as not built records the reason. Each plan's run gets only its own feedback; the structures it reports replace that plan's structures that failed validation, were sent back by the reviewer or are emitted again under the same name, and every other structure stays current |
+| ValidateStructures | deterministic | the same gate checks plus the export round trip; the plans of this round with hard failures or not built go back to construction, each with its own validation notes, the reviewer's pending rebuild request and the scripts of its structures (and of an attempt that built nothing, under `previous/last_attempt/`) |
+| ScientificRevision | Agent 5, `LLMReviser` | accept / stop / rebuild structures (the plan stands, the build is wrong: back to construction with its feedback and the previous scripts; the structures it does not list are kept) / revisit evidence (back through AnalyzeEvidence -> planning -> construction; the planner gets the feedback with how each earlier plan's structures fared, and the current structures that passed validation stay acceptable as earlier candidates); sees the claims with their IDs, every claim check's result, its own earlier decisions and the run's purpose, atom budget and user overrides; runs checks of its own (`check_claim` tool, kept in the state and the report); can read the build scripts; writes the final report (`write_report` tool) before ending the run |
 
 The graph is built from `BaseNode` classes whose `run` return annotations are the edges
 (`src/paper2structure/graph/`). Each run renders its own diagram to `workflow.mmd`. When an agent
@@ -59,7 +59,7 @@ a failed technique agent is only recorded as an error.
 | FindSystems | 1 | paper metadata and every distinct material system (each member of a doping series, phase or substrate is its own system) |
 | ExtractTextEvidence | 1 per system | synthesis, the structure the text states (space group, lattice parameters, site occupancy, phase purity) and one evidence item per technique: values, conditions, cited figures, a verbatim quote |
 | AnalyzeFigure | 1 per figure (vision) | catalogues each panel (technique, plot type, axes, systems shown) without reading values off it |
-| BuildGraph | none | merges series-wide text items returned once per system, numbers the evidence, builds the knowledge graph (paper -> system -> evidence -> technique / figure) and saves it |
+| BuildGraph | none | merges series-wide text items returned once per system, numbers the evidence and saves the `PaperGraph` (`paper_graph.json`, `summary.md`, `graph.dot`: paper -> system -> technique) |
 
 Technique names map onto one vocabulary (`config.TECHNIQUES`, canonical names with aliases, e.g.
 HRTEM and SAED -> TEM, Rietveld -> XRD), which also keys the characterization agents. Answers
@@ -78,6 +78,14 @@ visual feature or stated in the text), findings, structural constraints (value, 
 observations, confidence) and caveats. Agents 3-5 see the reports as `ExperimentalEvidence`, with
 the skipped techniques and why (a stub spec, or a technique outside the vocabulary).
 
+The structural constraints are numbered `C1`, `C2`, ... in the order the agent wrote them; the run
+restricts the reports to the summary's systems (keeping every observation a kept finding or
+constraint cites) without renumbering, so the claim IDs (`XRD:C3`) stay valid. Saved reports
+(`inputs.characterization`) cite the evidence IDs of the summary they were made from: reports
+whose observations cite more of another technique's evidence than their own come from another
+summary and end the run; citations of evidence or systems the summary lacks are logged as warnings
+(expected when the summary was narrowed to some systems, as the web tool does).
+
 ## Package layout
 
 ```
@@ -88,9 +96,9 @@ config/                  config.yml (every field documented) and the fixture cam
 src/paper2structure/
   config.py              campaign YAML -> Pydantic config; get_model(); the technique vocabulary
   agents/                one package per agent
-    structured_agent.py  shared base of Agents 3-5 (model, retries, usage, preflight)
+    structured_agent.py  shared base of Agents 2-5 (model, retries, usage, preflight)
     summarizer/          Agent 1: graph.py (the steps), pdf_reader.py (text and figures), agents.py
-                         (the three LLM agents), knowledge_graph.py (graph, saved files, load_graph),
+                         (the three LLM agents), knowledge_graph.py (PaperGraph, saved files, load_graph),
                          schemas.py (PaperGraph), cli.py (standalone run), dry_run.py
     characterization/    Agent 2: agent.py (CharacterizationAgent), spec.py (TechniqueSpec -> prompt),
                          techniques/ (one spec per technique), schemas.py (CharacterizationReport,
@@ -228,7 +236,7 @@ page need no `source .env`; an exported `OPENAI_API_KEY` works as well and takes
 ## Run
 
 ```bash
-python main.py --pdf pdf/<paper>.pdf --random_seed 0                      # -> runs/<paper>/
+python main.py --pdf pdf/<paper>.pdf --random_seed 0                      # -> runs/<paper>_<date-time>/
 python main.py --pdf pdf/<paper>.pdf --random_seed 0 --output_dir runs/x --techniques XRD TEM --gpu 0
 python main.py --paper_graph runs/x/paper/paper_graph.json --characterization runs/x/characterization \
     --output_dir runs/x_replan --random_seed 0                            # reuse Agents 1-2 of run x
@@ -240,11 +248,11 @@ flags set the run-level values and override the YAML where they overlap.
 
 | flag | meaning |
 |---|---|
-| `--pdf` | the paper (sets `inputs.pdf`) |
+| `--pdf` | the paper (sets `inputs.pdf`; drops the config's `inputs.characterization`, whose reports belong to another summary) |
 | `--paper_graph` | `paper_graph.json` of an earlier run: skips the summarizer (sets `inputs.paper_graph`) |
-| `--characterization` | folder of saved characterization reports, e.g. an earlier run's `characterization/`: skips Agent 2 |
+| `--characterization` | folder of saved characterization reports, e.g. an earlier run's `characterization/`: skips Agent 2; needs the summary they were made from (`--paper_graph`), not `--pdf` |
 | `--config` | campaign YAML (default `config/config.yml`; see below) |
-| `--output_dir` | run directory (default `runs/<pdf name>`; with `--paper_graph runs/x/paper/paper_graph.json`, `runs/x_replan`) |
+| `--output_dir` | a new or empty run directory (default `runs/<pdf name>_<date-time>`; with `--paper_graph runs/x/paper/paper_graph.json`, `runs/x_replan_<date-time>`) |
 | `--random_seed` | the `SEED` the build scripts use (conformers, placement, packing) (required) |
 | `--model` | every agent's model, e.g. `openai:gpt-5.6-luna` (sets `campaign.model`) |
 | `--techniques` | characterize only these, e.g. `XRD TEM` (aliases work); default: every technique found |
@@ -295,7 +303,7 @@ field). Run-level settings are CLI flags; both are snapshotted to `<output_dir>/
 
 | section | holds |
 |---|---|
-| `campaign` | every agent's model as a pydantic-ai name (`openai:gpt-5.6-luna`, the OpenAI Responses API; null = `$P2S_MODEL` or that default; `dry-run` returns canned answers and works for Agents 1-2 only), reasoning effort of Agents 3-5 (null = provider default), output-validation retries, whether agents see rendered structures |
+| `campaign` | every agent's model as a pydantic-ai name (`openai:gpt-5.6-luna`, the OpenAI Responses API; null = `$P2S_MODEL` or that default; `dry-run` returns canned answers and works for Agents 1-2 only), reasoning effort of Agents 3-5 (null = provider default), output-validation retries, whether agents see rendered structures, what the structures are for (`simulation`: `MLIP` or `DFT`, in the prompts of Agents 3-5) |
 | `inputs` | the paper: `pdf`, or `paper_graph` (an earlier run's `paper/paper_graph.json`, skips Agent 1); `characterization` (a folder of saved reports, skips Agent 2); paths relative to the working directory or the config's folder |
 | `summarizer` | `analyze_figures` (one vision call per figure), `max_figures` (default 30) |
 | `characterization` | `techniques` (null = every technique found), `include_stubs`, `reasoning_effort` (default high), `output_retries` |
@@ -304,7 +312,7 @@ field). Run-level settings are CLI flags; both are snapshotted to `<output_dir>/
 | `validation` | overlap / close-contact / bond / adsorbate-binding scale factors, minimum vacuum, bond-valence and like-charge thresholds |
 | `revision` | whether the reviewer may read the build scripts |
 | `export` | output formats, default `[poscar]` |
-| `overrides` | user-pinned choices the planner must respect (model type, Miller index, supercell, lattice) |
+| `overrides` | user-pinned choices the planner must respect (model type, Miller index, supercell, lattice); the constructor and the reviewer are told the pinned values too |
 
 `construction.gpu`: CUDA cannot start under the harness's network-off seccomp socket filter, so a
 GPU sandbox keeps the network off with an empty network namespace instead and binds `/dev/nvidia*`.
@@ -314,19 +322,20 @@ Without it, sandboxed scripts compute neighbor lists on the CPU.
 
 | path | content |
 |---|---|
-| `paper/` | Agent 1, for PDF runs: `paper_graph.json` (systems, evidence and the knowledge graph), `summary.md`, `graph.dot`, `figures/p<page>_f<n>.png`, `evidence_by_technique/<TECH>.json`, `errors.txt` if a step failed |
+| `paper/` | Agent 1, for PDF runs: `paper_graph.json` (metadata, systems, evidence), `summary.md`, `graph.dot`, `figures/p<page>_f<n>.png`, `errors.txt` if a step failed |
 | `characterization/<TECH>.json` | Agent 2: one `CharacterizationReport` per technique analyzed |
-| `inputs/experimental_evidence_v<n>.json` | the reports as Agents 3-5 saw them, with the skipped techniques and errors |
+| `inputs/paper_graph.json` | a copy of `inputs.paper_graph` when it was loaded from outside the run directory |
+| `inputs/experimental_evidence.json` | the reports as Agents 3-5 saw them (restricted to the summary's systems), with the skipped techniques and errors |
 | `structures/<id>.py` | **the standalone script that generated `<id>`**, verified by a from-scratch re-run; `python <id>.py` rebuilds it into `structures/` of the current directory |
 | `structures/<id>.vasp` | POSCAR (species grouped, fixed atoms as selective dynamics); `.cif`/`.extxyz` if configured |
 | `structures/<id>.json`, `.png` | per-atom roles (tags 0/1 substrate, 2 adsorbate, 3 solvent), molecule ids and records; top/side views |
 | `structures/README.md` | which script rebuilds which structure |
 | `final_report.md` | the reviewer's summary, assessment and next steps around the generated record: paper and material systems, structural constraints per technique, hypotheses, structures with how they were built and the measured targets, validation, revision decisions, how to reproduce, limitations |
 | `construction/r<rev>_a<attempt>/<plan>/workspace/` | the agent's workspace: `task/` (plans, context, feedback), every script it wrote, `structures/` (emitted), `.agents/skills/`, `README.md` |
-| `construction/r<rev>_a<attempt>/replay/<script>/` | the from-scratch re-run of each final script |
-| `plans.json`, `artifacts.json`, `validation_reports.json`, `revision_history.json`, `construction_reports.json` | full history; nothing is overwritten across revisions |
-| `state/NN_<node>.json` | graph-state snapshot after every node |
-| `result.json`, `token_log.json`, `config.json`, `workflow.mmd` | run summary, LLM usage of Agents 3-5 (Agent 1 logs its token count in its last progress line; Agent 2's usage is not recorded), config snapshot, graph (the log goes to the console; redirect it to keep it) |
+| `construction/r<rev>_a<attempt>/<plan>/replay/<script>/` | the from-scratch re-run of each final script |
+| `plans.json`, `artifacts.json`, `validation_reports.json`, `revision_history.json`, `construction_reports.json` | full history (every plan set, every structure ever built, every decision, every construction report); nothing is overwritten across revisions |
+| `state/NN_<node>.json` | graph-state snapshot after every node; the summary and evidence, which have their own files, are only in the last one |
+| `result.json`, `token_log.json`, `config.json`, `workflow.mmd` | run summary (status, current and accepted structure IDs, files), LLM usage per agent (summarizer, characterization, planner, constructor, reviser), config snapshot, graph (the log goes to the console; redirect it to keep it) |
 
 ## Helper library (`paper2structure.tools`)
 

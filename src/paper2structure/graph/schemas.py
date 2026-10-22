@@ -13,6 +13,8 @@ class ReconstructionResult(BaseModel):
     status: RunStatus
     run_dir: str
     accepted_structure_ids: list[str] = Field(default_factory=list)
+    current_structure_ids: list[str] = Field(default_factory=list)  # the latest plan set's structures; the other
+    # ones in structure_files were rebuilt, repaired or belong to earlier plan sets
     structure_files: dict[str, dict[str, str]] = Field(default_factory=dict)
     report: str = ""
     revisions: int = 0

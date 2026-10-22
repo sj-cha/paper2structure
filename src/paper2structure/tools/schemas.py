@@ -130,7 +130,6 @@ class ValidationReport(BaseModel):
     passed: bool
     checks: list[CheckResult]
     metrics: dict[str, float | int | str] = Field(default_factory=dict)
-    observables_evaluated: list[str] = Field(default_factory=list)
 
     def failures(self) -> list[CheckResult]:
         return [c for c in self.checks if c.status == "fail"]

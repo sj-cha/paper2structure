@@ -3,17 +3,23 @@ import mimetypes
 from pathlib import Path
 from typing import Optional
 
-from pydantic_ai import Agent, BinaryContent, UsageLimits
+from pydantic_ai import BinaryContent, UsageLimits
 from pydantic_ai.models import Model
 
-from ...config import REASONING_EFFORT, get_model
+from ...config import REASONING_EFFORT
+from ..structured_agent import StructuredAgent
 from ..summarizer.schemas import Evidence, MaterialSystem
 from . import dry_run  # noqa: F401  (registers the canned answer for the dry-run model)
 from .schemas import CharacterizationReport
 from .spec import GENERIC, TechniqueSpec, generate_system_prompt
 
 
-class CharacterizationAgent:
+class CharacterizationAgent(StructuredAgent):
+    """Agent 2 for one technique: reads the figures and text records tagged with it. Transient API
+    errors are retried and token usage is counted (`usage`) like the other agents."""
+    _output_type = CharacterizationReport
+    _preflight_probe = "Health check: return a report for technique 'health check' with no observations."
+
     def __init__(
         self,
         spec: TechniqueSpec = GENERIC,
@@ -21,33 +27,9 @@ class CharacterizationAgent:
         reasoning_effort: str = REASONING_EFFORT,
         output_retries: int = 1,
     ):
+        super().__init__(model, reasoning_effort, generate_system_prompt(spec), max_retry=0,
+                         output_retries=output_retries)
         self._spec = spec
-        self._model = model
-        self._reasoning_effort = reasoning_effort
-        self._output_retries = output_retries
-        self._agent = None
-
-    @property
-    def spec(self) -> TechniqueSpec:
-        return self._spec
-
-    def _ensure(self):
-        if self._agent is not None:
-            return
-
-        model = self._model if isinstance(self._model, Model) else get_model(self._model)
-        self._agent = Agent(
-            model=model,
-            output_type=CharacterizationReport,
-            system_prompt=self._system_prompt(),
-            retries={"output": self._output_retries, "tools": 0},
-            model_settings={
-                "openai_reasoning_effort": self._reasoning_effort,
-            },
-        )
-
-    def _system_prompt(self) -> str:
-        return generate_system_prompt(self._spec)
 
     def select(self, evidence: list[Evidence]) -> list[Evidence]:
         """Keep only evidence (text statements and figure panels) for this technique."""
@@ -116,12 +98,10 @@ class CharacterizationAgent:
                 caveats=[f"No figures or text tagged as {self._spec.name}; no analysis performed."],
             )
         else:
-            self._ensure()
-            result = await self._agent.run(
+            report = await self.arun(
                 self._user_prompt(evidence, list(systems or []), Path(base_dir) if base_dir else None),
-                usage_limits=UsageLimits(request_limit=1 + self._output_retries),
+                usage_limits=UsageLimits(request_limit=1 + self.output_retries),
             )
-            report = result.output
             report.technique = self._spec.name
 
         if filename is not None:

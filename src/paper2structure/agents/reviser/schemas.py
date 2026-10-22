@@ -16,7 +16,8 @@ class StructureVerdict(BaseModel):
 
 class RevisionDecision(BaseModel):
     """Agent 5 output. rebuild_structures sends structures back to Agent 4 (the plan stands);
-    revisit_evidence routes back through Agent 2 -> Agent 3 -> Agent 4."""
+    revisit_evidence sends the feedback to Agent 3 (the characterization reports are kept), then
+    Agent 4 builds the new plans."""
     model_config = ConfigDict(extra="forbid")
     action: RevisionAction
     reasoning: str
@@ -35,3 +36,14 @@ class ReportNarrative(BaseModel):
     summary: str
     assessment: str
     next_steps: list[str] = Field(default_factory=list)
+
+
+class ReviewCheck(BaseModel):
+    """A claim check the reviewer ran itself (check_claim) and its result."""
+    review: int = Field(description="index of the review (revision_history) it was run in")
+    structure_id: str
+    check_id: str
+    kind: str
+    claim: str
+    status: Literal["pass", "warn", "fail", "skip"]
+    detail: str = ""

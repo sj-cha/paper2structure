@@ -10,7 +10,8 @@ from pydantic_ai import BinaryContent, ModelRetry, RunContext
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace
 from pydantic_ai_harness import FileSystem
 
-from paper2structure.agents.reviser.schemas import ReportNarrative, RevisionDecision
+from paper2structure.agents.planner.claims import claims_about, constraint_value, structural_claims
+from paper2structure.agents.reviser.schemas import ReportNarrative, ReviewCheck, RevisionDecision
 from paper2structure.agents.structured_agent import StructuredAgent
 from paper2structure.tools.schemas import ClaimCheck
 
@@ -30,7 +31,13 @@ class RevisionDeps:
 
     @property
     def structure_ids(self) -> set[str]:
+        """The current structures: the ones a decision may rebuild."""
         return set(self.state.current_ids)
+
+    @property
+    def candidate_ids(self) -> set[str]:
+        """Earlier plan sets' structures that passed validation: they may be accepted, not rebuilt."""
+        return set(self.state.candidate_ids) - self.structure_ids
 
 
 class LLMReviser(StructuredAgent):
@@ -41,8 +48,12 @@ class LLMReviser(StructuredAgent):
     _preflight_probe = ("Health check: call write_report with the summary 'health check', the assessment 'health "
                         "check' and no next steps, then return action 'stop_inconclusive' with reasoning 'health check'.")
 
-    def __init__(self, model, effort: str | None, max_retry: int = 3, read_scripts: bool = True):
-        super().__init__(model, effort, reviser_system_prompt(read_scripts), max_retry=max_retry)
+    def __init__(self, model, effort: str | None, max_retry: int = 3, read_scripts: bool = True,
+                 constraints: str = ""):
+        """`constraints`: what the run asks of the structures (purpose, size budget, user pins),
+        appended to the system prompt."""
+        super().__init__(model, effort, reviser_system_prompt(read_scripts), system_context=constraints,
+                         max_retry=max_retry)
         self.read_scripts = read_scripts
 
     def _capabilities(self) -> list:
@@ -97,22 +108,29 @@ class LLMReviser(StructuredAgent):
             from paper2structure.tools.evidence_checks import run_claim_checks
 
             deps = ctx.deps
-            if structure_id not in deps.structure_ids:
-                raise ModelRetry(f"unknown structure {structure_id!r} (valid: {sorted(deps.structure_ids)})")
+            known = deps.structure_ids | deps.candidate_ids
+            if structure_id not in known:
+                raise ModelRetry(f"unknown structure {structure_id!r} (valid: {sorted(known)})")
             a = deps.state.artifact(structure_id)
             atoms = read(deps.store.root / a.source)
             result = run_claim_checks(atoms, [check.model_copy(update={"system_ids": []})])[0]
+            deps.state.review_checks.append(ReviewCheck(
+                review=len(deps.state.revision_history), structure_id=structure_id, check_id=check.id,
+                kind=check.kind, claim=check.claim, status=result.status, detail=result.detail))
             return f"{result.status}: {result.detail}"
 
         @agent.output_validator
         def _validate(ctx: RunContext[RevisionDeps], output: RevisionDecision) -> RevisionDecision:
             deps = ctx.deps
             problems = []
-            known = deps.structure_ids
+            known, candidates = deps.structure_ids, deps.candidate_ids
             unknown = (set(output.accepted_structure_ids) | set(output.rebuild_structure_ids)
-                       | {v.structure_id for v in output.verdicts}) - known
+                       | {v.structure_id for v in output.verdicts}) - known - candidates
             if unknown:
-                problems.append(f"unknown structure IDs {sorted(unknown)} (valid: {sorted(known)})")
+                problems.append(f"unknown structure IDs {sorted(unknown)} (valid: {sorted(known | candidates)})")
+            if set(output.rebuild_structure_ids) & candidates:
+                problems.append(f"{sorted(set(output.rebuild_structure_ids) & candidates)} are earlier candidates: "
+                                "their plans were replaced, so they can be accepted but not rebuilt")
             if output.action == "revisit_evidence" and deps.revisions_left <= 0:
                 problems.append("no revision budget is left: choose accept_candidates or stop_inconclusive")
             if output.action == "revisit_evidence" and not output.feedback.strip():
@@ -127,7 +145,7 @@ class LLMReviser(StructuredAgent):
                                     "the rebuilt one must show")
             if output.action == "accept_candidates" and not output.accepted_structure_ids:
                 problems.append("accept_candidates needs the accepted structure IDs")
-            if (not known and deps.state.failed_plans and deps.revisions_left > 0
+            if (not known and not candidates and deps.state.failed_plans and deps.revisions_left > 0
                     and output.action != "revisit_evidence"):
                 problems.append("no structure could be built but a revision is left: choose revisit_evidence and "
                                 "explain the construction failures in feedback so the planner can fix the plans")
@@ -154,27 +172,61 @@ class LLMReviser(StructuredAgent):
 
 
 def reviser_prompt(state: ReconstructionState, revisions_left: int, rebuilds_left: int = 0) -> str:
+    plans = state.plans.plans if state.plans else []
     parts = ["## Paper summary (material systems, text and figure evidence)",
-             state.summary.model_dump_json(indent=1, exclude={"nodes", "edges"}),
-             "## Characterization reports (per technique)", state.evidence.model_dump_json(indent=1),
-             "## Plans", state.plans.model_dump_json(indent=1), "## Constructed structures"]
+             state.summary.model_dump_json(exclude_none=True),
+             "## Characterization reports (per technique)", state.evidence.model_dump_json(exclude_none=True),
+             "## Plans", state.plans.model_dump_json(exclude_none=True)]
+    claims = claims_about(structural_claims(state.summary, state.evidence), {i for p in plans for i in p.system_ids})
+    if claims:
+        tested = {i: p.plan_id for p in plans for c in p.checks for i in c.claim_ids}
+        unchecked = {i: f"{p.plan_id}: {u.reason}" for p in plans for u in p.unchecked for i in u.claim_ids}
+        parts += ["## Structural claims about the plans' systems (the claim IDs the plans' checks cite)", "\n".join(
+            f"- {c.claim_id} [{', '.join(c.system_ids) or 'all systems'}] {c.text}"
+            + ("" if c.claim_id in tested else f" -- UNCHECKED ({unchecked[c.claim_id]})" if c.claim_id in unchecked
+               else " -- no plan tests it") for c in claims)]
+    if state.revision_history:
+        lines = ["## Your earlier reviews in this run (oldest first)"]
+        for k, d in enumerate(state.revision_history):
+            lines.append(f"- Review {k}: {d.action}: {d.reasoning}")
+            lines += [f"  - feedback: {d.feedback}"] if d.feedback else []
+            lines += [f"  - {v.structure_id}: {'resembles' if v.resembles_paper else 'does not resemble'} the paper"
+                      + (f" ({'; '.join(v.issues)})" if v.issues else "") for v in d.verdicts]
+            lines += [f"  - check_claim on {c.structure_id}, {c.check_id} {c.kind} ({c.claim}): {c.status}: {c.detail}"
+                      for c in state.review_checks if c.review == k]
+            lines += [f"  - unresolved: {'; '.join(d.unresolved)}"] if d.unresolved else []
+        parts.append("\n".join(lines))
+    parts.append("## Constructed structures")
     current = [state.artifact(i) for i in state.current_ids]
     if not current:
         parts.append("No structure was built.")
+    runs_shown = set()
     for a in current:
         rep = state.validation_reports.get(a.structure_id)
+        claim_checks = [c for c in rep.checks if c.name.startswith("claim ")] if rep else []
+        run_summary = a.construction_summary if a.construction_summary not in runs_shown else "(as above)"
+        runs_shown.add(a.construction_summary)
         parts.append("\n".join([
-            f"### {a.structure_id} (plan {a.plan_id})",
+            f"### {a.structure_id} (plan {a.plan_id}" + (f", models {', '.join(a.system_ids)})" if a.system_ids else ")"),
             a.description,
             f"built by {Path(a.script).name}: {a.method or 'no method reported'}",
             "measured targets: " + ("; ".join(f"{t.property} {t.measured} ({'met' if t.satisfied else 'NOT met'})"
                                               for t in a.target_checks) or "none reported"),
             f"deviations from plan: {'; '.join(a.deviations) or 'none reported'}",
+            *([f"constructor's notes: {a.notes}"] if a.notes else []),
+            *([f"construction run summary: {run_summary}"] if a.construction_summary else []),
             f"deterministic validation: {rep.summary(include_skipped=True) if rep else 'not run'}",
-            *(["paper claims tested (the plan's checks):"] + [f"- {c.name.removeprefix('claim ')} {c.status}: {c.detail}"
-                                                              for c in rep.checks if c.name.startswith("claim ")]
-              if rep and any(c.name.startswith("claim ") for c in rep.checks) else []),
+            *(["paper claims tested (the plan's checks):"]
+              + [f"- {c.name.removeprefix('claim ')} {c.status}: {c.detail}" for c in claim_checks] if claim_checks else []),
         ]))
+    earlier = [state.artifact(i) for i in state.candidate_ids if i not in state.current_ids]
+    if earlier:
+        parts += ["## Earlier candidates (built from earlier plan sets and passed validation: they can be accepted, "
+                  "not rebuilt)", "\n".join(
+                      f"- {a.structure_id} (plan {a.plan_id} of plan set {a.revision}"
+                      + (f", models {', '.join(a.system_ids)}" if a.system_ids else "") + f"): "
+                      + (a.description.splitlines()[0] if a.description else f"{a.formula}, {a.n_atoms} atoms")
+                      + f"; validation {state.validation_reports[a.structure_id].summary()}" for a in earlier)]
     if state.failed_plans:
         parts += ["## Plans that could not be built"] + [f"- {k}: {v}" for k, v in state.failed_plans.items()]
     parts.append(f"Rebuilds left: {rebuilds_left}" + ("" if rebuilds_left > 0 else " (rebuild_structures is not available)"))
@@ -208,13 +260,18 @@ Rules
   rests on under `unresolved`.
 - Give a verdict for every structure. Check the measured targets against the plan and the
   evidence. The plans' checks test the paper's claims on every structure (listed under each
-  structure); a failing claim means the structure contradicts the paper. check_claim runs any
-  such check yourself: use it for claims a plan listed as unchecked that a check can test, and
-  for quantitative statements in the evidence the plans did not turn into checks.""" + scripts + """
+  structure); a failing claim means the structure contradicts the paper. The claims have their
+  own IDs (`S1:lattice`, `XRD:C2`); a plan's checks are numbered within the plan (C1, C2, ...)
+  and name the claim IDs they test. check_claim runs any such check yourself: use it for claims
+  marked UNCHECKED or untested that a check can test, and for quantitative statements in the
+  evidence the plans did not turn into checks.
+- Your earlier reviews in this run (decisions, verdicts, checks) are listed: build on them, and
+  say what changed when you depart from them.""" + scripts + """
 
 Actions
 - accept_candidates: one or more structures pass validation and represent the paper's system;
   list them in accepted_structure_ids. Keep several when the evidence cannot tell them apart.
+  Earlier candidates (structures of plan sets a revisit replaced) may be accepted too.
 - rebuild_structures: a plan is right but a built structure is not: wrong bond lengths or
   coordination, wrong composition or charge, missing or misplaced components, a geometry that
   does not realize the plan's description. List the structures in rebuild_structure_ids and write
@@ -224,9 +281,11 @@ Actions
   revisit_evidence whenever the hypothesis stands.
 - revisit_evidence: an important feature of the paper is missing or wrong in the structures, or
   plans could not be built, and re-planning from the same evidence could fix it. The planner gets
-  your feedback with the paper summary and the characterization reports (which are kept, not
-  re-analyzed), then planning and construction re-run. Write concrete feedback naming what is
-  wrong and what the paper indicates; for plans that could not be built, restate why.
+  your feedback with the paper summary, the characterization reports (which are kept, not
+  re-analyzed) and how each earlier plan's structures fared (validation, failing claims, your
+  verdicts), then planning and construction re-run; the current structures that pass validation
+  stay acceptable as earlier candidates. Write concrete feedback naming what is wrong and what
+  the paper indicates; for plans that could not be built, restate why.
 - stop_inconclusive: the evidence cannot support a meaningful model, the structures cannot be
   repaired with the information available, or no revisions are left.
 
@@ -241,6 +300,7 @@ def save_report(state: ReconstructionState, store: ArtifactStore) -> Path:
     the deterministic record: paper, evidence, plans, structures with validation and scripts,
     revision decisions, reproduction and limitations."""
     s, ev, narrative = state.summary, state.evidence, state.report
+    claims = {c.claim_id: c for c in structural_claims(s, ev)} if s is not None and ev is not None else {}
     last = state.revision_history[-1] if state.revision_history else None
     accepted = set(last.accepted_structure_ids) if last and last.action == "accept_candidates" else set()
     status = "under review" if state.status == "running" else state.status
@@ -260,11 +320,11 @@ def save_report(state: ReconstructionState, store: ArtifactStore) -> Path:
         lines.append("")
     if ev is not None:
         lines += ["## 3. Characterization (structural constraints per technique)",
-                  "| technique | property | systems | value | confidence |", "|---|---|---|---|---|"]
+                  "| claim | technique | property | systems | value | confidence |", "|---|---|---|---|---|---|"]
         for tech, r in sorted(ev.reports.items()):
             for c in r.structural_constraints:
-                value = c.value if not c.unit or c.value.rstrip().endswith(c.unit) else f"{c.value} {c.unit}"
-                lines.append(f"| {tech} | {c.property} | {', '.join(c.system_ids)} | {value} | {c.confidence} |")
+                lines.append(f"| {tech}:{c.constraint_id} | {tech} | {c.property} | {', '.join(c.system_ids)} | "
+                             f"{constraint_value(c)} | {c.confidence} |")
         if ev.skipped:
             lines += ["", "Techniques not analyzed: " + "; ".join(f"{k} ({v})" for k, v in sorted(ev.skipped.items()))]
         lines.append("")
@@ -276,17 +336,21 @@ def save_report(state: ReconstructionState, store: ArtifactStore) -> Path:
                       f"  - model: {p.description}",
                       f"  - targets: {'; '.join(f'{t.property} {t.value}' for t in p.targets) or 'none'}",
                       f"  - claim checks: {'; '.join(f'{c.id} {c.kind}: {c.claim}' for c in p.checks) or 'none'}",
-                      f"  - unchecked claims: {'; '.join(f'{', '.join(u.claim_ids)} ({u.reason})' for u in p.unchecked) or 'none'}",
+                      f"  - unchecked claims: {'; '.join(_unchecked(u, claims) for u in p.unchecked) or 'none'}",
                       f"  - evidence: {', '.join(p.evidence_ids) or 'none'}",
                       f"  - assumptions: {'; '.join(p.assumptions) or 'none stated'}"]
     lines += ["", "## 5. Constructed structures and validation",
-              "| structure | plan | formula | atoms | validation | accepted | files | script |",
-              "|---|---|---|---|---|---|---|---|"]
+              "Current: built for the latest plan set and not rebuilt since; candidate: an earlier plan set's structure "
+              "that passed validation. The others were superseded.", "",
+              "| structure | plan | models | formula | atoms | validation | current | accepted | files | script |",
+              "|---|---|---|---|---|---|---|---|---|---|"]
     for a in state.artifacts:
         rep = state.validation_reports.get(a.structure_id)
         files = ", ".join(f"[{k}]({v})" for k, v in a.files.items())
-        lines.append(f"| {a.structure_id} | {a.plan_id} | {a.formula} | {a.n_atoms} | "
-                     f"{rep.summary(include_skipped=True) if rep else 'not validated'} | "
+        current = ("yes" if a.structure_id in state.current_ids
+                   else "candidate" if a.structure_id in state.candidate_ids else "")
+        lines.append(f"| {a.structure_id} | {a.plan_id} | {', '.join(a.system_ids)} | {a.formula} | {a.n_atoms} | "
+                     f"{rep.summary(include_skipped=True) if rep else 'not validated'} | {current} | "
                      f"{'yes' if a.structure_id in accepted else ''} | "
                      f"{files} | [{Path(a.script).name}]({a.script}) |")
     claim_rows = [(a.structure_id, c) for a in state.artifacts if (rep := state.validation_reports.get(a.structure_id))
@@ -300,6 +364,7 @@ def save_report(state: ReconstructionState, store: ArtifactStore) -> Path:
         lines += [f"- target {t.property}: {t.measured} ({'met' if t.satisfied else 'NOT met'}"
                   + (f"; {t.method}" if t.method else "") + ")" for t in a.target_checks]
         lines += [f"- deviation: {d}" for d in a.deviations]
+        lines += [f"- notes: {a.notes}"] if a.notes else []
     if state.failed_plans:
         lines += ["", "Plans that could not be built: " + "; ".join(f"{k}: {v}" for k, v in state.failed_plans.items())]
     lines += ["", "## 6. Revision decisions"]
@@ -312,6 +377,11 @@ def save_report(state: ReconstructionState, store: ArtifactStore) -> Path:
         for v in d.verdicts:
             lines.append(f"  - {v.structure_id}: {'resembles' if v.resembles_paper else 'does not resemble'} the paper"
                          + (f" ({'; '.join(v.issues)})" if v.issues else ""))
+    if state.review_checks:
+        lines += ["", "Claims the reviewer checked itself (check_claim):", "",
+                  "| review | structure | check | claim | result | detail |", "|---|---|---|---|---|---|"]
+        lines += [f"| {c.review} | {c.structure_id} | {c.check_id} {c.kind} | {c.claim} | {c.status} | {c.detail} |"
+                  for c in state.review_checks]
     if narrative:
         lines += ["", "## 7. Assessment", narrative.assessment]
     if last and last.unresolved:
@@ -335,6 +405,11 @@ def save_report(state: ReconstructionState, store: ArtifactStore) -> Path:
     path = store.path("final_report.md")
     path.write_text("\n".join(lines) + "\n")
     return path
+
+
+def _unchecked(u, claims: dict) -> str:
+    """An unchecked-claims entry with the claims' text."""
+    return "; ".join(f"{i} ({claims[i].text})" if i in claims else i for i in u.claim_ids) + f" - {u.reason}"
 
 
 def save_structures_readme(state: ReconstructionState, store: ArtifactStore) -> Path:

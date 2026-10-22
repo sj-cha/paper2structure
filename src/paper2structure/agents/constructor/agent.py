@@ -8,6 +8,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import shutil
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -30,7 +31,7 @@ from paper2structure.agents.constructor.workspace import make_workspace, replay
 from paper2structure.agents.planner.schemas import PlanSet, StructurePlan
 from paper2structure.agents.structured_agent import StructuredAgent
 from paper2structure.agents.summarizer.schemas import PaperGraph
-from paper2structure.config import Paper2StructureConfig
+from paper2structure.config import Paper2StructureConfig, simulation_brief
 from paper2structure.tools.geometry_checks import validate_structure
 from paper2structure.tools.render import render_png
 from paper2structure.tools.schemas import CheckResult, ValidationReport
@@ -315,6 +316,8 @@ class LLMConstructor(StructuredAgent):
         """Build `plan_ids` in a fresh workspace under `workdir`; returns the verified report and the
         deps holding the replayed structures, their scripts and their gate reports."""
         deps = ConstructionDeps(workdir=Path(workdir), plan_ids=list(plan_ids), plans=plans, cfg=self.cfg)
+        for leftover in (deps.workspace, deps.workdir / REPLAYS):  # a reused run directory: start clean
+            shutil.rmtree(leftover, ignore_errors=True)
         previous_scripts = previous_scripts or {}
         prepare_workspace(deps.workspace, plans, plan_ids, feedback, previous_scripts, summary, evidence)
         cc = self.cfg.construction
@@ -338,15 +341,15 @@ def prepare_workspace(workspace: Path, plans: PlanSet, plan_ids: list[str], feed
     task.mkdir(parents=True, exist_ok=True)
     (task / "plans.json").write_text(json.dumps([plans.get(p).model_dump(mode="json") for p in plan_ids], indent=1))
     if summary is not None:
-        (task / "paper_summary.json").write_text(summary.model_dump_json(indent=1, exclude={"nodes", "edges"}))
+        (task / "paper_summary.json").write_text(summary.model_dump_json(exclude_none=True))
     if evidence is not None:
-        (task / "evidence.json").write_text(evidence.model_dump_json(indent=1))
+        (task / "evidence.json").write_text(evidence.model_dump_json(exclude_none=True))
     if feedback:
         (task / "feedback.md").write_text(feedback + "\n")
-    if previous_scripts:
-        (workspace / "previous").mkdir(exist_ok=True)
-        for name, code in previous_scripts.items():
-            (workspace / "previous" / name).write_text(code)
+    for name, code in previous_scripts.items():  # name may hold a subfolder, e.g. last_attempt/build.py
+        path = workspace / "previous" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(code)
     skills.install(workspace)
     (workspace / "README.md").write_text(WORKSPACE_README)
 
@@ -381,10 +384,11 @@ def constructor_prompt(plans: PlanSet, plan_ids: list[str], seed: int, feedback:
     parts = ["## Plans to build (also in task/plans.json)", "\n\n".join(p.model_dump_json(indent=1) for p in chosen),
              f"Use SEED = {seed}."]
     if feedback:
-        parts += ["## Problems with the previous attempt (also in task/feedback.md)", feedback]
+        parts += ["## Feedback on the previous attempt (also in task/feedback.md)", feedback]
     if previous_scripts:
-        parts.append("The scripts of the previous attempt are in previous/: "
-                     + ", ".join(sorted(previous_scripts)) + ". Start from them and fix the problems above.")
+        parts.append("The scripts of the plans' current structures (named after the first structure each built) and "
+                     "of an attempt that built nothing (last_attempt/) are in previous/: "
+                     + ", ".join(sorted(previous_scripts)) + ". Start from them and address the feedback above.")
     parts.append("Build every plan above (or report why it cannot be built), then give the final report.")
     return "\n\n".join(parts)
 
@@ -395,10 +399,15 @@ def constructor_system_prompt(cfg: Paper2StructureConfig) -> str:
         charge = (", and zero net formal charge (substrate oxidation states plus the SMILES charges: balance "
                   "anionic adsorbates with excess surface cations, or the reverse)")
     views = " view_structure(name) shows rendered views." if cfg.campaign.use_images else ""
+    pins = cfg.overrides.pins()
+    technical = "search settings, rounding of thickness" + ("" if cfg.overrides.supercell else " or supercell")
+    pinned = (f"\n- User-pinned choices, already in the plans: {pins}. Never change them, not even as technical "
+              "parameters; apply them also when a plan describes the model only in its description; if a plan "
+              "cannot be built with them, report it as failed." if pins else "")
     return f"""\
 You are the Structure Construction agent of Paper2Structure. You turn construction plans into
-atomic structures for machine-learned interatomic potential (MLIP) simulations by writing and
-running Python in this workspace. Any Python with ASE, pymatgen, RDKit, numpy and scipy is
+atomic structures by writing and running Python in this workspace; {simulation_brief(cfg.campaign.simulation)}.
+Any Python with ASE, pymatgen, RDKit, numpy and scipy is
 available. paper2structure.tools is a helper library for the common steps (crystals from Wyckoff
 positions, molecules in crystal cavities, slab terminations, surface sites, adsorbate placement, particles, solvent, bookkeeping):
 use it where it fits and write your own code for everything else (core-shell particles,
@@ -435,11 +444,13 @@ How to work
   paper: change how it is built (e.g. Wyckoff coordinates that give the reported space group and
   bond angles), never the check.{views}
 - Measure every plan target on the built structure with code and report the values.
-- Change only technical parameters (search settings, rounding of thickness or supercell, a
-  truncated adsorbate) and report every deviation from the plan. If a plan cannot be built as
-  specified, report it as failed with the reason instead of building something else.
+- Change only technical parameters ({technical}, a truncated adsorbate) and report every
+  deviation from the plan. If a plan cannot be built as specified, report it as failed with the
+  reason instead of building something else.{pinned}
 - Limits: at most {cfg.planning.max_atoms} atoms per structure; at least {cfg.validation.min_vacuum} A of
   vacuum between periodic images of slabs and particles (unless solvent fills it).
+- Pass notes=... to emit() for what the reviewer must know about a structure (simplifications,
+  choices the plan left open); they are shown with the structure.
 
 Final report: for every structure that realizes a plan, its emit() name, plan_id, the script that
 builds it, how it was built (toolkit steps and your own code), the measured targets and the

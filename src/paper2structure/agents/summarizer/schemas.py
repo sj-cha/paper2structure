@@ -152,7 +152,6 @@ class Evidence(BaseModel):
     summary: str
     measurements: list[Measurement] = Field(default_factory=list)
     conditions: list[str] = Field(default_factory=list)
-    observations: list[str] = Field(default_factory=list)
     figure_refs: list[str] = Field(default_factory=list)
     quote: str | None = None
     context: list[str] = Field(default_factory=list, description="Body-text sentences that cite this figure, for figure evidence.")
@@ -173,24 +172,11 @@ class Evidence(BaseModel):
         return data
 
 
-class GraphNode(BaseModel):
-    id: str
-    type: Literal["paper", "system", "technique", "evidence", "figure"]
-    label: str
-    data: dict = Field(default_factory=dict)
-
-
-class GraphEdge(BaseModel):
-    source: str
-    target: str
-    relation: str
-
-
 class PaperGraph(BaseModel):
-    """Everything extracted from one paper. Saved as ``paper_graph.json``.
-
-    ``systems`` and ``evidence`` are the easy-to-use lists. ``nodes``/``edges`` hold the same
-    information as a knowledge graph (paper -> system -> evidence -> technique / figure).
+    """Everything extracted from one paper. Saved as ``paper_graph.json``. The knowledge graph
+    (paper -> system -> evidence -> technique / figure) is implicit: evidence names its systems,
+    technique and figure image. Files written by older versions also carry ``nodes``/``edges``,
+    which are ignored on loading.
     """
 
     source_pdf: str
@@ -198,8 +184,6 @@ class PaperGraph(BaseModel):
     metadata: PaperMetadata
     systems: list[MaterialSystem]
     evidence: list[Evidence]
-    nodes: list[GraphNode] = Field(default_factory=list)
-    edges: list[GraphEdge] = Field(default_factory=list)
 
     def evidence_for(self, technique: str | None = None, system_id: str | None = None, category: str | None = None) -> list[Evidence]:
         """Filter evidence, e.g. ``graph.evidence_for(technique="XRD")``. Matching is case-insensitive substring."""

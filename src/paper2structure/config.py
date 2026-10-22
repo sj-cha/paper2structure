@@ -160,6 +160,15 @@ class CampaignConfig(BaseModel):
     reasoning_effort: Optional[str] = None  # Agents 3-5; None keeps the provider default
     max_retry: int = 3  # output-validation retries per agent call
     use_images: bool = True  # show rendered structures to the Construction and Revision agents
+    simulation: Literal["MLIP", "DFT"] = "MLIP"  # what the structures are for; framed in the agents' prompts
+
+
+def simulation_brief(simulation: str) -> str:
+    """The sentence that tells Agents 3-5 what the structures are for."""
+    if simulation == "DFT":
+        return ("the models are starting structures for density functional theory (DFT) calculations: prefer "
+                "the smallest periodic cells that represent the features the paper reports")
+    return "the models are starting structures for machine-learned interatomic potential (MLIP) simulations"
 
 
 class InputsConfig(BaseModel):
@@ -270,6 +279,13 @@ class OverridesConfig(BaseModel):
                          + " (source user_override)")
         parts.extend(self.notes)
         return "; ".join(parts) if parts else "none"
+
+    def pins(self) -> str:
+        """The pinned values alone (model type, Miller index, supercell, lattice), without the
+        planner's notes: what the Construction and Revision agents must keep. Empty when none."""
+        return "; ".join(p for p in OverridesConfig(model_type=self.model_type, miller=self.miller,
+                                                    supercell=self.supercell, lattice=self.lattice).describe().split("; ")
+                         if p != "none")
 
 
 class Paper2StructureConfig(BaseModel):

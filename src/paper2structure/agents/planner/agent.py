@@ -8,11 +8,11 @@ from pymatgen.core import Composition
 from rdkit import Chem
 
 from paper2structure.agents.characterization.schemas import ExperimentalEvidence
-from paper2structure.agents.planner.claims import Claim, claims_text, structural_claims
+from paper2structure.agents.planner.claims import Claim, claims_about, claims_text, structural_claims
 from paper2structure.agents.planner.schemas import BulkSpec, PlanSet, StructurePlan
 from paper2structure.agents.structured_agent import StructuredAgent
 from paper2structure.agents.summarizer.schemas import PaperGraph
-from paper2structure.config import OverridesConfig
+from paper2structure.config import OverridesConfig, simulation_brief
 from paper2structure.tools._symmetry import resolve, space_group_number
 from paper2structure.tools.bulk_builder import build_bulk
 
@@ -168,8 +168,7 @@ def _check_claims(p: StructurePlan, deps: PlanningDeps) -> list[str]:
         if unknown:
             problems.append(f"{p.plan_id}: unchecked claims {sorted(unknown)} are not listed claims")
     covered = {i for c in p.checks for i in c.claim_ids} | {i for u in p.unchecked for i in u.claim_ids}
-    mine = [c for c in deps.claims.values() if not c.system_ids or set(c.system_ids) & set(p.system_ids)]
-    missing = [c for c in mine if c.claim_id not in covered]
+    missing = [c for c in claims_about(list(deps.claims.values()), p.system_ids) if c.claim_id not in covered]
     if missing:
         problems.append(f"{p.plan_id}: {len(missing)} claims about its systems are neither tested by a check "
                         "(claim_ids) nor listed in unchecked with a reason: "
@@ -234,6 +233,10 @@ def check_plan_set(plans: PlanSet, deps: PlanningDeps) -> list[str]:
                             "particle (orientation, thickness, vacuum, size) in the description")
         if ov.model_type and p.model_type.strip().lower() != ov.model_type.strip().lower():
             problems.append(f"{p.plan_id}: user override requires model_type {ov.model_type!r}")
+        slab_like = any(w in p.model_type.lower() for w in ("slab", "surface"))
+        if (ov.miller or ov.supercell) and slab_like and p.surface is None and p.crystals:
+            problems.append(f"{p.plan_id}: the user pinned the slab's Miller index or supercell: give the `surface` "
+                            "spec (cut from the first crystal) so the construction follows the pins")
         if p.surface is not None:
             if ov.miller and tuple(p.surface.miller) != tuple(ov.miller):
                 problems.append(f"{p.plan_id}: user override requires Miller index {tuple(ov.miller)}")
@@ -280,9 +283,9 @@ class LLMPlanner(StructuredAgent):
                         "bulk', one crystal (space group Fm-3m, Cu at (0, 0, 0), a = 3.615 A, source literature).")
 
     def __init__(self, model, effort: str | None, *, max_plans: int, max_atoms: int, min_vacuum: float,
-                 overrides: OverridesConfig, max_retry: int = 3):
+                 overrides: OverridesConfig, max_retry: int = 3, simulation: str = "MLIP"):
         super().__init__(model, effort,
-                         planner_system_prompt(max_plans, max_atoms, min_vacuum, overrides.describe()),
+                         planner_system_prompt(max_plans, max_atoms, min_vacuum, overrides.describe(), simulation),
                          max_retry=max_retry, output_retries=max_retry + 2)
         self.max_plans = max_plans
         self.max_atoms = max_atoms
@@ -321,29 +324,29 @@ def planner_prompt(summary: PaperGraph, evidence: ExperimentalEvidence, history:
                    feedback: str, claims: list[Claim] | None = None) -> str:
     claims = structural_claims(summary, evidence) if claims is None else claims
     parts = ["## Paper summary (Agent 1: metadata, material systems, text and figure evidence)",
-             summary.model_dump_json(indent=1, exclude={"nodes", "edges"}),
+             summary.model_dump_json(exclude_none=True),
              "## Characterization reports (Agent 2: observations, findings and structural constraints per technique)",
-             evidence.model_dump_json(indent=1)]
+             evidence.model_dump_json(exclude_none=True)]
     if claims:
         parts += ["## Structural claims (every plan tests each claim about its systems with a check, "
                   "or lists it in unchecked with the reason)", claims_text(claims)]
     if history:
-        parts += ["## Previous plan sets (oldest first)"] + [h.model_dump_json(indent=1) for h in history]
+        parts += ["## Previous plan sets (oldest first)"] + [h.model_dump_json(exclude_none=True) for h in history]
     if feedback:
-        parts += ["## Reviewer feedback on the structures built from the latest plans", feedback,
-                  "Revise the plans to address this feedback."]
+        parts += ["## Review of the structures built from the previous plans", feedback,
+                  "Revise the plans to address this review."]
     else:
         parts.append("Write the plan set.")
     return "\n\n".join(parts)
 
 
-def planner_system_prompt(max_plans: int, max_atoms: int, min_vacuum: float, overrides: str) -> str:
+def planner_system_prompt(max_plans: int, max_atoms: int, min_vacuum: float, overrides: str,
+                          simulation: str = "MLIP") -> str:
     return f"""\
 You are the Structural Planning agent of Paper2Structure. From the paper summary and the
 characterization reports you decide which atomic models best represent the system the paper
 studies, and you write one construction plan per model. A separate Construction agent builds each
-plan with pymatgen, ASE and RDKit; the models are starting structures for machine-learned
-interatomic potential (MLIP) simulations.
+plan with pymatgen, ASE and RDKit; {simulation_brief(simulation)}.
 
 Your inputs
 - The paper summary (Agent 1): metadata, the material systems studied (IDs S1, S2, ...; each with
@@ -455,5 +458,8 @@ Scientific rules
 
 User overrides (hard constraints): {overrides}
 
-On revision you receive your previous plans and the reviewer's feedback. Change what the feedback
-identifies; do not resubmit a plan that was judged not to resemble the paper."""
+On revision you receive your previous plans, how the structures built from each plan fared
+(validation, failing claim checks, the reviewer's verdicts) and the reviewer's feedback. Change
+what the review identifies; do not resubmit a plan that was judged not to resemble the paper. The
+user overrides stay in force on revision: where the feedback conflicts with them, keep the
+override and record the conflict as an assumption."""

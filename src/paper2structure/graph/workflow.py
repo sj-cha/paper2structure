@@ -9,7 +9,7 @@ from pydantic_graph import GraphBuilder, StepContext
 from paper2structure.agents.constructor import LLMConstructor
 from paper2structure.agents.planner import LLMPlanner
 from paper2structure.agents.reviser import LLMReviser
-from paper2structure.config import Paper2StructureConfig
+from paper2structure.config import Paper2StructureConfig, simulation_brief
 from paper2structure.graph.nodes import (AnalyzeEvidence, ConstructStructures, FinalizeResults, PlanStructures,
                                          ScientificRevision, SummarizePaper, ValidateStructures)
 from paper2structure.graph.schemas import ReconstructionResult
@@ -42,10 +42,16 @@ def build_deps(cfg: Paper2StructureConfig, output_dir: str | Path, seed: int, ma
     c = cfg.campaign
     planner = LLMPlanner(models.get("planner", c.model), c.reasoning_effort, max_plans=cfg.planning.max_plans,
                          max_atoms=cfg.planning.max_atoms, min_vacuum=cfg.validation.min_vacuum,
-                         overrides=cfg.overrides, max_retry=c.max_retry)
+                         overrides=cfg.overrides, max_retry=c.max_retry, simulation=c.simulation)
     constructor = LLMConstructor(models.get("constructor", c.model), c.reasoning_effort, cfg)
+    overrides = cfg.overrides.describe()
+    constraints = "\n".join([
+        "Run constraints", f"- Purpose: {simulation_brief(c.simulation)}.",
+        f"- Size budget: at most {cfg.planning.max_atoms} atoms per structure.",
+        *([f"- User overrides (imposed by the user, not evidence; the structures must keep them): {overrides}"]
+          if overrides != "none" else [])])
     reviser = LLMReviser(models.get("reviser", c.model), c.reasoning_effort, max_retry=c.max_retry,
-                         read_scripts=cfg.revision.read_scripts)
+                         read_scripts=cfg.revision.read_scripts, constraints=constraints)
     return WorkflowDeps(cfg=cfg, store=ArtifactStore(output_dir), planner=planner, constructor=constructor,
                         reviser=reviser, seed=int(seed), paper_model=models.get("paper"),
                         max_revisions=int(max_revisions), max_repairs=int(max_repairs),

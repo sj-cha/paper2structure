@@ -6,20 +6,22 @@ import logging
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 from ase.io import read
 from pydantic_ai.models import Model
+from pydantic_ai.usage import RunUsage
 from pydantic_graph import BaseNode, End, GraphRunContext
 
 from paper2structure.agents.characterization import CharacterizationAgent, ExperimentalEvidence, find_spec
 from paper2structure.agents.constructor.agent import WORKSPACE, ConstructionDeps
 from paper2structure.agents.constructor.schemas import ConstructionReport, StructureArtifact
 from paper2structure.agents.reviser import save_report, save_structures_readme
+from paper2structure.agents.structured_agent import add_usage
 from paper2structure.agents.summarizer import PaperGraph, load_graph, summarize_paper
 from paper2structure.config import CharacterizationConfig, canonical_technique, get_model
 from paper2structure.graph.schemas import ReconstructionResult
 from paper2structure.graph.state import ReconstructionState, WorkflowDeps
-from paper2structure.tools._geometry import get_molecules
 from paper2structure.tools.geometry_checks import check_roundtrip
 from paper2structure.tools.render import render_png
 from paper2structure.tools.structure_export import describe, export_structure
@@ -33,8 +35,8 @@ def _enter(ctx: Ctx, node: str) -> None:
     log.info("[%s] revision %d, attempt %d", node, ctx.state.revision, ctx.state.attempt)
 
 
-def _checkpoint(ctx: Ctx, node: str) -> None:
-    ctx.deps.store.snapshot(ctx.state, node)
+def _checkpoint(ctx: Ctx, node: str, full: bool = False) -> None:
+    ctx.deps.store.snapshot(ctx.state, node, full=full)
 
 
 def _paper_model(ctx: Ctx) -> Model | str:
@@ -45,21 +47,31 @@ def _paper_model(ctx: Ctx) -> Model | str:
 @dataclass
 class SummarizePaper(BaseNode[ReconstructionState, WorkflowDeps, ReconstructionResult]):
     """Agent 1: reads the PDF (text, figures, material systems) into a PaperGraph saved under
-    paper/, or loads the paper_graph.json of an earlier run. Runs once."""
+    paper/, or loads the paper_graph.json of an earlier run (copied to inputs/). Runs once."""
 
     async def run(self, ctx: Ctx) -> AnalyzeEvidence | FinalizeResults:
         _enter(ctx, "SummarizePaper")
         st, deps, inputs = ctx.state, ctx.deps, ctx.deps.cfg.inputs
         try:
+            if inputs.pdf and inputs.characterization:
+                raise ValueError("inputs.characterization cannot be combined with inputs.pdf: saved reports cite the "
+                                 "system and evidence IDs of the summary they were made from, and a new summary "
+                                 "renumbers them; pass that summary as inputs.paper_graph (--paper_graph)")
             if inputs.paper_graph:
                 path = Path(inputs.paper_graph).resolve()
                 st.summary, st.paper_dir = load_graph(path), str(path.parent)
+                if not path.is_relative_to(deps.store.root):  # the run keeps its own copy of what it used
+                    deps.store.write_json("inputs/paper_graph.json", st.summary)
             elif inputs.pdf:
                 out = deps.store.path("paper", "paper_graph.json").parent
                 (out / "errors.txt").unlink(missing_ok=True)  # the summarizer only writes it when steps fail
-                sc = deps.cfg.summarizer
-                st.summary = await summarize_paper(inputs.pdf, out, _paper_model(ctx), on_progress=log.info,
-                                                   analyze_figures=sc.analyze_figures, max_figures=sc.max_figures)
+                sc, usage = deps.cfg.summarizer, RunUsage()
+                try:
+                    st.summary = await summarize_paper(inputs.pdf, out, _paper_model(ctx), on_progress=log.info,
+                                                       analyze_figures=sc.analyze_figures, max_figures=sc.max_figures,
+                                                       usage=usage)
+                finally:
+                    add_usage(deps.paper_usage["summarizer"], usage)
                 st.paper_dir = str(out)
             else:
                 raise ValueError("the config needs inputs.pdf or inputs.paper_graph")
@@ -81,10 +93,11 @@ class SummarizePaper(BaseNode[ReconstructionState, WorkflowDeps, ReconstructionR
 
 
 async def characterize(paper: PaperGraph, paper_dir: Path, out_dir: Path, model: Model | str,
-                       cc: CharacterizationConfig) -> ExperimentalEvidence:
+                       cc: CharacterizationConfig, usage: Optional[dict[str, int]] = None) -> ExperimentalEvidence:
     """One characterization agent per technique found in the paper's evidence, concurrently; each
-    report is also saved as out_dir/<technique>.json. Techniques outside the vocabulary, and stub
-    specs unless cc.include_stubs, are skipped."""
+    report is also saved as out_dir/<technique>.json (earlier reports there are removed first).
+    Techniques outside the vocabulary, and stub specs unless cc.include_stubs, are skipped. The
+    agents' token usage is added to `usage` (token_log.json's keys)."""
     evidence = ExperimentalEvidence()
     found = sorted({e.technique for e in paper.evidence})
     if cc.techniques is not None:
@@ -101,11 +114,17 @@ async def characterize(paper: PaperGraph, paper_dir: Path, out_dir: Path, model:
             specs.append(spec)
     log.info("[AnalyzeEvidence] characterizing %s; skipped %s", [s.name for s in specs] or "nothing",
              evidence.skipped or "none")
+    for stale in Path(out_dir).glob("*.json"):  # a reused folder must not mix in another run's reports
+        stale.unlink()
+    agents = [CharacterizationAgent(s, model=model, reasoning_effort=cc.reasoning_effort, output_retries=cc.output_retries)
+              for s in specs]
     results = await asyncio.gather(*(
-        CharacterizationAgent(s, model=model, reasoning_effort=cc.reasoning_effort, output_retries=cc.output_retries)
-        .analyze(paper.evidence, paper.systems, base_dir=paper_dir, filename=out_dir / f"{s.name.replace(' ', '_')}.json")
-        for s in specs), return_exceptions=True)
-    for spec, result in zip(specs, results):
+        agent.analyze(paper.evidence, paper.systems, base_dir=paper_dir, filename=out_dir / f"{s.name.replace(' ', '_')}.json")
+        for agent, s in zip(agents, specs)), return_exceptions=True)
+    for agent, spec, result in zip(agents, specs, results):
+        if usage is not None:
+            for key, n in agent.usage.items():
+                usage[key] += n
         if isinstance(result, BaseException):
             evidence.errors.append(f"{spec.name} characterization failed: {type(result).__name__}: {result}")
             log.warning("[AnalyzeEvidence] %s", evidence.errors[-1])
@@ -118,50 +137,100 @@ async def characterize(paper: PaperGraph, paper_dir: Path, out_dir: Path, model:
 
 @dataclass
 class AnalyzeEvidence(BaseNode[ReconstructionState, WorkflowDeps, ReconstructionResult]):
-    """Agent 2: one characterization agent per technique in the paper's evidence (or the reports
-    saved in inputs.characterization). Re-entered when the reviewer finds that the structures do not
-    resemble the paper: the reports are kept and the reviewer's feedback travels on to the planner."""
+    """Agent 2: one characterization agent per technique in the paper's evidence, or the reports
+    saved in inputs.characterization (checked against the summary). The reports are restricted to
+    the summary's systems and saved once (inputs/experimental_evidence.json). Re-entered when the
+    reviewer revisits the evidence: the reports are kept and the reviewer's feedback travels on to
+    the planner."""
 
     async def run(self, ctx: Ctx) -> PlanStructures | FinalizeResults:
         _enter(ctx, "AnalyzeEvidence")
         st, deps = ctx.state, ctx.deps
+        if st.evidence is not None:
+            log.info("[AnalyzeEvidence] revision %d: characterization reports kept; reviewer feedback "
+                     "forwarded to the planner", st.revision)
+            _checkpoint(ctx, "AnalyzeEvidence")
+            return PlanStructures()
+        folder = deps.cfg.inputs.characterization
         try:
-            if st.evidence is not None:
-                log.info("[AnalyzeEvidence] revision %d: characterization reports kept; reviewer feedback "
-                         "forwarded to the planner", st.revision)
-            elif deps.cfg.inputs.characterization:
-                st.evidence = ExperimentalEvidence.load(deps.cfg.inputs.characterization)
+            if folder:
+                evidence = ExperimentalEvidence.load(folder)
+                log.info("[AnalyzeEvidence] loaded the reports %s from %s", sorted(evidence.reports), folder)
+                errors, warnings = evidence.mismatches(st.summary)
+                for w in warnings:  # expected when the summary was narrowed to some systems
+                    log.warning("[AnalyzeEvidence] saved reports: %s", w)
+                if errors:
+                    raise ValueError(f"the reports in {folder} do not belong to this summary: " + "; ".join(errors))
             else:
-                st.evidence = await characterize(st.summary, Path(st.paper_dir), deps.store.root / "characterization",
-                                                 _paper_model(ctx), deps.cfg.characterization)
+                evidence = await characterize(st.summary, Path(st.paper_dir), deps.store.root / "characterization",
+                                              _paper_model(ctx), deps.cfg.characterization,
+                                              usage=deps.paper_usage["characterization"])
         except Exception as e:  # noqa: BLE001
             st.errors.append(f"characterization failed: {type(e).__name__}: {e}")
             _checkpoint(ctx, "AnalyzeEvidence")
             return FinalizeResults(status="failed")
+        st.evidence = evidence.focused({s.system_id for s in st.summary.systems})
+        kept = sum(len(r.observations) for r in st.evidence.reports.values())
+        total = sum(len(r.observations) for r in evidence.reports.values())
+        if kept < total:
+            log.info("[AnalyzeEvidence] %d of %d observations concern the summary's systems; the rest are left out",
+                     kept, total)
         st.errors.extend(e for e in st.evidence.errors if e not in st.errors)
-        st.evidence_version += 1
-        deps.store.write_json(f"inputs/experimental_evidence_v{st.evidence_version}.json", st.evidence)
+        deps.store.write_json("inputs/experimental_evidence.json", st.evidence)
         _checkpoint(ctx, "AnalyzeEvidence")
         return PlanStructures()
 
 
+def _replan_context(st: ReconstructionState) -> str:
+    """What the planner learns on revisit: for every earlier plan set, how each plan's structures
+    fared (validation, failing claim checks, the reviewer's verdicts) and the review that closed it,
+    then the latest feedback."""
+    if not st.plan_history:
+        return st.review_feedback
+    closing = [d for d in st.revision_history if d.action == "revisit_evidence"]
+    parts = []
+    for k, plans in enumerate(st.plan_history):
+        decision = closing[k] if k < len(closing) else None
+        verdicts = {v.structure_id: v for v in decision.verdicts} if decision else {}
+        lines = [f"### Plan set {k}"]
+        for p in plans.plans:
+            built = [a for a in st.artifacts if a.revision == k and a.plan_id == p.plan_id]
+            if not built:
+                lines.append(f"- {p.plan_id}: no structure was built")
+            for a in built:
+                rep = st.validation_reports.get(a.structure_id)
+                claims = [f"{c.name.removeprefix('claim ')} {c.status}: {c.detail}" for c in (rep.checks if rep else [])
+                          if c.name.startswith("claim ") and c.status in ("fail", "warn")]
+                v = verdicts.get(a.structure_id)
+                lines.append(f"- {p.plan_id}: {a.structure_id}, validation {'PASS' if rep and rep.passed else 'FAIL'}"
+                             + (f"; claim checks: {'; '.join(claims)}" if claims else "")
+                             + (f"; reviewer: {'resembles' if v.resembles_paper else 'does not resemble'} the paper"
+                                + (f" ({'; '.join(v.issues)})" if v.issues else "") if v else ""))
+        if decision and decision.unresolved:
+            lines.append("Unresolved: " + "; ".join(decision.unresolved))
+        parts.append("\n".join(lines))
+    return "\n\n".join(parts + ["### Feedback on the latest plan set", st.review_feedback])
+
+
 @dataclass
 class PlanStructures(BaseNode[ReconstructionState, WorkflowDeps, ReconstructionResult]):
-    """Agent 3: structural hypotheses as construction plans."""
+    """Agent 3: structural hypotheses as construction plans (plans.json holds every plan set)."""
 
     async def run(self, ctx: Ctx) -> ConstructStructures | FinalizeResults:
         _enter(ctx, "PlanStructures")
         st = ctx.state
         try:
-            plans = await ctx.deps.planner.plan(st.summary, st.evidence, st.plan_history, st.review_feedback)
+            plans = await ctx.deps.planner.plan(st.summary, st.evidence, st.plan_history,
+                                                _replan_context(st) if st.review_feedback else "")
         except Exception as e:  # noqa: BLE001
             st.errors.append(f"planning failed: {type(e).__name__}: {e}")
             _checkpoint(ctx, "PlanStructures")
             return FinalizeResults(status="failed")
         st.plan_history.append(plans)
         st.pending_plan_ids = [p.plan_id for p in plans.plans]
-        st.attempt, st.repairs, st.repair_feedback, st.current_ids, st.failed_plans = 0, 0, "", [], {}
-        ctx.deps.store.write_json(f"plans/plans_r{st.revision}.json", plans)
+        st.attempt, st.repairs, st.current_ids, st.failed_plans = 0, 0, [], {}
+        st.rebuild_ids, st.rebuild_request, st.plan_feedback, st.repair_feedback = [], {}, {}, ""
+        ctx.deps.store.write_json("plans.json", st.plan_history)
         _checkpoint(ctx, "PlanStructures")
         return ConstructStructures()
 
@@ -169,10 +238,10 @@ class PlanStructures(BaseNode[ReconstructionState, WorkflowDeps, ReconstructionR
 @dataclass
 class ConstructStructures(BaseNode[ReconstructionState, WorkflowDeps, ReconstructionResult]):
     """Agent 4: one coding-agent run per pending plan, concurrently, each in its own sandboxed
-    workspace with its own request budget; every reported structure is the output of its script
-    re-run from scratch, and that script is saved with it. A plan whose run fails, or that the agent
-    reports as not built, is recorded with the reason; ValidateStructures sends it back (bounded
-    repair loop) with the scripts of the attempt."""
+    workspace with its own request budget and its own plan's feedback; every reported structure is
+    the output of its script re-run from scratch, and that script is saved with it. A plan whose run
+    fails, or that the agent reports as not built, is recorded with the reason; ValidateStructures
+    sends it back (bounded repair loop) with the scripts of the attempt."""
 
     async def run(self, ctx: Ctx) -> ValidateStructures:
         _enter(ctx, "ConstructStructures")
@@ -185,7 +254,6 @@ class ConstructStructures(BaseNode[ReconstructionState, WorkflowDeps, Reconstruc
                 st.errors.append(f"{pid} (revision {st.revision}, attempt {st.attempt}): {st.failed_plans[pid]}")
             else:
                 self._register(ctx, *result)
-        st.rebuild_ids = []
         log.info("[ConstructStructures] built %d structures; not built: %s", len(st.current_ids),
                  sorted(p for p in pending if p in st.failed_plans) or "none")
         ctx.deps.store.write_json("artifacts.json", st.artifacts)
@@ -195,37 +263,48 @@ class ConstructStructures(BaseNode[ReconstructionState, WorkflowDeps, Reconstruc
     @staticmethod
     async def _build(ctx: Ctx, plan_id: str) -> tuple[ConstructionReport, ConstructionDeps]:
         st, store = ctx.state, ctx.deps.store
+        feedback = st.plan_feedback.get(plan_id, "")
         previous = {}
-        if st.repair_feedback:
-            previous = {f"{a.structure_id}.py": (store.root / a.script).read_text()
-                        for a in map(st.artifact, st.current_ids) if a.plan_id == plan_id}
-            if not previous and st.attempt > 0:  # not built last time: resume from that attempt's scripts
+        if feedback:
+            scripts: dict[str, str] = {}  # one copy per distinct script, named after the first structure it built
+            for a in map(st.artifact, st.current_ids):
+                if a.plan_id == plan_id:
+                    scripts.setdefault((store.root / a.script).read_text(), a.structure_id)
+            previous = {f"{sid}.py": code for code, sid in scripts.items()}
+            if plan_id in st.failed_plans and st.attempt > 0:  # not built last time: that attempt's scripts too
                 last = store.root / "construction" / f"r{st.revision}_a{st.attempt - 1}" / plan_id / WORKSPACE
-                previous = {p.name: p.read_text() for p in sorted(last.glob("*.py"))}
+                previous.update({f"last_attempt/{p.name}": p.read_text() for p in sorted(last.glob("*.py"))})
         workdir = store.path("construction", f"r{st.revision}_a{st.attempt}", plan_id)
-        return await ctx.deps.constructor.construct(st.plans, [plan_id], workdir, ctx.deps.seed, st.repair_feedback,
+        return await ctx.deps.constructor.construct(st.plans, [plan_id], workdir, ctx.deps.seed, feedback,
                                                     previous, st.summary, st.evidence)
 
     @staticmethod
     def _register(ctx: Ctx, report: ConstructionReport, cdeps: ConstructionDeps) -> None:
-        """Export the verified structures of one plan's report and record its unbuilt plans."""
+        """Export the verified structures of one plan's report and record its unbuilt plans. A plan
+        the report built replaces its current structures that the reviewer asked to rebuild, that
+        failed validation, or that were emitted again under the same name; the others stay. A plan
+        the report lists only as failed keeps its structures."""
         st, store, cfg = ctx.state, ctx.deps.store, ctx.deps.cfg
         st.construction_reports.append(report)
-        rebuilt = {b.plan_id for b in report.structures}
-        if st.rebuild_ids:  # a reviewer rebuild replaces the listed structures and those re-emitted by name
-            names = {b.name for b in report.structures}
-            replaced = {i for i in st.current_ids if i in st.rebuild_ids
-                        or (st.artifact(i).plan_id in rebuilt and st.artifact(i).name in names)}
-        else:  # a new plan set or a repair replaces the plan's structures
-            replaced = {i for i in st.current_ids if st.artifact(i).plan_id in rebuilt}
-        st.current_ids = [i for i in st.current_ids if i not in replaced]
-        for pid in rebuilt:
+        manifest = cdeps.manifest()
+        built_plans = {b.plan_id for b in report.structures}
+        names = {b.name for b in report.structures}
+
+        def replaced(sid: str) -> bool:
+            a, rep = st.artifact(sid), st.validation_reports.get(sid)
+            return a.plan_id in built_plans and (sid in st.rebuild_ids or a.name in names
+                                                 or (rep is not None and not rep.passed))
+
+        st.current_ids = [i for i in st.current_ids if not replaced(i)]
+        st.rebuild_ids = [i for i in st.rebuild_ids if st.artifact(i).plan_id not in built_plans]
+        for pid in built_plans:
             st.failed_plans.pop(pid, None)
         taken = {a.structure_id for a in st.artifacts}
         for built in report.structures:
             sid = f"{built.name}_r{st.revision}a{st.attempt}"
             if sid in taken:  # two plans' runs chose the same name
                 sid = f"{built.plan_id}_{sid}"
+            emitted = manifest.get(built.name, {})
             try:
                 source = cdeps.verified[built.name]
                 atoms = read(source)
@@ -235,14 +314,14 @@ class ConstructStructures(BaseNode[ReconstructionState, WorkflowDeps, Reconstruc
                 script = store.path("structures", f"{sid}.py")
                 shutil.copyfile(cdeps.scripts[built.name], script)
                 artifact = StructureArtifact(
-                    structure_id=sid, plan_id=built.plan_id, name=built.name, system_ids=built.system_ids,
-                    revision=st.revision,
-                    attempt=st.attempt, files={k: store.rel(v) for k, v in files.items()}, source=store.rel(source),
+                    structure_id=sid, plan_id=built.plan_id, name=built.name,
+                    system_ids=emitted.get("system_ids") or built.system_ids, revision=st.revision,
+                    files={k: store.rel(v) for k, v in files.items()}, source=store.rel(source),
                     script=store.rel(script), image=store.rel(image), method=built.method,
                     target_checks=built.target_checks, formula=atoms.get_chemical_formula(), n_atoms=len(atoms),
-                    cell=atoms.cell.array.round(6).tolist(), pbc=tuple(bool(p) for p in atoms.pbc),
-                    n_molecules=len(get_molecules(atoms)), description=describe(atoms), deviations=built.deviations,
-                    notes=built.notes)
+                    description=describe(atoms), deviations=built.deviations,
+                    notes="; ".join(dict.fromkeys(n for n in (emitted.get("notes", ""), built.notes) if n)),
+                    construction_summary=report.summary)
             except Exception as e:  # noqa: BLE001 - one unexportable structure must not end the run
                 st.failed_plans[built.plan_id] = f"{built.name} could not be exported: {type(e).__name__}: {e}"
                 st.errors.append(f"{built.name} (plan {built.plan_id}): {st.failed_plans[built.plan_id]}")
@@ -255,16 +334,29 @@ class ConstructStructures(BaseNode[ReconstructionState, WorkflowDeps, Reconstruc
             st.failed_plans[f.plan_id] = f.reason
 
 
+def _repair_feedback(st: ReconstructionState, plan_id: str, notes: list[str]) -> str:
+    """A plan's feedback for its repair run: the reviewer's pending rebuild request, which still
+    applies, then what failed."""
+    parts = [st.rebuild_request[plan_id]] if st.rebuild_request.get(plan_id) else []
+    if notes:
+        parts += ["Deterministic validation failed:"] + notes
+    if plan_id in st.failed_plans:
+        parts += ["The plan was not built in the last attempt (any scripts it wrote are in previous/last_attempt/):",
+                  f"- {plan_id}: {st.failed_plans[plan_id]}"]
+    return "\n".join(parts)
+
+
 @dataclass
 class ValidateStructures(BaseNode[ReconstructionState, WorkflowDeps, ReconstructionResult]):
     """Routes on the validation gate's reports (computed when construction accepted each
-    structure), adding the export round trip of the written files; hard failures and plans that
-    were not built go back to construction (bounded repair loop)."""
+    structure), adding the export round trip of the written files; the plans built in this round
+    whose structures fail, or that were not built, go back to construction (bounded repair loop),
+    each with its own feedback."""
 
     async def run(self, ctx: Ctx) -> ConstructStructures | ScientificRevision:
         _enter(ctx, "ValidateStructures")
         st, store = ctx.state, ctx.deps.store
-        failing, notes = set(), []
+        failing, notes = set(), {}
         for sid in st.current_ids:
             a = st.artifact(sid)
             rep = st.validation_reports[sid]
@@ -272,20 +364,17 @@ class ValidateStructures(BaseNode[ReconstructionState, WorkflowDeps, Reconstruct
                 files = {k: str(store.root / p) for k, p in a.files.items()}
                 roundtrip = check_roundtrip(read(store.root / a.source), files)
                 rep = st.validation_reports[sid] = rep.with_check(roundtrip)
-            if not rep.passed:
+            if not rep.passed and a.plan_id in st.pending_plan_ids:  # plans not rebuilt now stay with the reviewer
                 failing.add(a.plan_id)
-                notes.append(f"{a.name} (plan {a.plan_id}): {rep.summary()}")
-        unbuilt = [pid for pid in st.pending_plan_ids if pid in st.failed_plans]
-        failing.update(unbuilt)
+                notes.setdefault(a.plan_id, []).append(f"{a.name} (plan {a.plan_id}): {rep.summary()}")
+        failing.update(pid for pid in st.pending_plan_ids if pid in st.failed_plans)
         store.write_json("validation_reports.json", st.validation_reports)
         if failing and st.repairs < ctx.deps.max_repairs:
             st.repairs += 1
             st.attempt += 1
             st.pending_plan_ids = sorted(failing)
-            parts = (["Deterministic validation failed:"] + notes if notes else []) + (
-                ["Plans that were not built (their scripts from the last attempt are in previous/):"]
-                + [f"- {pid}: {st.failed_plans[pid]}" for pid in unbuilt] if unbuilt else [])
-            st.repair_feedback = "\n".join(parts)
+            st.plan_feedback = {pid: _repair_feedback(st, pid, notes.get(pid, [])) for pid in st.pending_plan_ids}
+            st.repair_feedback = "\n\n".join(st.plan_feedback.values())
             _checkpoint(ctx, "ValidateStructures")
             return ConstructStructures()
         _checkpoint(ctx, "ValidateStructures")
@@ -314,28 +403,37 @@ class ScientificRevision(BaseNode[ReconstructionState, WorkflowDeps, Reconstruct
             return FinalizeResults(status="failed")
         st.revision_history.append(decision)
         deps.store.write_json("revision_history.json", st.revision_history)
-        _checkpoint(ctx, "ScientificRevision")
+        st.rebuild_request, st.plan_feedback = {}, {}  # a new decision replaces any earlier request
         if decision.action == "rebuild_structures":
             st.rebuilds += 1
             st.attempt += 1
             st.repairs = 0
             st.rebuild_ids = list(decision.rebuild_structure_ids)
             st.pending_plan_ids = sorted({st.artifact(i).plan_id for i in st.rebuild_ids})
-            issues = [f"- {v.structure_id}: {'; '.join(v.issues)}" for v in decision.verdicts
-                      if v.structure_id in st.rebuild_ids and v.issues]
-            st.repair_feedback = "\n".join([
-                f"The reviewer asks to rebuild {', '.join(st.rebuild_ids)}: the plan stands, the built structure "
-                "does not realize it. Fix the scripts (in previous/) accordingly and report every structure of the "
-                "plan again, the ones not listed unchanged.", decision.feedback, *issues])
+            for pid in st.pending_plan_ids:  # each plan's run gets the reviewer's text and its own structures' issues
+                ids = [i for i in st.rebuild_ids if st.artifact(i).plan_id == pid]
+                issues = [f"- {v.structure_id}: {'; '.join(v.issues)}" for v in decision.verdicts
+                          if v.structure_id in ids and v.issues]
+                st.rebuild_request[pid] = "\n".join([
+                    f"The reviewer asks to rebuild {', '.join(ids)}: the plan stands, the built structure does not "
+                    "realize it. Fix the scripts (in previous/) accordingly; the plan's structures you do not "
+                    "report again are kept.", decision.feedback, *issues])
+            st.plan_feedback = dict(st.rebuild_request)
+            st.repair_feedback = "\n\n".join(st.plan_feedback.values())
+            _checkpoint(ctx, "ScientificRevision")
             return ConstructStructures()
+        if decision.action == "revisit_evidence" and left > 0:
+            st.revision += 1
+            st.candidate_ids += [i for i in st.current_ids if i not in st.candidate_ids
+                                 and st.validation_reports[i].passed]  # still acceptable after re-planning
+            st.review_feedback = decision.feedback
+            if st.failed_plans:  # the planner sees the builder's own reasons, not just the reviewer's
+                st.review_feedback += "\n\nPlans that could not be built:\n" + "\n".join(
+                    f"- {k}: {v}" for k, v in st.failed_plans.items())
+            _checkpoint(ctx, "ScientificRevision")
+            return AnalyzeEvidence()
+        _checkpoint(ctx, "ScientificRevision")
         if decision.action == "revisit_evidence":
-            if left > 0:
-                st.revision += 1
-                st.review_feedback = decision.feedback
-                if st.failed_plans:  # the planner sees the builder's own reasons, not just the reviewer's
-                    st.review_feedback += "\n\nPlans that could not be built:\n" + "\n".join(
-                        f"- {k}: {v}" for k, v in st.failed_plans.items())
-                return AnalyzeEvidence()
             return FinalizeResults(status="revision_budget_exhausted")
         return FinalizeResults(status="accepted" if decision.action == "accept_candidates" else "inconclusive")
 
@@ -343,13 +441,16 @@ class ScientificRevision(BaseNode[ReconstructionState, WorkflowDeps, Reconstruct
 @dataclass
 class FinalizeResults(BaseNode[ReconstructionState, WorkflowDeps, ReconstructionResult]):
     """Write the run summary, token log and final report (re-rendered with the final status and
-    decision; without a reviewer narrative when the run ended before a final review); end the run."""
+    decision; without a reviewer narrative when the run ended before a final review or failed); end
+    the run."""
     status: str = "failed"
 
     async def run(self, ctx: Ctx) -> End[ReconstructionResult]:
         _enter(ctx, "FinalizeResults")
         st, deps, store = ctx.state, ctx.deps, ctx.deps.store
         st.status = self.status
+        if self.status == "failed":  # a narrative written for an earlier decision does not describe this end
+            st.report = None
         last = st.revision_history[-1] if st.revision_history else None
         accepted = list(last.accepted_structure_ids) if last and self.status == "accepted" else []
         store.write_json("plans.json", st.plan_history)
@@ -357,14 +458,14 @@ class FinalizeResults(BaseNode[ReconstructionState, WorkflowDeps, Reconstruction
         store.write_json("validation_reports.json", st.validation_reports)
         store.write_json("revision_history.json", st.revision_history)
         store.write_json("construction_reports.json", st.construction_reports)
-        store.write_json("token_log.json", {"planner": deps.planner.usage, "constructor": deps.constructor.usage,
-                                            "reviser": deps.reviser.usage})
+        store.write_json("token_log.json", {**deps.paper_usage, "planner": deps.planner.usage,
+                                            "constructor": deps.constructor.usage, "reviser": deps.reviser.usage})
         report = save_report(st, store)  # final status and decision around the reviewer's text
         save_structures_readme(st, store)
         result = ReconstructionResult(
             run_id=st.run_id, status=self.status, run_dir=str(store.root), accepted_structure_ids=accepted,
-            structure_files={a.structure_id: a.files for a in st.artifacts}, report=store.rel(report),
-            revisions=st.revision, errors=list(st.errors))
+            current_structure_ids=list(st.current_ids), structure_files={a.structure_id: a.files for a in st.artifacts},
+            report=store.rel(report), revisions=st.revision, errors=list(st.errors))
         store.write_json("result.json", result)
-        _checkpoint(ctx, "FinalizeResults")
+        _checkpoint(ctx, "FinalizeResults", full=True)
         return End(result)

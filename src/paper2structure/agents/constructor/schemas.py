@@ -46,9 +46,8 @@ class StructureArtifact(BaseModel):
     structure_id: str
     plan_id: str
     name: str
-    system_ids: list[str] = Field(default_factory=list)
-    revision: int
-    attempt: int
+    system_ids: list[str] = Field(default_factory=list, description="the systems it models, as passed to emit()")
+    revision: int = Field(description="the plan set it was built from (index into the plan history)")
     files: dict[str, str]
     source: str = Field(description="the emitted extxyz (full per-atom metadata), relative to the run dir")
     script: str = Field(description="standalone script that regenerates the structure, relative to the run dir")
@@ -57,9 +56,7 @@ class StructureArtifact(BaseModel):
     target_checks: list[TargetCheck] = Field(default_factory=list)
     formula: str
     n_atoms: int
-    cell: list[list[float]]
-    pbc: tuple[bool, bool, bool]
-    n_molecules: int = 0
     description: str = ""
     deviations: list[str] = Field(default_factory=list)
-    notes: str = ""
+    notes: str = Field("", description="the constructor's notes on the structure (emit() notes)")
+    construction_summary: str = Field("", description="the summary of the construction run that built it")

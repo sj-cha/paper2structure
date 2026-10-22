@@ -1,9 +1,10 @@
 """Routing of the pydantic-graph workflow with scripted agents (no real LLM)."""
 import asyncio
+import copy
 import json
 import re
 
-from pydantic_ai.messages import ModelResponse, ToolCallPart
+from pydantic_ai.messages import ModelResponse, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import FunctionModel
 
 from helpers import (BAD_SCRIPT, GOOD_SCRIPT, PT_PLAN, REPORT, _final, _user_text, coding_model, constructor_model,
@@ -35,11 +36,14 @@ def test_accept_path_writes_structures_and_report(tmp_path):
     assert checks["claim C1"]["status"] == "pass" and "Pt-Pt 2.77" in checks["claim C1"]["detail"]  # the plan's claim
     for name in ("plans.json", "artifacts.json", "validation_reports.json", "revision_history.json",
                  "token_log.json", "result.json", "workflow.mmd", "final_report.md",
-                 "inputs/experimental_evidence_v1.json"):
+                 "construction_reports.json", "inputs/experimental_evidence.json"):
         assert (run / name).exists(), name
     # the fixture's saved summary and reports replaced Agents 1-2
     assert state["summary"]["metadata"]["title"].startswith("[SYNTHETIC FIXTURE]")
-    assert set(state["evidence"]["reports"]) == {"FTIR", "LEED", "XPS", "XRD"} and state["evidence_version"] == 1
+    assert set(state["evidence"]["reports"]) == {"FTIR", "LEED", "XPS", "XRD"}
+    assert result.current_structure_ids == [sid] and json.loads((run / "result.json").read_text())["current_structure_ids"]
+    tokens = json.loads((run / "token_log.json").read_text())
+    assert {"summarizer", "characterization", "planner", "constructor", "reviser"} <= set(tokens)
     report = (run / "final_report.md").read_text()
     assert sid in report and "**Status:** accepted" in report and "## 1. Summary\nscripted summary" in report
     assert f"| {sid} | C1 | pass |" in report and "unchecked claims: S1:occupancy1" in report
@@ -52,9 +56,14 @@ def test_revisit_evidence_reruns_agents_2_to_4_but_not_agent_1(tmp_path):
     assert h.count("SummarizePaper") == 1
     assert h.count("AnalyzeEvidence") == h.count("PlanStructures") == h.count("ConstructStructures") == 2
     assert h[h.index("ScientificRevision") + 1] == "AnalyzeEvidence"  # the loop re-enters at Agent 2
-    assert state["evidence_version"] == 2  # the kept reports are snapshotted again for the new revision
+    run = tmp_path / "run"
+    assert sorted(p.name for p in (run / "inputs").iterdir()) == ["experimental_evidence.json", "paper_graph.json"]
     assert len(state["plan_history"]) == 2 and len(state["artifacts"]) == 2  # earlier versions kept
+    assert len(json.loads((run / "plans.json").read_text())) == 2 and not (run / "plans").exists()
     assert state["review_feedback"] == "use bridge sites as well"
+    first, second = (a["structure_id"] for a in state["artifacts"])
+    assert state["candidate_ids"] == [first] and state["current_ids"] == [second]  # the first stays acceptable
+    assert result.current_structure_ids == [second]
 
 
 def test_revision_budget_ends_the_loop(tmp_path):
@@ -189,3 +198,135 @@ def test_reviewer_runs_its_own_claim_checks(tmp_path):
     assert results and results[0].startswith("fail: Pt is 12-coordinated") and "no interior framework Pt" in results[0]
     prompt = (tmp_path / "run" / "final_report.md").read_text()
     assert "| C1 | pass |" in prompt
+    # the check is kept with its result, for the next review and the report
+    state = json.loads(sorted((tmp_path / "run" / "state").glob("*_FinalizeResults.json"))[-1].read_text())
+    assert [(c["review"], c["check_id"], c["status"]) for c in state["review_checks"]] == [(0, "R1", "fail")]
+    assert "Claims the reviewer checked itself" in prompt and "Pt is 12-coordinated in the bulk" in prompt
+
+
+def _for_plan(script: str, plan_id: str) -> str:
+    return script.replace('name="pt111_co_top", plan_id="P1"', f'name="pt111_co_{plan_id.lower()}", plan_id="{plan_id}"')
+
+
+def per_plan_constructor(scripts: dict[str, list[str]], runs: dict[str, int]):
+    """A scripted coding agent for one plan per run (the plan in its prompt): the plan's k-th run
+    writes scripts[plan][k] (the last one repeats), runs it, checks it and reports it."""
+    def fn(messages, info):
+        pid = re.search(r'"plan_id": "(P\d+)"', _user_text(messages)).group(1)
+        done = [p.tool_name for m in messages for p in m.parts if isinstance(p, ToolReturnPart)]
+        if not done:
+            k = runs[pid] = runs.get(pid, 0) + 1
+            return ModelResponse(parts=[ToolCallPart("write_file", {"path": f"build_{pid}.py",
+                                                                    "content": scripts[pid][min(k, len(scripts[pid])) - 1]})])
+        script = next(p.args_as_dict()["content"] for m in messages for p in m.parts
+                      if isinstance(p, ToolCallPart) and p.tool_name == "write_file")
+        name = re.search(r'emit\(\w+, name="([^"]+)"', script).group(1)
+        if done[-1] == "write_file":
+            return ModelResponse(parts=[ToolCallPart("shell", {"command": f"python build_{pid}.py"})])
+        if done[-1] == "shell":
+            return ModelResponse(parts=[ToolCallPart("check_structure", {"name": name})])
+        return _final(info, {"structures": [{"name": name, "plan_id": pid, "script": f"build_{pid}.py",
+                                             "method": "scripted"}], "failed": [], "summary": f"scripted {pid}"})
+    return coding_model(fn)
+
+
+def test_feedback_repairs_and_rebuilds_stay_with_their_plans(tmp_path):
+    """Two plans: each repair run gets only its own plan's validation notes; a rebuild request for
+    one plan reopens only that plan, survives the validation repair of the rebuilt structure, and
+    the other plan's structure stays current throughout."""
+    two = copy.deepcopy(PT_PLAN)
+    two["plans"].append({**copy.deepcopy(two["plans"][0]), "plan_id": "P2"})
+    runs, reviews = {}, []
+    constructor = per_plan_constructor({"P1": [BAD_SCRIPT, GOOD_SCRIPT, BAD_SCRIPT, GOOD_SCRIPT],
+                                        "P2": [_for_plan(BAD_SCRIPT, "P2"), _for_plan(GOOD_SCRIPT, "P2")]}, runs)
+
+    def reviewer(messages, info):
+        shown = dict(re.findall(r"### (\S+) \(plan (P\d+)", _user_text(messages)))
+        if not reviews or reviews[-1] != shown:
+            reviews.append(shown)
+        if len(reviews) == 1:
+            p1 = next(sid for sid, pid in shown.items() if pid == "P1")
+            return _final(info, {"action": "rebuild_structures", "reasoning": "P1 is off", "feedback": "fix the P1 CO",
+                                 "rebuild_structure_ids": [p1]})
+        if not reported(messages):
+            return ModelResponse(parts=[ToolCallPart("write_report", REPORT)])
+        return _final(info, {"action": "accept_candidates", "reasoning": "fine", "accepted_structure_ids": list(shown)})
+
+    deps = build_deps(make_config(), tmp_path / "run", seed=7, models={
+        "planner": planner_model([two]), "constructor": constructor, "reviser": coding_model(reviewer)})
+    result = asyncio.run(run_workflow(deps, run_id="plans"))
+    run = tmp_path / "run"
+    state = json.loads(sorted((run / "state").glob("*_FinalizeResults.json"))[-1].read_text())
+
+    def feedback(attempt, pid):
+        return (run / "construction" / f"r0_a{attempt}" / pid / "workspace" / "task" / "feedback.md").read_text()
+
+    assert result.status == "accepted" and runs == {"P1": 4, "P2": 2}  # the rebuild and its repair leave P2 alone
+    assert "pt111_co_top" in feedback(1, "P1") and "pt111_co_p2" not in feedback(1, "P1")  # its own notes only
+    assert "pt111_co_p2" in feedback(1, "P2") and "pt111_co_top" not in feedback(1, "P2")
+    assert "fix the P1 CO" in feedback(2, "P1")
+    repair = feedback(3, "P1")  # the rebuilt structure failed validation: the reviewer's request still stands
+    assert "fix the P1 CO" in repair and "Deterministic validation failed" in repair
+    assert not (run / "construction" / "r0_a2" / "P2").exists() and not (run / "construction" / "r0_a3" / "P2").exists()
+    assert sorted(state["current_ids"]) == ["pt111_co_p2_r0a1", "pt111_co_top_r0a3"]
+    assert reviews[1] == {"pt111_co_p2_r0a1": "P2", "pt111_co_top_r0a3": "P1"}
+    assert sorted(result.accepted_structure_ids) == ["pt111_co_p2_r0a1", "pt111_co_top_r0a3"]
+
+
+def test_earlier_candidates_stay_acceptable_after_a_revisit(tmp_path):
+    """After a revisit the planner sees how its earlier plans fared, the reviewer sees its earlier
+    review, and a structure of the replaced plan set that passed validation can still be accepted."""
+    planned, reviewed = [], []
+
+    def planner(messages, info):
+        planned.append(_user_text(messages))
+        return _final(info, PT_PLAN)
+
+    def reviewer(messages, info):
+        text = _user_text(messages)
+        if text not in reviewed:
+            reviewed.append(text)
+        if len(reviewed) == 1:
+            return _final(info, {"action": "revisit_evidence", "reasoning": "check the bridge sites",
+                                 "feedback": "try bridge sites"})
+        earlier = re.findall(r"^- (\S+) \(plan P1 of plan set 0", text, re.M)
+        if not reported(messages):
+            return ModelResponse(parts=[ToolCallPart("write_report", REPORT)])
+        return _final(info, {"action": "accept_candidates", "reasoning": "the first was right",
+                             "accepted_structure_ids": earlier})
+
+    deps = build_deps(make_config(), tmp_path / "run", seed=7, models={
+        "planner": FunctionModel(planner), "constructor": constructor_model([GOOD_SCRIPT]),
+        "reviser": coding_model(reviewer)})
+    result = asyncio.run(run_workflow(deps, run_id="candidates"))
+
+    assert result.status == "accepted" and result.accepted_structure_ids == ["pt111_co_top_r0a0"]
+    assert result.current_structure_ids == ["pt111_co_top_r1a0"]
+    assert "### Plan set 0" in planned[1] and "pt111_co_top_r0a0, validation PASS" in planned[1]
+    assert "try bridge sites" in planned[1]
+    assert "## Your earlier reviews in this run" in reviewed[1] and "Review 0: revisit_evidence" in reviewed[1]
+    report = (tmp_path / "run" / "final_report.md").read_text()
+    assert "| candidate | yes |" in report
+
+
+def test_a_failed_end_drops_the_narrative_of_an_earlier_review(tmp_path):
+    calls = []
+
+    def planner(messages, info):
+        calls.append(1)
+        if len(calls) > 1:
+            raise RuntimeError("model unavailable")
+        return _final(info, PT_PLAN)
+
+    def reviewer(messages, info):  # writes a report, then sends the run back to planning
+        if not reported(messages):
+            return ModelResponse(parts=[ToolCallPart("write_report", REPORT)])
+        return _final(info, {"action": "revisit_evidence", "reasoning": "again", "feedback": "try bridge sites"})
+
+    deps = build_deps(make_config(), tmp_path / "run", seed=7, models={
+        "planner": FunctionModel(planner), "constructor": constructor_model([GOOD_SCRIPT]),
+        "reviser": coding_model(reviewer)})
+    result = asyncio.run(run_workflow(deps, run_id="failed"))
+    report = (tmp_path / "run" / "final_report.md").read_text()
+    assert result.status == "failed" and "planning failed" in result.errors[-1]
+    assert "scripted summary" not in report and "No reviewer summary" in report

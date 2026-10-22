@@ -18,7 +18,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from helpers import GOOD_SCRIPT, PT_PLAN, coding_model, constructor_model, cover_claims, reviser_model
 from paper2structure.agents.characterization import (REGISTRY, CharacterizationReport, ExperimentalEvidence,
-                                                     Observation, TechniqueSpec)
+                                                     Observation, StructuralConstraint, TechniqueSpec)
 from paper2structure.agents.planner import LLMPlanner, PlanningDeps, PlanSet, check_plan_set
 from paper2structure.agents.summarizer import Evidence, MaterialSystem, PaperGraph, load_graph
 from paper2structure.agents.summarizer.pdf_reader import read_pdf
@@ -188,15 +188,15 @@ def test_pdf_to_structures_in_one_graph_run(tmp_path, paper_pdf):
     assert figure.context == [XRD_SENTENCE] and (run / "paper" / figure.image_path).is_file()
     assert Path(state["paper_dir"]) == (run / "paper").resolve()
 
-    # Agent 2: one report per technique, saved, and snapshotted as evidence version 1
+    # Agent 2: one report per technique, saved, and the evidence the run used saved once
     xrd = CharacterizationReport.model_validate_json((run / "characterization" / "XRD.json").read_text())
     assert xrd.technique == "XRD" and [o.observation_id for o in xrd.observations] == ["O1"]
-    assert state["evidence_version"] == 1 and set(state["evidence"]["reports"]) == {"XRD"}
-    saved = json.loads((run / "inputs" / "experimental_evidence_v1.json").read_text())
+    assert set(state["evidence"]["reports"]) == {"XRD"}
+    saved = json.loads((run / "inputs" / "experimental_evidence.json").read_text())
     assert set(saved["reports"]) == {"XRD"}
 
     # Agent 3 got the summary and the reports; its plan names the system it models
-    assert len(prompts) == 1 and "Dry-run paper" in prompts[0] and '"observation_id": "O1"' in prompts[0]
+    assert len(prompts) == 1 and "Dry-run paper" in prompts[0] and '"observation_id":"O1"' in prompts[0]
     assert state["plan_history"][0]["plans"][0]["system_ids"] == ["S1"]
 
     # Agent 4 got both in its workspace; the accepted structure passed validation and was exported
@@ -313,12 +313,57 @@ def test_saved_summary_and_reports_replace_agents_1_and_2(tmp_path):
     assert result.status == "inconclusive" and result.errors == [], result.errors
     # the unbuilt plan goes back to construction with its reason, twice (max_repairs), before the review
     repairs = ["ConstructStructures", "ValidateStructures"] * 2
-    assert state["node_history"] == LINEAR[:5] + repairs + LINEAR[5:] and state["evidence_version"] == 1
+    assert state["node_history"] == LINEAR[:5] + repairs + LINEAR[5:]
     assert "P1: scripted failure" in state["repair_feedback"] and state["failed_plans"] == {"P1": "scripted failure"}
     assert Path(state["paper_dir"]) == (earlier / "paper").resolve()
     assert not (run / "paper").exists() and not (run / "characterization").exists()
+    assert load_graph(run / "inputs" / "paper_graph.json") == load_graph(earlier / "paper" / "paper_graph.json")
     assert state["evidence"]["reports"]["XRD"] == _xrd_report().model_dump(mode="json")
-    assert len(prompts) == 1 and "Synthetic paper" in prompts[0] and '"value": "Pnma"' in prompts[0]
+    assert len(prompts) == 1 and "Synthetic paper" in prompts[0] and '"value":"Pnma"' in prompts[0]
+
+
+def test_saved_reports_of_another_summary_end_the_run(tmp_path):
+    """Saved reports cite the evidence IDs of the summary they were made from: reports whose
+    observations cite another technique's evidence here belong to another summary."""
+    folder = tmp_path / "characterization"
+    folder.mkdir()
+    paper = _paper([_xrd_text("E001"), Evidence(evidence_id="E002", system_ids=["S1"], technique="TEM",
+                                                technique_category="microscopy", source_type="text",
+                                                source_ref="page 2", summary="Particles of 10 nm.")])
+    (tmp_path / "paper_graph.json").write_text(paper.model_dump_json())
+    stray = _xrd_report()
+    stray.observations[0].source_id = "E002"  # E002 is TEM evidence in this summary
+    (folder / "XRD.json").write_text(stray.model_dump_json())
+
+    def unused(messages, info):
+        raise AssertionError("no agent may run")
+
+    run = tmp_path / "run"
+    deps = build_deps(_config(inputs={"paper_graph": str(tmp_path / "paper_graph.json"), "characterization": str(folder)}),
+                      run, seed=0, models={k: FunctionModel(unused) for k in ("paper", "planner", "reviser")}
+                      | {"constructor": coding_model(unused)})
+    result = asyncio.run(run_workflow(deps, run_id="stray"))
+    assert result.status == "failed" and "do not belong to this summary" in result.errors[0]
+    assert _final_state(run)["node_history"] == ["SummarizePaper", "AnalyzeEvidence", "FinalizeResults"]
+
+
+def test_evidence_is_focused_on_the_summary_systems():
+    """Observations, findings and constraints about systems the summary does not have are left
+    out, except observations a kept item cites; IDs do not change."""
+    def obs(oid, systems):
+        return Observation(observation_id=oid, source_id="E001", system_ids=systems, quantity="q", value="1",
+                           read_from="stated_in_text")
+
+    report = CharacterizationReport(technique="XRD", observations=[obs("O1", ["S1"]), obs("O2", ["S9"]),
+                                                                   obs("O3", ["S9"]), obs("O4", [])],
+                                    structural_constraints=[
+                                        StructuralConstraint(property="a", value="1", system_ids=["S9"],
+                                                             evidence=["O2"], confidence="high"),
+                                        StructuralConstraint(property="b", value="2", system_ids=["S1"],
+                                                             evidence=["O3"], confidence="high")])
+    focused = ExperimentalEvidence(reports={"XRD": report}).focused({"S1", "S2"}).reports["XRD"]
+    assert [o.observation_id for o in focused.observations] == ["O1", "O3", "O4"]
+    assert [c.constraint_id for c in focused.structural_constraints] == ["C2"]
 
 
 def test_planner_cites_summary_and_technique_qualified_ids():

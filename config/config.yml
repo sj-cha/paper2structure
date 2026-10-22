@@ -3,6 +3,7 @@ campaign:
   reasoning_effort: null  # Agents 3-5; null keeps the provider default
   max_retry: 3
   use_images: true
+  simulation: MLIP  # what the structures are for, framed in Agents 3-5: MLIP or DFT (prefer small cells)
 
 inputs:  # the paper: a PDF (or --pdf), or the paper_graph.json of an earlier run
   pdf: null

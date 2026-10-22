@@ -20,7 +20,8 @@ class Claim:
 
 def structural_claims(summary: PaperGraph, evidence: ExperimentalEvidence) -> list[Claim]:
     """Claim IDs: "<system>:space_group", "<system>:lattice", "<system>:occupancy<k>", "<system>:other<k>"
-    from the summary; "<technique>:C<k>" for the k-th structural constraint of a report."""
+    from the summary; "<technique>:<constraint_id>" (C<k>, the k-th constraint as its report was
+    written) for the structural constraints of the reports."""
     claims = []
     for s in summary.systems:
         st, sid = s.structure, s.system_id
@@ -34,13 +35,23 @@ def structural_claims(summary: PaperGraph, evidence: ExperimentalEvidence) -> li
                    for k, text in enumerate(st.site_occupancy, 1)]
         claims += [Claim(f"{sid}:other{k}", (sid,), f"{s.name}: {text}", "summary") for k, text in enumerate(st.other, 1)]
     for technique, report in sorted(evidence.reports.items()):
-        for k, c in enumerate(report.structural_constraints, 1):
-            value = c.value if not c.unit or c.value.rstrip().endswith(c.unit) else f"{c.value} {c.unit}"
+        for c in report.structural_constraints:
             cites = f" (from {', '.join(f'{technique}:{o}' for o in c.evidence)})" if c.evidence else ""
-            claims.append(Claim(f"{technique}:C{k}", tuple(c.system_ids),
-                                f"{c.property}: {value} [{c.confidence} confidence]{cites}", technique))
+            claims.append(Claim(f"{technique}:{c.constraint_id}", tuple(c.system_ids),
+                                f"{c.property}: {constraint_value(c)} [{c.confidence} confidence]{cites}", technique))
     return claims
 
 
 def claims_text(claims: list[Claim]) -> str:
     return "\n".join(f"- {c.claim_id} [{', '.join(c.system_ids) or 'all systems'}] {c.text}" for c in claims)
+
+def constraint_value(c) -> str:
+    """A structural constraint's value with its unit (once)."""
+    return c.value if not c.unit or c.value.rstrip().endswith(c.unit) else f"{c.value} {c.unit}"
+
+
+def claims_about(claims: list[Claim], system_ids) -> list[Claim]:
+    """The claims a plan modeling these systems must address: those about them or about no system."""
+    keep = set(system_ids)
+    return [c for c in claims if not c.system_ids or keep & set(c.system_ids)]
+
