@@ -651,8 +651,15 @@ so a paper can be reopened later and each step is reused rather than repeated:
 | panel | does | runs | reused when |
 |---|---|---|---|
 | 1 Papers | drop one or more PDFs; pick the model from a grouped list (OpenAI fast/cheap, OpenAI advanced such as Sol, Gemini with a free tier, dry run) with its price per 1M tokens, and the reasoning effort; watch every paper's job; open an earlier paper | Agent 1 -> `paper/`, and by default Agent 2 right after | always (re-read on request) |
-| 2 Evidence | the paper's summary and material systems; tick the techniques to analyze; the structural constraints, findings and caveats per technique, with the source evidence and figure crops behind expanders | Agent 2 -> `characterization/<key>/` | per model, effort and technique set |
-| 3 Structures | tick the material system(s) to model; DFT or MD; the "computationally tractable <-> closer to experiment" slider that sets the atom budget, the planner's brief and the builder's coding budget; hypotheses; advanced: structure type, seed, reviewer loops, repairs; the built structures in 3Dmol.js with target checks, the reviewer's verdict, downloads, and the details behind expanders | Agent 3 on the chosen systems -> `plans/<key>.json`, then Agents 4-5 as one graph run -> `runs/<time>/` | the plan per settings; every run is kept |
+| 2 Evidence | the paper's summary and material systems; every technique with an analysis agent is used (Advanced can leave some out); the structural constraints, findings and caveats per technique, with the source evidence and figure crops behind expanders | characterization agent -> `characterization/<key>/` | per model, effort and technique set |
+| 3 Structures | tick the material system(s) to model and set one atom limit (up to 600 atoms the planner is briefed for DFT-sized cells, above that for MD on a machine-learned potential; the constructor's coding budget scales with it); advanced: structure type, seed, reviser loops, repairs; the built structures in 3Dmol.js with target checks, the reviser agent's verdict, downloads, and the details behind expanders; **Build more structures**: each structure's validated script has its named parameters (lattice, diameter, supercell, vacuum, ...) at the top, and the page re-runs it with new values in seconds (no agent), validates the geometry, exports and renders the result under `runs/<time>/variants/` | planner agent -> `plans/<key>.json`, then constructor and reviser agents as one graph run -> `runs/<time>/` | the plan per settings; every run and variant is kept |
+
+Any job can be stopped from the page (Stop next to it); a queued job is dropped, a running one is
+interrupted at its next step and what it had already saved stays. The reviser agent's rejection is
+shown as a warning, never as a dead end: the run's structures stay viewable, downloadable and
+variable, and so do structures the constructor agent emitted in its workspace but did not hand in
+(it gave the plan up after building them); the page lists those as "not handed in" with the agent's
+reason, their geometry checks and the same tools.
 
 The page gives the planner only the systems the user ticked (a copy of the summary restricted to
 them, `runs/<time>/inputs/paper_graph.json`), so the plans cannot drift to the other samples of a

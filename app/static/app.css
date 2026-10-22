@@ -202,3 +202,24 @@ details.sub > summary { cursor: pointer; color: var(--muted); font-size: 13px; }
 .toast { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 11px 18px; border-radius: 10px; font-size: 14px; z-index: 20; max-width: 80vw; box-shadow: var(--shadow-2); }
 .toast.error { background: var(--bad); color: #fff; }
 @media (max-width: 760px) { .proj-row { grid-template-columns: 1fr auto; } .proj-row .m { display: none; } .step-btn .lbl { display: none; } .proj { min-width: 160px; } h1 { font-size: 22px; } }
+
+/* build more structures from a script: the parameter form and the variants it produced */
+.params { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px 16px; margin: 8px 0; }
+.param { display: flex; flex-direction: column; gap: 3px; font-size: 13.5px; }
+.param .n { font: 500 12.5px var(--mono); }
+.param .c { font-size: 12px; color: var(--muted); }
+.param input[type=text], .param input[type=number] { width: 100%; }
+.variant { border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; margin: 10px 0; background: var(--bg-2); }
+.variant .changed { font: 12.5px var(--mono); }
+.vstruct { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 8px; align-items: start; }
+@media (max-width: 900px) { .vstruct { grid-template-columns: 1fr; } }
+.viewer.small { height: 240px; background: var(--card); }
+.badge.cancelled, .badge.status-cancelled { background: var(--chip); color: var(--muted); }
+.spinner.cancelled { animation: none; border-color: transparent; } .spinner.cancelled::after { content: "■"; color: var(--muted); font-size: 11px; }
+button.stop { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, var(--line-2)); }
+button.stop:not(:disabled):hover { background: var(--bad-soft); }
+.figstrip { display: flex; gap: 12px; overflow-x: auto; padding: 4px 2px 8px; }
+.fig { flex: 0 0 260px; display: flex; flex-direction: column; gap: 6px; text-decoration: none; color: var(--ink); border: 1px solid var(--line); border-radius: 12px; padding: 8px; background: var(--bg-2); }
+.fig img { width: 100%; height: 170px; object-fit: contain; background: #fff; border-radius: 8px; }
+.fig .cap { font-size: 12px; color: var(--muted); line-height: 1.35; }
+.fig:hover { border-color: var(--accent); }

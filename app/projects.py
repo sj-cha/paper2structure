@@ -1,11 +1,11 @@
 """Project store, the three stages of the web tool (app/server.py) and its job runner.
 
-    1. summarize     Agent 1 on the uploaded PDF                          -> <project>/paper/
-    2. characterize  Agent 2, one agent per technique, cached per model,  -> <project>/characterization/<key>/
+    1. summarize     the summarizer agent on the PDF                       -> <project>/paper/
+    2. characterize  the characterization agent per technique, cached per model,  -> <project>/characterization/<key>/
                      effort and technique set
-    3. generate      Agent 3 on the material systems the user chose, with  -> <project>/plans/<key>.json
+    3. generate      the planner agent on the material systems the user chose,  -> <project>/plans/<key>.json
                      the atom budget and DFT/MD brief (cached per settings),
-                     then Agents 4-5 as one graph run: construction,       -> <project>/runs/<time>/
+                     then constructor and reviser agents as one graph run,       -> <project>/runs/<time>/
                      validation and review (the saved plan is handed to the
                      graph; the saved summary and evidence are loaded, not
                      recomputed)
@@ -18,6 +18,7 @@ once); each job's log lines are routed to it through a ContextVar.
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import contextvars
 import hashlib
@@ -40,7 +41,7 @@ from typing import Any, Callable, Optional
 from ase.io import read, write
 
 from paper2structure.agents.characterization import ExperimentalEvidence, find_spec
-from paper2structure.agents.constructor.workspace import sandbox_available
+from paper2structure.agents.constructor.workspace import replay, sandbox_available
 from paper2structure.agents.planner import LLMPlanner
 from paper2structure.agents.planner.schemas import PlanSet
 from paper2structure.agents.summarizer.graph import summarize_paper
@@ -50,6 +51,9 @@ from paper2structure.config import (DEFAULT_MODEL, CharacterizationConfig, Overr
                                     canonical_technique, get_model, load_config)
 from paper2structure.graph.nodes import characterize
 from paper2structure.graph.workflow import build_deps, make_planner, run_workflow
+from paper2structure.tools.geometry_checks import validate_structure
+from paper2structure.tools.render import render_png
+from paper2structure.tools.structure_export import export_structure
 from structure_info import compute_estimate, structure_info
 
 REPO = Path(__file__).resolve().parents[1]
@@ -169,15 +173,22 @@ def estimate_cost(model: str, input_tokens: int, output_tokens: int) -> Optional
 # --------------------------------------------------------------------------------------
 
 
-def default_max_atoms(method: str, realism: float) -> int:
-    """Atom budget from the realism slider: DFT 60-600 atoms, MD 500-10000 (app.js mirrors this)."""
-    lo, hi = (60, 600) if method == "DFT" else (500, 10000)
-    return int(round((lo + (hi - lo) * realism) / 10) * 10)
+DFT_MAX_ATOMS = 600  # up to here the brief is DFT-sized periodic cells, beyond it MD on a machine-learned potential
+
+
+def derived_brief(max_atoms: int) -> tuple[str, float]:
+    """The simulation method and the realism band the planner is briefed with, from the one control the
+    page has, the atom limit: small limits ask for the cheapest ordered cell, large ones for doping,
+    surfaces or particles (app.js mirrors the DFT/MD threshold in its hint)."""
+    if max_atoms <= DFT_MAX_ATOMS:
+        return "DFT", round(min(1.0, max(0.0, (max_atoms - 60) / 540)), 2)
+    return "MD", round(min(1.0, max(0.0, (max_atoms - 500) / 9500)), 2)
 
 
 @dataclass
 class Settings:
-    """Everything the user chooses on panels 2 and 3, stored with every characterization, plan and run."""
+    """Everything the user chooses on panels 2 and 3, stored with every characterization, plan and run.
+    `method` and `realism` are derived from `max_atoms` (derived_brief) unless given explicitly."""
     systems: list[str] = field(default_factory=list)  # the material systems to model (summarizer IDs)
     techniques: list[str] = field(default_factory=list)  # analyze only these; empty = every technique with an agent
     max_plans: int = 1  # planning.max_plans: competing hypotheses, one structure each
@@ -200,9 +211,12 @@ class Settings:
         s.systems = [str(x) for x in get("systems", [])]
         s.techniques = sorted({canonical_technique(t) or str(t) for t in get("techniques", [])})
         s.max_plans = _clamp(get("max_plans", s.max_plans), 1, 3)
-        s.method = "MD" if str(get("method", s.method)).upper() == "MD" else "DFT"
-        s.realism = round(min(1.0, max(0.0, float(get("realism", s.realism)))), 2)
-        s.max_atoms = _clamp(get("max_atoms", default_max_atoms(s.method, s.realism)), 10, 50000)
+        s.max_atoms = _clamp(get("max_atoms", s.max_atoms), 10, 50000)
+        if raw.get("method") is None and raw.get("realism") is None:
+            s.method, s.realism = derived_brief(s.max_atoms)
+        else:  # older callers that still choose them
+            s.method = "MD" if str(get("method", s.method)).upper() == "MD" else "DFT"
+            s.realism = round(min(1.0, max(0.0, float(get("realism", s.realism)))), 2)
         model_type = raw.get("model_type") or None
         s.model_type = model_type if model_type in MODEL_TYPES else None
         s.seed = int(get("seed", s.seed))
@@ -211,9 +225,9 @@ class Settings:
         return s
 
     def plan_key(self, model: str, effort: str, techniques: list[str]) -> str:
-        """`techniques` is the resolved list the evidence analysis ran on (see resolve_techniques)."""
-        return _hash("plan", model, effort, techniques, self.systems, self.max_plans, self.method, self.realism,
-                     self.max_atoms, self.model_type)
+        """`techniques` is the resolved list the evidence analysis ran on (see resolve_techniques). The
+        method and realism are not part of the key: they follow from max_atoms."""
+        return _hash("plan2", model, effort, techniques, self.systems, self.max_plans, self.max_atoms, self.model_type)
 
     def overrides(self, names: dict[str, str]) -> OverridesConfig:
         """The planner's hard constraints: the chosen systems, the simulation method and the realism band."""
@@ -367,7 +381,7 @@ class Project:
 
 
 def run_summarize(project: Project, say: Callable[[str], None]) -> dict:
-    """Agent 1 into a scratch folder that replaces paper/ only on success, so a rejected summary
+    """The summarizer agent into a scratch folder that replaces paper/ only on success, so a rejected summary
     (no material systems) leaves the previous one and the caches built on it untouched."""
     meta = project.meta
     model = get_model(meta["model"])  # raises without the provider's API key
@@ -383,8 +397,8 @@ def run_summarize(project: Project, say: Callable[[str], None]) -> dict:
 
     started = time.time()
     try:
-        graph = asyncio.run(summarize_paper(project.dir / "paper.pdf", scratch, model, on_progress=progress,
-                                            analyze_figures=meta["analyze_figures"], max_figures=meta["max_figures"]))
+        graph = run_async(summarize_paper(project.dir / "paper.pdf", scratch, model, on_progress=progress,
+                                          analyze_figures=meta["analyze_figures"], max_figures=meta["max_figures"]))
         if not graph.systems:
             raise RuntimeError("the summarizer found no material systems in this paper")
     except Exception:
@@ -408,7 +422,7 @@ def run_summarize(project: Project, say: Callable[[str], None]) -> dict:
         try:
             key, _ = ensure_characterization(project, Settings(), say)
             result["characterization"] = key
-        except Exception as e:  # noqa: BLE001 - the summary is saved and usable; only Agent 2 failed
+        except Exception as e:  # noqa: BLE001 - the summary is saved and usable; only the characterization agent failed
             say(f"Evidence analysis skipped: {e}")
             result["characterization_error"] = str(e)
     return result
@@ -428,7 +442,7 @@ def _check_summary(project: Project) -> PaperGraph:
 
 def ensure_characterization(project: Project, settings: Settings,
                             say: Callable[[str], None]) -> tuple[str, ExperimentalEvidence]:
-    """Agent 2's reports for this model, effort and technique set: reused when they exist."""
+    """The characterization agent's reports for this model, effort and technique set: reused when they exist."""
     graph = _check_summary(project)
     model, effort = project.meta["model"], project.meta["effort"]
     techniques = resolve_techniques(graph, settings.techniques)
@@ -442,10 +456,10 @@ def ensure_characterization(project: Project, settings: Settings,
         say(f"Evidence already analyzed for this model and technique set ({', '.join(techniques)}): reused, no model call.")
         return key, ExperimentalEvidence.load(folder)
     say(("Some techniques failed last time; analyzing again. " if saved else "")
-        + f"Analyzing the evidence per technique (Agent 2: {', '.join(techniques)}; {model}, effort {effort})...")
+        + f"Analyzing the evidence per technique (characterization agent: {', '.join(techniques)}; {model}, effort {effort})...")
     started = time.time()
     cc = CharacterizationConfig(techniques=techniques, reasoning_effort=effort, output_retries=1)
-    evidence = asyncio.run(characterize(graph, project.paper_dir, folder, get_model(model), cc))
+    evidence = run_async(characterize(graph, project.paper_dir, folder, get_model(model), cc))
     if not evidence.reports:
         raise RuntimeError("no technique could be analyzed: " + ("; ".join(evidence.errors) or "unknown reason"))
     _write_json(meta_path, {
@@ -480,15 +494,15 @@ def _check_systems(project: Project, settings: Settings) -> dict[str, str]:
 
 def make_plan(project: Project, settings: Settings, evidence: ExperimentalEvidence, char_key: str,
               techniques: list[str], say: Callable[[str], None]) -> dict:
-    """Agent 3 on the chosen systems; the plan set is saved under its settings key."""
+    """The planner agent on the chosen systems; the plan set is saved under its settings key."""
     model, effort = project.meta["model"], project.meta["effort"]
     names = _check_systems(project, settings)
     graph = project.focused_graph(settings.systems)
-    say(f"Planning structures (Agent 3) for {', '.join(names[i] for i in settings.systems)}: "
+    say(f"Planning structures (planner agent) for {', '.join(names[i] for i in settings.systems)}: "
         f"{settings.method}, at most {settings.max_atoms} atoms, {settings.max_plans} hypothesis/es...")
     planner = make_planner(settings_config(project, settings, names))  # the planner the graph run would build
     started = time.time()
-    plans = asyncio.run(planner.plan(graph, evidence, [], ""))
+    plans = run_async(planner.plan(graph, evidence, [], ""))
     key = settings.plan_key(model, effort, techniques)
     record = {"key": key, "characterization": char_key, "techniques": techniques, "model": model, "effort": effort,
               "created": _now(), "seconds": round(time.time() - started), "settings": asdict(settings),
@@ -577,16 +591,296 @@ def run_generate(project: Project, settings: Settings, say: Callable[[str], None
     _write_json(run_dir / "config.json", {"config": cfg.model_dump(mode="json")})
     deps = build_deps(cfg, run_dir, seed=settings.seed)  # the loop budgets are in cfg.budgets
     deps.planner = SavedPlanner(PlanSet.model_validate(record["plans"]), deps.planner)
-    say("Starting the graph run: the saved summary, evidence and plan are loaded from disk (Agents 1-3 are not "
-        f"run again); then construction and review (Agents 4-5, {settings.method}, at most {settings.max_atoms} atoms, "
+    say("Starting the graph run: the saved summary, evidence and plan are loaded from disk (summarizer, "
+        f"characterization and planner agents are not run again); then construction and review (constructor and reviser agents, {settings.method}, at most {settings.max_atoms} atoms, "
         f"sandbox {cfg.construction.sandbox}). A few minutes...")
     started = time.time()
-    result = asyncio.run(run_workflow(deps))
+    result = run_async(run_workflow(deps))
     project.meta["current_run"], project.meta["last_settings"] = run_dir.name, asdict(settings)
     project.save()
     say(f"Run finished in {round(time.time() - started)} s: status {result.status}, "
         f"{len(result.structure_files)} structure(s), {len(result.accepted_structure_ids)} accepted.")
     return {"run": run_dir.name, "status": result.status}
+
+
+# --------------------------------------------------------------------------------------
+# After a run: build more structures from a validated script by changing its parameters
+# --------------------------------------------------------------------------------------
+
+_PARAM_NAME = re.compile(r"^[A-Z][A-Z0-9_]*$")  # the script contract: named parameters at the top, UPPER_CASE
+
+
+def _literal(node: ast.expr):
+    """The JSON value of a literal node (number, string, bool, or a tuple/list of those), else ValueError."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, (bool, int, float, str)):
+        return node.value
+    if (isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd)) and isinstance(node.operand, ast.Constant)
+            and isinstance(node.operand.value, (int, float)) and not isinstance(node.operand.value, bool)):
+        return -node.operand.value if isinstance(node.op, ast.USub) else node.operand.value
+    if isinstance(node, (ast.Tuple, ast.List)):
+        return [_literal(e) for e in node.elts]
+    raise ValueError("not a literal")
+
+
+def _kind(value) -> str:
+    return "bool" if isinstance(value, bool) else "number" if isinstance(value, (int, float)) else "list" if isinstance(value, list) else "text"
+
+
+def script_params(path: Path) -> list[dict]:
+    """The named parameters at the top of a build script (module-level ``NAME = literal`` lines, with the
+    comment on the line): what the page lets the user change to build more structures."""
+    src = path.read_text()
+    lines = src.encode().split(b"\n")
+    out = []
+    for node in ast.parse(src).body:
+        if not (isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
+                and _PARAM_NAME.match(node.targets[0].id) and node.value.lineno == node.value.end_lineno):
+            continue
+        try:
+            value = _literal(node.value)
+        except ValueError:
+            continue
+        raw = lines[node.lineno - 1]
+        rest = raw[node.value.end_col_offset:].decode(errors="replace")
+        out.append({"name": node.targets[0].id, "value": value, "kind": _kind(value),
+                    "comment": rest.split("#", 1)[1].strip() if "#" in rest else "", "line": node.lineno,
+                    "col": [node.value.col_offset, node.value.end_col_offset],
+                    "tuple": raw[node.value.col_offset:node.value.col_offset + 1] == b"("})
+    return out
+
+
+def _coerce(value, param: dict):
+    """A new value in the parameter's kind (ints stay ints when the new value is whole), else ValueError."""
+    name, kind, old = param["name"], param["kind"], param["value"]
+
+    def number(v, like):
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            raise ValueError(f"{name}: {v!r} is not a number") from None
+        if f != f or f in (float("inf"), float("-inf")):
+            raise ValueError(f"{name}: must be finite")
+        return int(f) if isinstance(like, int) and not isinstance(like, bool) and f == int(f) else f
+
+    if kind == "number":
+        return number(value, old)
+    if kind == "bool":
+        return value if isinstance(value, bool) else str(value).strip().lower() in ("1", "true", "yes", "on")
+    if kind == "list":
+        items = [x.strip() for x in value.split(",") if x.strip()] if isinstance(value, str) else list(value)
+        if not items:
+            raise ValueError(f"{name}: give at least one value")
+        like = old[0] if old else 1.0
+        return [number(x, like) if isinstance(like, (int, float)) else str(x) for x in items]
+    return str(value)
+
+
+def _py_literal(value, param: dict) -> str:
+    if isinstance(value, list):
+        inner = ", ".join(_py_literal(v, param) for v in value)
+        return f"({inner},)" if param["tuple"] and len(value) == 1 else f"({inner})" if param["tuple"] else f"[{inner}]"
+    return repr(value)
+
+
+def rewrite_script(src: str, params: list[dict], values: dict) -> tuple[str, dict, dict]:
+    """The script with the given parameter values substituted in place (comments and everything else
+    kept). Returns (source, every parameter's value, the ones that changed)."""
+    lines = src.encode().split(b"\n")
+    used, changed = {}, {}
+    for p in params:
+        if p["name"] not in values or values[p["name"]] is None or values[p["name"]] == "":
+            used[p["name"]] = p["value"]
+            continue
+        new = _coerce(values[p["name"]], p)
+        used[p["name"]] = new
+        if new != p["value"]:
+            changed[p["name"]] = new
+            a, b = p["col"]
+            raw = lines[p["line"] - 1]
+            lines[p["line"] - 1] = raw[:a] + _py_literal(new, p).encode() + raw[b:]
+    return b"\n".join(lines).decode(), used, changed
+
+
+def _run_config(run: Path) -> Paper2StructureConfig:
+    """The run's construction, validation, planning and campaign settings on top of today's base config.
+    Copied field by field because a run saved by an earlier version of the library may hold keys the
+    current config no longer accepts."""
+    cfg = load_config(str(BASE_CONFIG))
+    saved = (_read_json(run / "config.json") or {}).get("config", {})
+    for section in ("campaign", "planning", "validation", "construction"):
+        model = getattr(cfg, section)
+        for key, value in (saved.get(section) or {}).items():
+            if key in type(model).model_fields:
+                setattr(model, key, value)
+    cc = cfg.construction
+    cc.sandbox = "bubblewrap" if sandbox_available()[0] else "none"
+    if cc.sandbox == "none":
+        cc.memory_limit_gb = None
+    return cfg
+
+
+_UNREPORTED = re.compile(r"^(?P<name>.+)__(?P<attempt>r\d+_a\d+)$")  # a workspace structure's id: <name>__r<rev>_a<attempt>
+
+
+def _structure_source(run: Path, structure_id: str) -> dict:
+    """Where a structure's files and script are: a registered artifact of the run, or a structure the
+    constructor agent emitted in a workspace but never reported as finished (the plan was given up
+    afterwards). Paths are relative to the run; `script` is None for a structure built inline."""
+    artifact = next((a for a in _read_json(run / "artifacts.json", []) if a["structure_id"] == structure_id), None)
+    if artifact is not None:
+        return {"files": artifact["files"], "script": artifact["script"], "entry": None}
+    m = _UNREPORTED.match(structure_id)
+    if m:
+        for manifest in (run / "construction" / m["attempt"]).glob("*/workspace/structures/manifest.json"):
+            for entry in _read_json(manifest, []):
+                if entry["name"] != m["name"]:
+                    continue
+                files = {"extxyz": str((manifest.parent / entry["path"]).relative_to(run))}
+                for fmt, suffix in (("poscar", ".vasp"), ("metadata", ".json")):
+                    if (manifest.parent / f"{entry['name']}{suffix}").exists():
+                        files[fmt] = str((manifest.parent / f"{entry['name']}{suffix}").relative_to(run))
+                script = manifest.parents[1] / entry["script"] if entry.get("script") and entry["script"] != "<inline>" else None
+                return {"files": files, "script": str(script.relative_to(run)) if script and script.exists() else None,
+                        "entry": entry}
+    raise KeyError(f"no structure {structure_id!r} in run {run.name!r}")
+
+
+def _plan_failures(run: Path) -> dict[str, str]:
+    """The constructor agent's latest reason for each plan it reported as not built."""
+    failures: dict[str, str] = {}
+    for report in _read_json(run / "construction_reports.json", []):
+        for f in report.get("failed", []):
+            failures[f["plan_id"]] = f["reason"]
+    return failures
+
+
+def _unreported_structures(project: Project, run: Path, artifacts: list[dict], method: str) -> list[dict]:
+    """Structures emitted in the construction workspaces that never became artifacts: the agent gave the
+    plan up (a target or claim it could not meet) after building them. They are still worth looking at,
+    downloading and varying, so the page shows them with the same tools. Their geometry checks are
+    computed once and cached in runs/<run>/unreported.json."""
+    registered = {(a["name"], f"r{a['revision']}_a{a['attempt']}") for a in artifacts}
+    failures = _plan_failures(run)
+    cache_path = run / "unreported.json"
+    cache, dirty, cfg = _read_json(cache_path, {}), False, None
+    out = []
+    for manifest in sorted(run.glob("construction/r*_a*/*/workspace/structures/manifest.json")):
+        attempt = manifest.parents[3].name
+        for entry in _read_json(manifest, []):
+            path = manifest.parent / entry["path"]
+            if (entry["name"], attempt) in registered or not path.exists():
+                continue
+            sid = f"{entry['name']}__{attempt}"
+            atoms = read(path)
+            mtime = path.stat().st_mtime
+            if sid not in cache or cache[sid].get("mtime") != mtime:
+                cfg = cfg or _run_config(run)
+                report = validate_structure(atoms, entry["name"], max_atoms=max(cfg.planning.max_atoms, len(atoms)),
+                                            **cfg.validation.model_dump())
+                cache[sid] = {"mtime": mtime, "validation": {"passed": report.passed, "checks": [c.model_dump() for c in report.checks]}}
+                dirty = True
+            source = _structure_source(run, sid)
+            try:
+                params = script_params(run / source["script"]) if source["script"] else []
+            except (OSError, SyntaxError, ValueError):
+                params = []
+            downloads = {fmt: f"/api/projects/{project.id}/files/runs/{run.name}/{p}" for fmt, p in source["files"].items()}
+            if source["script"]:
+                downloads["script"] = f"/api/projects/{project.id}/files/runs/{run.name}/{source['script']}"
+            out.append({"structure_id": sid, "name": entry["name"], "plan_id": entry["plan_id"], "attempt": attempt,
+                        "unreported": True, "reason": failures.get(entry["plan_id"], ""), "notes": entry.get("notes", ""),
+                        "formula": atoms.get_chemical_formula(), "n_atoms": len(atoms), "accepted": False, "current": None,
+                        "info": structure_info(atoms), "estimate": compute_estimate(atoms, method), "plan": None,
+                        "validation": cache[sid]["validation"], "params": params, "variants": [], "target_checks": [],
+                        "deviations": [], "method": "", "has_script": bool(source["script"]), "downloads": downloads,
+                        "image_url": None})
+    if dirty:
+        _write_json(cache_path, cache)
+    return out
+
+
+def _unreported_count(run: Path) -> int:
+    registered = {(a["name"], f"r{a['revision']}_a{a['attempt']}") for a in _read_json(run / "artifacts.json", [])}
+    return sum(1 for m in run.glob("construction/r*_a*/*/workspace/structures/manifest.json")
+               for e in _read_json(m, []) if (e["name"], m.parents[3].name) not in registered)
+
+
+def _variant_script(run: Path, structure_id: str) -> Path:
+    source = _structure_source(run, structure_id)
+    if not source["script"]:
+        raise RuntimeError("this structure was built inline (python -c), so there is no script to vary")
+    return run / source["script"]
+
+
+def check_variant(project: Project, run_name: str, structure_id: str, values: dict) -> dict:
+    """Validate a variant request before queueing it: the script exists and the values fit its parameters."""
+    script = _variant_script(project.run_dir(run_name), structure_id)
+    params = script_params(script)
+    _, used, changed = rewrite_script(script.read_text(), params, values)
+    return {"params": used, "changed": changed}
+
+
+def run_variant(project: Project, run_name: str, structure_id: str, values: dict, say: Callable[[str], None]) -> dict:
+    """Re-run a structure's build script with new parameter values (no agent involved), then validate,
+    export and render what it emits, under runs/<run>/variants/<id>/."""
+    run = project.run_dir(run_name)
+    script = _variant_script(run, structure_id)
+    params = script_params(script)
+    src, used, changed = rewrite_script(script.read_text(), params, values)
+    vid = f"{time.strftime('%Y%m%d-%H%M%S')}_{uuid.uuid4().hex[:4]}"
+    vdir = run / "variants" / vid
+    vdir.mkdir(parents=True)
+    (vdir / script.name).write_text(src)
+    cfg = _run_config(run)
+    say(f"Running {script.name} with " + (", ".join(f"{k} = {v}" for k, v in changed.items()) or "its original parameters")
+        + f" (no agent: the saved script, sandbox {cfg.construction.sandbox})...")
+    started = time.time()
+    result = run_async(replay(vdir / script.name, vdir / "work", cfg.construction))
+    structures = []
+    for entry in _read_json(vdir / "work" / "structures" / "manifest.json", []):
+        atoms = read(vdir / "work" / "structures" / entry["path"])
+        # the atom limit was a planning choice; a variant is the user asking for a different size, so only
+        # the physical checks apply (an oversized cell is reported, not failed)
+        report = validate_structure(atoms, entry["name"], max_atoms=max(cfg.planning.max_atoms, len(atoms)),
+                                    **cfg.validation.model_dump())
+        files = export_structure(atoms, vdir / "structures", entry["name"], formats=("poscar", "cif", "extxyz"))
+        image = vdir / "structures" / f"{entry['name']}.png"
+        render_png(atoms, image)
+        structures.append({"name": entry["name"], "formula": atoms.get_chemical_formula(), "n_atoms": len(atoms),
+                           "over_budget": len(atoms) > cfg.planning.max_atoms, "info": structure_info(atoms),
+                           "estimate": compute_estimate(atoms, cfg.campaign.simulation if cfg.campaign.simulation == "DFT" else "MD"),
+                           "files": {k: str(Path(v).relative_to(run)) for k, v in files.items()},
+                           "image": str(image.relative_to(run)),
+                           "validation": {"passed": report.passed, "checks": [c.model_dump() for c in report.checks]}})
+    error = None
+    if result.exit_code != 0:
+        error = f"the script exited with code {result.exit_code}"
+    elif not structures:
+        error = "the script ran but emitted no structure"
+    record = {"id": vid, "structure_id": structure_id, "script": str((vdir / script.name).relative_to(run)),
+              "params": used, "changed": changed, "created": _now(), "seconds": round(time.time() - started),
+              "exit_code": result.exit_code, "stdout": (result.stdout or "")[-4000:], "stderr": (result.stderr or "")[-4000:],
+              "structures": structures, "error": error}
+    _write_json(vdir / "variant.json", record)
+    say(f"Variant {'failed: ' + error if error else 'built'} in {record['seconds']} s"
+        + (": " + "; ".join(f"{s['name']} {s['formula']} ({s['n_atoms']} atoms, geometry "
+                            f"{'ok' if s['validation']['passed'] else 'FAILED'})" for s in structures) if structures else ""))
+    if error:
+        raise RuntimeError(error + (f": {record['stderr'].strip().splitlines()[-1]}" if record["stderr"].strip() else ""))
+    return {"run": run_name, "variant": vid, "structures": len(structures)}
+
+
+def _variants(project: Project, run: Path) -> list[dict]:
+    folder = run / "variants"
+    out = []
+    for path in sorted(folder.glob("*/variant.json"), reverse=True) if folder.exists() else []:
+        v = _read_json(path)
+        for s in v["structures"]:
+            s["downloads"] = {fmt: f"/api/projects/{project.id}/files/runs/{run.name}/{p}" for fmt, p in s["files"].items()}
+            s["image_url"] = f"/api/projects/{project.id}/files/runs/{run.name}/{s['image']}"
+        v["script_url"] = f"/api/projects/{project.id}/files/runs/{run.name}/{v['script']}"
+        out.append(v)
+    return out
 
 
 # --------------------------------------------------------------------------------------
@@ -628,7 +922,8 @@ def _run_summary(project: Project, run: Path) -> dict:
             "systems": settings.get("systems", {}), "model": settings.get("model"),
             "status": result["status"] if result else "unfinished",
             "n_structures": len(result["structure_files"]) if result else 0,
-            "n_accepted": len(result["accepted_structure_ids"]) if result else 0}
+            "n_accepted": len(result["accepted_structure_ids"]) if result else 0,
+            "n_unreported": _unreported_count(run)}
 
 
 def project_state(project: Project, active_job: Optional[str]) -> dict:
@@ -658,24 +953,35 @@ def run_detail(project: Project, name: str) -> dict:
     # the latest plan set's structures, not rebuilt since (None for runs made before result.json listed them)
     current = set(result["current_structure_ids"]) if result and "current_structure_ids" in result else None
     method = (settings.get("settings") or {}).get("method", "DFT")
+    variants = _variants(project, run)
     structures = []
     for a in artifacts:
         atoms = read(run / (a["files"].get("extxyz") or a["files"]["poscar"]))
         rep = validation.get(a["structure_id"], {})
+        try:
+            params = script_params(run / a["script"])
+        except (OSError, SyntaxError, ValueError):
+            params = []
         structures.append({
             **a, "accepted": a["structure_id"] in accepted, "info": structure_info(atoms),
             "current": None if current is None else a["structure_id"] in current,
             "estimate": compute_estimate(atoms, method), "plan": plans.get(a["plan_id"]),
             "validation": {"passed": rep.get("passed"), "checks": rep.get("checks", [])},
+            "params": params, "variants": [v for v in variants if v["structure_id"] == a["structure_id"]],
             "downloads": {**{fmt: f"/api/projects/{project.id}/files/runs/{name}/{p}" for fmt, p in a["files"].items()},
                           "script": f"/api/projects/{project.id}/files/runs/{name}/{a['script']}"},
             "image_url": f"/api/projects/{project.id}/files/runs/{name}/{a['image']}" if a.get("image") else None})
+    unreported = _unreported_structures(project, run, artifacts, method)
+    for s in unreported:
+        s["variants"] = [v for v in variants if v["structure_id"] == s["structure_id"]]
     usage = _read_json(run / "token_log.json", {})
     total_in = sum(u.get("input", 0) for u in usage.values())
     total_out = sum(u.get("output", 0) for u in usage.values())
     plan_record = project.plan_record(settings["plan"]) if settings.get("plan") else None
     return {"name": name, "status": result["status"] if result else "unfinished", "result": result, "settings": settings,
-            "structures": structures, "plans": list(plans.values()), "decision": history[-1] if history else None,
+            "structures": structures, "unreported": unreported,
+            "failures": [{"plan_id": k, "reason": v} for k, v in _plan_failures(run).items()],
+            "plans": list(plans.values()), "decision": history[-1] if history else None,
             "plan_record": {k: v for k, v in plan_record.items() if k != "plans"} if plan_record else None,
             "report": (run / "final_report.md").read_text() if (run / "final_report.md").exists() else "",
             "errors": result["errors"] if result else [],
@@ -684,17 +990,92 @@ def run_detail(project: Project, name: str) -> dict:
             "zip_url": f"/api/projects/{project.id}/runs/{name}/zip"}
 
 
-def structure_model(project: Project, name: str, structure_id: str) -> dict:
-    """The structure as CIF (periodic) or XYZ text for the 3Dmol.js viewer."""
+OPEN_GAP = 5.0  # A of empty space along a cell vector that counts as vacuum (as the library's structure_kind)
+
+
+def display_atoms(atoms):
+    """The structure as the viewer should show it; the files are left as they are. Periodic wrapping
+    folds atoms back into the cell, which splits a particle or slab sitting across the boundary and
+    cuts molecules in half (the viewer then draws stray atoms and missing bonds). So: along every
+    cell vector that holds vacuum the structure is shifted so the empty space sits at the boundary,
+    each molecule (per-atom mol_id) is made whole with the minimum-image rule, and the cell is put
+    in its standard orientation so the viewer's box matches the coordinates."""
+    import numpy as np
+    from paper2structure.tools.structure_export import slab_axis, structure_kind, wire_axis
+    shown = atoms.copy()
+    if shown.cell.rank < 3:
+        return shown
+    original = shown.positions.copy()
+    kind = structure_kind(shown)  # the library's call on which cell vectors are open (hold vacuum)
+    open_axes = {"nanocrystal": [0, 1, 2], "slab": [slab_axis(shown)], "wire": [k for k in range(3) if k != wire_axis(shown)]}.get(kind, [])
+    frac = shown.get_scaled_positions(wrap=True)
+    for axis in open_axes:
+        order = np.sort(frac[:, axis])
+        gaps = np.diff(np.append(order, order[0] + 1.0))  # the last gap wraps around
+        i = int(np.argmax(gaps))
+        start = (order[i] + gaps[i]) % 1.0  # where the occupied range begins
+        frac[:, axis] = (frac[:, axis] - start) % 1.0 + gaps[i] / 2  # contiguous and centred
+    shown.set_scaled_positions(frac)
+    if shown.has("mol_id") and (shown.arrays["mol_id"] >= 0).any():
+        # walk each molecule's bond graph, placing every atom next to the bonded atom it was reached
+        # from (works for molecules wider than half the cell, where a single minimum image does not)
+        from collections import deque
+        from ase.neighborlist import natural_cutoffs, neighbor_list
+        ids = shown.arrays["mol_id"]
+        i_idx, j_idx, vecs = neighbor_list("ijD", shown, natural_cutoffs(shown, mult=1.2))
+        shortest: dict[tuple[int, int], np.ndarray] = {}  # one bond per pair: its nearest image, not a periodic contact
+        for i, j, d in zip(i_idx, j_idx, vecs):
+            if ids[i] == ids[j] and ids[i] >= 0:
+                key = (int(i), int(j))
+                if key not in shortest or np.linalg.norm(d) < np.linalg.norm(shortest[key]):
+                    shortest[key] = d
+        bonds: dict[int, list[tuple[int, np.ndarray]]] = {}
+        for (i, j), d in shortest.items():
+            bonds.setdefault(i, []).append((j, d))
+        extent = lambda pos: float((pos.max(axis=0) - pos.min(axis=0)).max())  # noqa: E731
+        for mid in np.unique(ids):
+            members = np.flatnonzero(ids == mid)
+            if mid < 0 or len(members) < 2:
+                continue
+            anchor = int(members[0])
+            placed, queue = {anchor}, deque([anchor])
+            while queue:
+                i = queue.popleft()
+                for j, d in bonds.get(i, []):
+                    if j not in placed:
+                        shown.positions[j] = shown.positions[i] + d
+                        placed.add(j)
+                        queue.append(j)
+            if extent(shown.positions[members]) > extent(original[members]) + 1e-6:
+                # never worse than the file: keep its geometry, moved along with the anchor
+                shown.positions[members] = original[members] - original[anchor] + shown.positions[anchor]
+    shown.set_cell(shown.cell.cellpar(), scale_atoms=True)  # standard orientation: a along x, b in the xy plane
+    return shown
+
+
+def structure_model(project: Project, name: str, structure_id: str, variant: Optional[str] = None) -> dict:
+    """The structure (of the run, or of one of its variants) as XYZ text for the 3Dmol.js viewer, with
+    its cell parameters (the viewer draws the box itself), prepared by display_atoms."""
     run = project.run_dir(name)
-    artifact = next((a for a in _read_json(run / "artifacts.json", []) if a["structure_id"] == structure_id), None)
-    if artifact is None:
-        raise KeyError(f"no structure {structure_id!r} in run {name!r}")
-    atoms = read(run / (artifact["files"].get("extxyz") or artifact["files"]["poscar"]))
-    periodic = bool(atoms.pbc.all())
-    buf = io.BytesIO()
-    write(buf, atoms, format="cif" if periodic else "xyz")
-    return {"format": "cif" if periodic else "xyz", "text": buf.getvalue().decode(), "periodic": periodic,
+    if variant:
+        if not _SAFE_NAME.match(variant):
+            raise KeyError(f"no variant {variant!r}")
+        record = _read_json(run / "variants" / variant / "variant.json")
+        entry = next((s for s in (record or {}).get("structures", []) if s["name"] == structure_id), None)
+        if entry is None:
+            raise KeyError(f"no structure {structure_id!r} in variant {variant!r}")
+        files = entry["files"]
+    else:
+        files = _structure_source(run, structure_id)["files"]
+    atoms = read(run / (files.get("extxyz") or files["poscar"]))
+    shown = display_atoms(atoms)
+    buf = io.StringIO()  # ASE's xyz writer wants text (its cif writer wants bytes)
+    write(buf, shown, format="xyz")
+    cell = None
+    if shown.cell.rank == 3 and atoms.pbc.any():
+        a, b, c, alpha, beta, gamma = (float(x) for x in shown.cell.cellpar())
+        cell = {"a": a, "b": b, "c": c, "alpha": alpha, "beta": beta, "gamma": gamma}
+    return {"format": "xyz", "text": buf.getvalue(), "periodic": bool(atoms.pbc.any()), "cell": cell,
             "n_atoms": len(atoms), "elements": sorted(set(atoms.get_chemical_symbols()))}
 
 
@@ -713,6 +1094,7 @@ def run_zip(project: Project, name: str) -> bytes:
 # --------------------------------------------------------------------------------------
 
 CURRENT_JOB: contextvars.ContextVar[Optional["Job"]] = contextvars.ContextVar("p2s_job", default=None)
+JOB_RUNTIME: dict[str, tuple[asyncio.AbstractEventLoop, asyncio.Task]] = {}  # the running job's loop and task, for Stop
 
 
 @dataclass
@@ -720,20 +1102,46 @@ class Job:
     id: str
     project_id: str
     title: str
-    kind: str  # summarize | characterize | generate
-    status: str = "queued"  # queued | running | done | failed
+    kind: str  # summarize | characterize | generate | variant
+    status: str = "queued"  # queued | running | done | failed | cancelled
     log: list[str] = field(default_factory=list)
     error: Optional[str] = None
     result: Any = None
     created: float = field(default_factory=time.time)
     started: Optional[float] = None
     finished: Optional[float] = None
+    cancel_requested: bool = False
 
     def to_dict(self, full: bool = True) -> dict:
         d = asdict(self)
         if not full:
             d["log"] = self.log[-1:]  # the list views only show the last line
         return d
+
+
+def run_async(coro):
+    """asyncio.run for a stage's coroutine, but on a loop the Stop button can reach: the job's task is
+    cancelled from the server thread, which interrupts the agents at their next await and terminates a
+    build script's subprocess."""
+    job = CURRENT_JOB.get()
+    if job is None:
+        return asyncio.run(coro)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        task = loop.create_task(coro)
+        JOB_RUNTIME[job.id] = (loop, task)
+        if job.cancel_requested:
+            task.cancel()
+        return loop.run_until_complete(task)
+    finally:
+        JOB_RUNTIME.pop(job.id, None)
+        try:
+            loop.run_until_complete(loop.shutdown_asyncgens())
+            loop.run_until_complete(loop.shutdown_default_executor())
+        finally:
+            asyncio.set_event_loop(None)
+            loop.close()
 
 
 class _JobLog(logging.Handler):
@@ -785,19 +1193,45 @@ class JobManager:
         with self._lock:
             return sorted(self.jobs.values(), key=lambda j: j.created, reverse=True)[:limit]
 
+    def cancel(self, job_id: str) -> Job:
+        """Stop a job: a queued one is dropped when a worker reaches it; a running one has its task
+        cancelled on its own loop. Files the stage had already written stay."""
+        job = self.jobs.get(job_id)
+        if job is None:
+            raise KeyError("no such job")
+        if job.status not in ("queued", "running"):
+            raise RuntimeError(f"the job is already {job.status}")
+        job.cancel_requested = True
+        job.log.append("Stop requested: interrupting at the next step...")
+        runtime = JOB_RUNTIME.get(job_id)
+        if runtime:
+            loop, task = runtime
+            loop.call_soon_threadsafe(task.cancel)
+        return job
+
     def _worker(self) -> None:
         while True:
             job, fn = self._queue.get()
+            if job.cancel_requested:  # stopped while still queued
+                job.status, job.finished, job.error = "cancelled", time.time(), "stopped before it started"
+                continue
             CURRENT_JOB.set(job)
             job.status, job.started = "running", time.time()
             try:
                 job.result = fn(job.log.append)
                 job.status = "done"
+            except asyncio.CancelledError:
+                job.error = "stopped by the user"
+                job.log.append("Stopped.")
+                job.status = "cancelled"
             except Exception as e:  # noqa: BLE001 - the page shows any failure
-                job.error = f"{type(e).__name__}: {e}"
-                job.log.append(f"ERROR {job.error}")
-                job.status = "failed"
-                log.error("job %s (%s, %s) failed:\n%s", job.id, job.kind, job.project_id, traceback.format_exc())
+                if job.cancel_requested:  # a stage turned the cancellation into its own error
+                    job.error, job.status = "stopped by the user", "cancelled"
+                else:
+                    job.error = f"{type(e).__name__}: {e}"
+                    job.log.append(f"ERROR {job.error}")
+                    job.status = "failed"
+                    log.error("job %s (%s, %s) failed:\n%s", job.id, job.kind, job.project_id, traceback.format_exc())
             finally:
                 job.finished = time.time()
                 CURRENT_JOB.set(None)

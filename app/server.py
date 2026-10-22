@@ -197,6 +197,25 @@ async def generate(request: Request):
 
 
 @api
+async def make_variant(request: Request):
+    """Re-run a structure's saved build script with new parameter values (a fast job, no agent)."""
+    project, run, sid = _project(request), request.path_params["run"], request.path_params["sid"]
+    body = await request.json() if await request.body() else {}
+    values = body.get("params") or {}
+    if not isinstance(values, dict):
+        raise ValueError("params must be an object of parameter name -> value")
+    P.check_variant(project, run, sid, values)  # a bad value fails now, with the parameter named
+    job = JOBS.submit(project, "variant", lambda say: P.run_variant(project, run, sid, values, say))
+    return {"job_id": job.id}
+
+
+@api
+def get_variant_model(request: Request):
+    return P.structure_model(_project(request), request.path_params["run"], request.path_params["name"],
+                             variant=request.path_params["vid"])
+
+
+@api
 def list_jobs(request: Request):
     return [j.to_dict(full=False) for j in JOBS.recent()]
 
@@ -207,6 +226,11 @@ def get_job(request: Request):
     if job is None:
         raise KeyError("no such job")
     return job.to_dict()
+
+
+@api
+def cancel_job(request: Request):
+    return JOBS.cancel(request.path_params["jid"]).to_dict(full=False)
 
 
 @api
@@ -247,9 +271,12 @@ app = Starlette(routes=[
     Route("/api/projects/{pid}/runs/{run}", get_run),
     Route("/api/projects/{pid}/runs/{run}/zip", get_run_zip),
     Route("/api/projects/{pid}/runs/{run}/structures/{sid}/model", get_structure_model),
+    Route("/api/projects/{pid}/runs/{run}/structures/{sid}/variants", make_variant, methods=["POST"]),
+    Route("/api/projects/{pid}/runs/{run}/variants/{vid}/structures/{name}/model", get_variant_model),
     Route("/api/projects/{pid}/files/{path:path}", get_file),
     Route("/api/jobs", list_jobs),
     Route("/api/jobs/{jid}", get_job),
+    Route("/api/jobs/{jid}/cancel", cancel_job, methods=["POST"]),
     Mount("/static", StaticFiles(directory=HERE / "static"), name="static"),
 ])
 
