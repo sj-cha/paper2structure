@@ -1,6 +1,7 @@
-"""Agent 2, characterization: one agent per technique (techniques/, keyed by the canonical names in
-paper2structure.config.TECHNIQUES) reads the figures and text the summarizer tagged with it and
-returns a CharacterizationReport; ExperimentalEvidence bundles the reports for Agents 3-5."""
+"""The characterization agents: one per technique (techniques/, keyed by the canonical names in
+paper2structure.config.TECHNIQUES) reads the figures and text the Summarizer tagged with it and
+returns a CharacterizationReport; ExperimentalEvidence bundles the reports for the Planner, the
+Constructor and the Reviewer."""
 from .agent import CharacterizationAgent
 from .schemas import (
     CharacterizationReport,

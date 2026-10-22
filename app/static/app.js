@@ -339,9 +339,9 @@ async function onJobFinished(job) {
 
 function jobTitle(job) {
   const log = job.log || [];
-  return {summarize: 'Reading the paper (Agent 1)' + (log.some((l) => /^Analyzing the evidence|^Evidence analyzed/.test(l)) ? ' and analyzing the evidence (Agent 2)' : ''),
-          characterize: 'Analyzing the evidence (Agent 2)',
-          generate: log.some((l) => /^A plan for exactly these settings exists/.test(l)) ? 'Building and reviewing (Agents 4-5; saved plan reused)' : 'Planning, building and reviewing (Agents 3-5)'}[job.kind] || job.kind;
+  return {summarize: 'Reading the paper (Summarizer)' + (log.some((l) => /^Analyzing the evidence|^Evidence analyzed/.test(l)) ? ' and analyzing the evidence (characterization agents)' : ''),
+          characterize: 'Analyzing the evidence (characterization agents)',
+          generate: log.some((l) => /^A plan for exactly these settings exists/.test(l)) ? 'Building and reviewing (Constructor and Reviewer; saved plan reused)' : 'Planning, building and reviewing (Planner, Constructor and Reviewer)'}[job.kind] || job.kind;
 }
 
 // Panel 1: one row per job of any paper, the active ones first; open expanders survive the 2 s re-render.
@@ -528,7 +528,7 @@ function renderStep2() {
   const cur = currentCharacterization();
   const status = cur ? `analyzed with ${modelTitle(cur.model)}, ${cur.effort} effort · ${cur.seconds} s · ${cur.techniques.join(', ')}` : 'not analyzed yet for these techniques, model and effort';
   tech.innerHTML = `<div class="card">
-      <h2>Evidence analysis <span class="muted">Agent 2: one agent per technique reads its figures and text</span></h2>
+      <h2>Evidence analysis <span class="muted">one characterization agent per technique reads its figures and text</span></h2>
       <div class="chips" id="techChips">${chips || '<span class="muted">no technique with evidence in this paper</span>'}</div>
       <div class="actions"><button class="primary" id="charBtn">Analyze evidence</button><span class="hint" id="charStatus">${esc(status)}</span></div>
       <details class="adv"><summary>Model for this step</summary><div class="row wrap gap small">

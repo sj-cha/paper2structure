@@ -44,8 +44,9 @@ class Finding(BaseModel):
 
 
 class StructuralConstraint(BaseModel):
-    # 'C<k>', its position in the report as Agent 2 wrote it; kept when the reports are filtered, so the
-    # claim IDs plans cite ('XRD:C3') never change. Not part of the model's output schema.
+    # 'C<k>', its position in the report as the characterization agent wrote it; kept when the reports
+    # are filtered, so the claim IDs plans cite ('XRD:C3') never change. Not part of the model's output
+    # schema.
     constraint_id: SkipJsonSchema[Optional[str]] = None
     property: str = Field(description="Structural property constrained by the data, e.g. 'interlayer spacing', 'phase'.")
     system_ids: list[str] = Field(default_factory=list, description="Systems the constraint applies to; several for a series-wide constraint.")
@@ -85,7 +86,7 @@ def _concerns(system_ids: list[str], keep: set[str]) -> bool:
 
 
 class ExperimentalEvidence(BaseModel):
-    """Agent 2's output as the rest of the workflow sees it: one CharacterizationReport per
+    """The characterization agents' output as the rest of the workflow sees it: one CharacterizationReport per
     technique (canonical name) and the techniques found in the paper but not analyzed."""
 
     reports: dict[str, CharacterizationReport] = Field(default_factory=dict)
@@ -98,7 +99,7 @@ class ExperimentalEvidence(BaseModel):
         return {f"{t}:{o.observation_id}" for t, r in self.reports.items() for o in r.observations}
 
     def prompt_json(self) -> str:
-        """The reports as Agents 3 and 5 read them: compact JSON without default fields and without
+        """The reports as the Planner and the Reviewer read them: compact JSON without default fields and without
         the structural constraints, which the claims list gives in full (ID, systems, value,
         confidence, cited observations, derivation)."""
         return self.model_dump_json(exclude_defaults=True, exclude={"reports": {"__all__": {"structural_constraints"}}})

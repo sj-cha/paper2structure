@@ -56,7 +56,7 @@ def _paper_model(ctx: Ctx) -> Model | str:
 
 @dataclass
 class SummarizePaper(BaseNode[ReconstructionState, WorkflowDeps, ReconstructionResult]):
-    """Agent 1: reads the PDF (text, figures, material systems) into a PaperGraph saved under
+    """The Summarizer: reads the PDF (text, figures, material systems) into a PaperGraph saved under
     paper/, or loads the paper_graph.json of an earlier run (copied to inputs/). Runs once."""
 
     async def run(self, ctx: Ctx) -> AnalyzeEvidence | FinalizeResults:
@@ -145,7 +145,7 @@ async def characterize(paper: PaperGraph, paper_dir: Path, out_dir: Path, model:
 
 @dataclass
 class AnalyzeEvidence(BaseNode[ReconstructionState, WorkflowDeps, ReconstructionResult]):
-    """Agent 2: one characterization agent per technique in the paper's evidence, or the reports
+    """The characterization agents: one per technique in the paper's evidence, or the reports
     saved in inputs.characterization (checked against the summary). The reports are restricted to
     the summary's systems and saved once (inputs/experimental_evidence.json). Re-entered when the
     reviewer revisits the evidence: the reports are kept and the reviewer's feedback travels on to
@@ -220,7 +220,7 @@ def _replan_context(st: ReconstructionState) -> str:
 
 @dataclass
 class PlanStructures(BaseNode[ReconstructionState, WorkflowDeps, ReconstructionResult]):
-    """Agent 3: structural hypotheses as construction plans (plans.json holds every plan set)."""
+    """The Planner: structural hypotheses as construction plans (plans.json holds every plan set)."""
 
     async def run(self, ctx: Ctx) -> ConstructStructures | FinalizeResults:
         _enter(ctx, "PlanStructures")
@@ -241,7 +241,7 @@ class PlanStructures(BaseNode[ReconstructionState, WorkflowDeps, ReconstructionR
 
 @dataclass
 class ConstructStructures(BaseNode[ReconstructionState, WorkflowDeps, ReconstructionResult]):
-    """Agent 4: one coding-agent run per pending plan, concurrently, each in its own sandboxed
+    """The Constructor: one coding-agent run per pending plan, concurrently, each in its own sandboxed
     workspace with its own request budget and its own plan's feedback; every reported structure is
     the output of its script re-run from scratch, and that script is saved with it. A plan whose run
     fails, or that the agent reports as not built, is recorded with the reason; ValidateStructures
@@ -394,7 +394,7 @@ class ValidateStructures(BaseNode[ReconstructionState, WorkflowDeps, Reconstruct
 
 @dataclass
 class ScientificRevision(BaseNode[ReconstructionState, WorkflowDeps, ReconstructionResult]):
-    """Agent 5: accept or stop (after writing the final report), send structures whose plan stands
+    """The Reviewer: accept or stop (after writing the final report), send structures whose plan stands
     back to construction (rebuild), or send the run back through evidence -> planning ->
     construction (revisit). The reviewer's output validator keeps rebuilds and revisits within
     max_rebuilds and max_revisions."""

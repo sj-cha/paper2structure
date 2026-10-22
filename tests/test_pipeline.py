@@ -1,7 +1,7 @@
 """The merged PDF -> summary -> characterization -> planning -> construction path, offline.
 
-Agents 1-2 (summarizer, characterization) answer with the dry-run model's canned outputs; the
-planner, constructor and reviser are scripted FunctionModels. The PDF is generated here; nothing in
+The Summarizer and the characterization agents answer with the dry-run model's canned outputs; the
+Planner, Constructor and Reviewer are scripted FunctionModels. The PDF is generated here; nothing in
 this module comes from a real publication or a real LLM."""
 from __future__ import annotations
 
@@ -165,8 +165,8 @@ def _xrd_report() -> CharacterizationReport:
 
 
 def test_pdf_to_structures_in_one_graph_run(tmp_path, paper_pdf):
-    """Agent 1 reads the generated PDF (dry run: systems S1/S2, the text evidence merged into E001,
-    the cut-out figure E002), Agent 2 runs the XRD agent (dry run: observation O1), the planner
+    """The Summarizer reads the generated PDF (dry run: systems S1/S2, the text evidence merged into
+    E001, the cut-out figure E002), the XRD characterization agent runs (dry run: observation O1), the planner
     cites 'E001' and 'XRD:O1' for S1, and the scripted constructor and reviser finish the run."""
     prompts = []
 
@@ -185,7 +185,7 @@ def test_pdf_to_structures_in_one_graph_run(tmp_path, paper_pdf):
     assert result.status == "accepted" and result.errors == [], result.errors
     assert state["node_history"] == LINEAR  # SummarizePaper -> AnalyzeEvidence -> PlanStructures -> ...
 
-    # Agent 1: the PaperGraph of the PDF, with the figure cut out next to it
+    # the Summarizer: the PaperGraph of the PDF, with the figure cut out next to it
     paper = load_graph(run / "paper" / "paper_graph.json")
     assert paper.source_pdf == str(paper_pdf) and [s.system_id for s in paper.systems] == ["S1", "S2"]
     text, figure = paper.evidence  # one text item per system, merged; then renumbered without gaps
@@ -194,18 +194,18 @@ def test_pdf_to_structures_in_one_graph_run(tmp_path, paper_pdf):
     assert figure.context == [XRD_SENTENCE] and (run / "paper" / figure.image_path).is_file()
     assert Path(state["paper_dir"]) == (run / "paper").resolve()
 
-    # Agent 2: one report per technique, saved, and the evidence the run used saved once
+    # the characterization agents: one report per technique, saved, and the evidence the run used saved once
     xrd = CharacterizationReport.model_validate_json((run / "characterization" / "XRD.json").read_text())
     assert xrd.technique == "XRD" and [o.observation_id for o in xrd.observations] == ["O1"]
     assert set(state["evidence"]["reports"]) == {"XRD"}
     saved = json.loads((run / "inputs" / "experimental_evidence.json").read_text())
     assert set(saved["reports"]) == {"XRD"}
 
-    # Agent 3 got the summary and the reports; its plan names the system it models
+    # the Planner got the summary and the reports; its plan names the system it models
     assert len(prompts) == 1 and "Dry-run paper" in prompts[0] and '"observation_id":"O1"' in prompts[0]
     assert state["plan_history"][0]["plans"][0]["system_ids"] == ["S1"]
 
-    # Agent 4 got both in its workspace; the accepted structure passed validation and was exported
+    # the Constructor got both in its workspace; the accepted structure passed validation and was exported
     task = run / "construction" / "r0_a0" / "P1" / "workspace" / "task"  # one workspace per plan
     assert json.loads((task / "paper_summary.json").read_text())["metadata"]["title"] == "Dry-run paper"
     assert set(ExperimentalEvidence.model_validate_json((task / "evidence.json").read_text()).reports) == {"XRD"}
@@ -274,8 +274,9 @@ def test_summarization_failure_ends_the_run_before_planning(tmp_path, inputs):
     assert "**Status:** failed" in report and result.errors[0] in report
 
 
-def test_saved_summary_and_reports_replace_agents_1_and_2(tmp_path):
-    """inputs.paper_graph and inputs.characterization (an earlier run's outputs) skip Agents 1-2;
+def test_saved_summary_and_reports_replace_the_summarizer_and_characterization(tmp_path):
+    """inputs.paper_graph and inputs.characterization (an earlier run's outputs) skip the Summarizer and the
+    characterization agents;
     the planner gets the loaded summary and reports."""
     earlier = tmp_path / "earlier"
     (earlier / "paper").mkdir(parents=True)
@@ -284,7 +285,7 @@ def test_saved_summary_and_reports_replace_agents_1_and_2(tmp_path):
     (earlier / "characterization" / "XRD.json").write_text(_xrd_report().model_dump_json())
 
     def unused(messages, info):
-        raise AssertionError("Agents 1-2 must not run")
+        raise AssertionError("the Summarizer and the characterization agents must not run")
 
     prompts = []
 
@@ -495,7 +496,7 @@ def test_get_model_names(monkeypatch):
     assert get_model() == DEFAULT_MODEL
     dry = get_model("dry-run")
     assert isinstance(dry, FunctionModel) and dry.model_name == "dry-run"
-    # canned answers for Agents 1-2, registered when their packages are imported
+    # canned answers for the Summarizer and the characterization agents, registered when their packages are imported
     assert {"SystemsOutput", "TextEvidenceOutput", "FigureOutput", "CharacterizationReport"} <= set(DRY_RUN_OUTPUTS)
 
     monkeypatch.delenv("OPENAI_API_KEY")

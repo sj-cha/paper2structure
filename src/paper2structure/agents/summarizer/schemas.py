@@ -186,10 +186,11 @@ class PaperGraph(BaseModel):
     evidence: list[Evidence]
 
     def prompt_json(self) -> str:
-        """The summary as Agents 3-5 read it: compact JSON without empty or default fields and without
-        the run's provenance (source PDF, model). Text evidence is listed item by item; figure evidence
-        is grouped per image under its figure ID (the source_id the characterization reports cite),
-        with the caption and the sentences citing it once, then its panels."""
+        """The summary as the Planner, the Constructor and the Reviewer read it: compact JSON without
+        empty or default fields and without the run's provenance (source PDF, model). Text evidence is
+        listed item by item; figure evidence is grouped per image under its figure ID (the source_id
+        the characterization reports cite), with the caption and the sentences citing it once, then
+        its panels."""
         derived = {"source_type", "technique_category", "image_path"}  # implied by where an item is listed
         text, figures = [], {}
         for e in self.evidence:

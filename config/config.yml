@@ -1,20 +1,20 @@
 campaign:
   model: openai:gpt-5.6-luna  # every agent; null = $P2S_MODEL or the default
-  reasoning_effort: null  # Agents 3-5; null keeps the provider default
+  reasoning_effort: null  # Planner, Constructor and Reviewer; null keeps the provider default
   max_retry: 3
   use_images: true
-  simulation: MLIP  # what the structures are for, framed in Agents 3-5: MLIP or DFT (prefer small cells)
+  simulation: MLIP  # what the structures are for, told to the Planner, Constructor and Reviewer: MLIP or DFT (prefer small cells)
 
 inputs:  # the paper: a PDF (or --pdf), or the paper_graph.json of an earlier run
   pdf: null
   paper_graph: null  # e.g. runs/<run>/paper/paper_graph.json: skips the summarizer
-  characterization: null  # folder of saved characterization reports: skips Agent 2
+  characterization: null  # folder of saved characterization reports: skips the characterization agents
 
-summarizer:  # Agent 1
+summarizer:  # the Summarizer
   analyze_figures: true  # one vision call per figure region
   max_figures: 30
 
-characterization:  # Agent 2: one agent per technique with evidence in the paper
+characterization:  # one characterization agent per technique with evidence in the paper
   techniques: null  # e.g. [XRD, TEM]; null = every technique found
   reasoning_effort: high
   output_retries: 1

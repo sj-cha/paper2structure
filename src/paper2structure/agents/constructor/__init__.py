@@ -1,4 +1,4 @@
-"""Agent 4, the Construction agent: a pydantic-ai-harness Coder in a sandboxed workspace (workspace.py)
+"""The Constructor: a pydantic-ai-harness Coder in a sandboxed workspace (workspace.py)
 with its skills library (skills/); its reports must pass the validation gate (tools.geometry_checks).
 The agent (agent.py: the harness Coder, the toolkit) is imported on first use, so the schemas and the
 workspace helpers stay light."""

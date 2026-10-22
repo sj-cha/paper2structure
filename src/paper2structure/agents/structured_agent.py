@@ -57,7 +57,8 @@ class StructuredAgent:
         """The pydantic-ai Agent, built on first use. `model` may be a model name (see
         paper2structure.config.get_model; None is the default model) or a pydantic-ai Model instance
         (e.g. a FunctionModel in tests)."""
-        settings = {"openai_reasoning_effort": self.effort} if self.effort else {}
+        # pydantic-ai's provider-neutral effort: OpenAI's reasoning effort, Gemini's thinking level, ...; "none" = off
+        settings = {"thinking": False if self.effort == "none" else self.effort} if self.effort else {}
         model = self.model if isinstance(self.model, Model) else get_model(self.model)
         extra = {"deps_type": self._deps_type} if self._deps_type is not None else {}
         capabilities = self._capabilities()

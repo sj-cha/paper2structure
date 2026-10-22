@@ -55,17 +55,31 @@ MODEL_CHOICES = {
 
 DRY_RUN_OUTPUTS: dict[str, dict] = {}
 
+# The API key variables of each provider (pydantic-ai reads them; Gemini also takes the older GEMINI_API_KEY).
+PROVIDER_KEYS = {"openai": ("OPENAI_API_KEY",), "google": ("GOOGLE_API_KEY", "GEMINI_API_KEY")}
+
+
+def missing_api_key(name: str | None = None) -> str | None:
+    """The API key variable the model's provider needs but the environment (or .env) lacks; None when
+    it is set, for dry-run, and for providers not in PROVIDER_KEYS."""
+    name = name or os.getenv("P2S_MODEL") or DEFAULT_MODEL
+    if name == "dry-run":
+        return None
+    keys = PROVIDER_KEYS.get(name.split(":", 1)[0] if ":" in name else "openai")
+    return keys[0] if keys and not any(os.getenv(k) for k in keys) else None
+
 
 def get_model(name: str | None = None) -> Model | str:
-    """A pydantic-ai model name (``openai:`` is the OpenAI Responses API), or the dry-run model.
-    A name without a provider prefix (``gpt-5.6-luna``) is an OpenAI model."""
+    """A pydantic-ai model name (``openai:`` is the OpenAI Responses API, ``google:`` the Gemini API),
+    or the dry-run model. A name without a provider prefix (``gpt-5.6-luna``) is an OpenAI model."""
     name = name or os.getenv("P2S_MODEL") or DEFAULT_MODEL
     if name == "dry-run":
         return FunctionModel(_fake_llm, model_name="dry-run")
     if ":" not in name:
         name = f"openai:{name}"
-    if name.startswith("openai") and not os.getenv("OPENAI_API_KEY"):
-        raise RuntimeError("OPENAI_API_KEY is not set. Put it in a .env file in the repo root (OPENAI_API_KEY=...), or use model 'dry-run'.")
+    key = missing_api_key(name)
+    if key:
+        raise RuntimeError(f"{key} is not set. Put it in a .env file in the repo root ({key}=...), or use model 'dry-run'.")
     return name
 
 
@@ -158,15 +172,15 @@ Otherwise use the name in the paper.
 
 class CampaignConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    model: Optional[str] = None  # every agent's model; None = $P2S_MODEL or DEFAULT_MODEL; "dry-run" for Agents 1-2 only
-    reasoning_effort: Optional[str] = None  # Agents 3-5; None keeps the provider default
+    model: Optional[str] = None  # every agent; None = $P2S_MODEL or DEFAULT_MODEL; "dry-run": summary and evidence only
+    reasoning_effort: Optional[str] = None  # Planner, Constructor, Reviewer; None keeps the provider default
     max_retry: int = Field(3, ge=0)  # output-validation retries per agent call
     use_images: bool = True  # show rendered structures to the Construction and Revision agents
     simulation: Literal["MLIP", "DFT"] = "MLIP"  # what the structures are for; framed in the agents' prompts
 
 
 def simulation_brief(simulation: str) -> str:
-    """The sentence that tells Agents 3-5 what the structures are for."""
+    """The sentence that tells the Planner, the Constructor and the Reviewer what the structures are for."""
     if simulation == "DFT":
         return ("the models are starting structures for density functional theory (DFT) calculations: prefer "
                 "the smallest periodic cells that represent the features the paper reports")
@@ -174,10 +188,10 @@ def simulation_brief(simulation: str) -> str:
 
 
 class InputsConfig(BaseModel):
-    """The paper: a PDF that Agent 1 reads, or the paper_graph.json of an earlier summarizer run
+    """The paper: a PDF that the Summarizer reads, or the paper_graph.json of an earlier summarizer run
     (figure paths are relative to its folder). `characterization` may name a folder of saved
     CharacterizationReport files (one JSON per technique, e.g. an earlier run's characterization/)
-    to skip Agent 2."""
+    to skip the characterization agents."""
     model_config = ConfigDict(extra="forbid")
     pdf: Optional[str] = None
     paper_graph: Optional[str] = None

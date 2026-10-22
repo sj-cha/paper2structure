@@ -34,7 +34,7 @@ def build_graph():
 
 
 def make_planner(cfg: Paper2StructureConfig, model=None) -> LLMPlanner:
-    """Agent 3 as the run config sets it up (also for planning outside a graph run, e.g. the web tool's
+    """The Planner as the run config sets it up (also for planning outside a graph run, e.g. the web tool's
     panel 3). `model` overrides cfg.campaign.model."""
     c = cfg.campaign
     return LLMPlanner(model or c.model, c.reasoning_effort, max_plans=cfg.planning.max_plans,
@@ -46,8 +46,9 @@ def build_deps(cfg: Paper2StructureConfig, output_dir: str | Path, seed: int, ma
                max_repairs: Optional[int] = None, models: Optional[dict] = None,
                max_rebuilds: Optional[int] = None) -> WorkflowDeps:
     """Agents and run directory for one run. The loop budgets default to cfg.budgets. `models` may
-    map "paper" (Agents 1-2), "planner", "constructor" and "reviser" to pydantic-ai Model
-    instances or names (tests, "dry-run"); otherwise cfg.campaign.model is used."""
+    map "paper" (the Summarizer and the characterization agents), "planner", "constructor" and
+    "reviser" to pydantic-ai Model instances or names (tests, "dry-run"); otherwise
+    cfg.campaign.model is used."""
     models = models or {}
     c = cfg.campaign
     planner = make_planner(cfg, models.get("planner"))

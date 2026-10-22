@@ -15,9 +15,9 @@ class StructureVerdict(BaseModel):
 
 
 class RevisionDecision(BaseModel):
-    """Agent 5 output. rebuild_structures sends structures back to Agent 4 (the plan stands);
-    revisit_evidence sends the feedback to Agent 3 (the characterization reports are kept), then
-    Agent 4 builds the new plans."""
+    """The Reviewer's output. rebuild_structures sends structures back to the Constructor (the plan
+    stands); revisit_evidence sends the feedback to the Planner (the characterization reports are
+    kept), then the Constructor builds the new plans."""
     model_config = ConfigDict(extra="forbid")
     action: RevisionAction
     reasoning: str

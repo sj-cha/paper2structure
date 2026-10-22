@@ -1,14 +1,14 @@
 """Project store, the three stages of the web tool (app/server.py) and its job runner.
 
-    1. summarize     Agent 1 on the uploaded PDF                          -> <project>/paper/
-    2. characterize  Agent 2, one agent per technique, cached per model,  -> <project>/characterization/<key>/
-                     effort and technique set
-    3. generate      Agent 3 on the material systems the user chose, with  -> <project>/plans/<key>.json
-                     the atom budget and DFT/MD brief (cached per settings),
-                     then Agents 4-5 as one graph run: construction,       -> <project>/runs/<time>/
-                     validation and review (the saved plan is handed to the
-                     graph; the saved summary and evidence are loaded, not
-                     recomputed)
+    1. summarize     the Summarizer on the uploaded PDF                   -> <project>/paper/
+    2. characterize  one characterization agent per technique, cached     -> <project>/characterization/<key>/
+                     per model, effort and technique set
+    3. generate      the Planner on the material systems the user chose,  -> <project>/plans/<key>.json
+                     with the atom budget and DFT/MD brief (cached per
+                     settings), then the Constructor and the Reviewer as  -> <project>/runs/<time>/
+                     one graph run: construction, validation and review
+                     (the saved plan is handed to the graph; the saved
+                     summary and evidence are loaded, not recomputed)
 
 A project is a folder under outputs/projects/ holding every stage's files, so closing the page or
 restarting the server loses nothing, and a stage only runs again when the settings it depends on
@@ -77,7 +77,7 @@ MODEL_CATALOG: list[tuple[str, str, str, Optional[float], Optional[float], str]]
     ("OpenAI · advanced", "openai:gpt-5.6-terra", "GPT-5.6 Terra", 2.00, 12.00, ""),
     ("OpenAI · advanced", "openai:gpt-6-astra", "GPT-6 Astra", 10.00, 50.00, "the top tier; expensive"),
     ("Google Gemini · free tier available", "google:gemini-3.8-flash", "Gemini 3.8 Flash", None, None,
-     "free tier; paid price not published; the effort setting is ignored by the library for Gemini"),
+     "free tier; paid price not published"),
     ("Google Gemini · free tier available", "google:gemini-3.1-flash-lite", "Gemini 3.1 Flash-Lite", None, None, "free tier"),
     ("Google Gemini · free tier available", "google:gemini-2.5-flash", "Gemini 2.5 Flash", 0.30, 2.50, "free tier for accounts that used it before"),
     ("Google Gemini · paid", "google:gemini-2.5-pro", "Gemini 2.5 Pro", 1.25, 10.00, ""),
@@ -367,7 +367,7 @@ class Project:
 
 
 def run_summarize(project: Project, say: Callable[[str], None]) -> dict:
-    """Agent 1 into a scratch folder that replaces paper/ only on success, so a rejected summary
+    """The Summarizer into a scratch folder that replaces paper/ only on success, so a rejected summary
     (no material systems) leaves the previous one and the caches built on it untouched."""
     meta = project.meta
     model = get_model(meta["model"])  # raises without the provider's API key
@@ -408,7 +408,7 @@ def run_summarize(project: Project, say: Callable[[str], None]) -> dict:
         try:
             key, _ = ensure_characterization(project, Settings(), say)
             result["characterization"] = key
-        except Exception as e:  # noqa: BLE001 - the summary is saved and usable; only Agent 2 failed
+        except Exception as e:  # noqa: BLE001 - the summary is saved and usable; only the evidence analysis failed
             say(f"Evidence analysis skipped: {e}")
             result["characterization_error"] = str(e)
     return result
@@ -428,7 +428,7 @@ def _check_summary(project: Project) -> PaperGraph:
 
 def ensure_characterization(project: Project, settings: Settings,
                             say: Callable[[str], None]) -> tuple[str, ExperimentalEvidence]:
-    """Agent 2's reports for this model, effort and technique set: reused when they exist."""
+    """The characterization agents' reports for this model, effort and technique set: reused when they exist."""
     graph = _check_summary(project)
     model, effort = project.meta["model"], project.meta["effort"]
     techniques = resolve_techniques(graph, settings.techniques)
@@ -442,7 +442,8 @@ def ensure_characterization(project: Project, settings: Settings,
         say(f"Evidence already analyzed for this model and technique set ({', '.join(techniques)}): reused, no model call.")
         return key, ExperimentalEvidence.load(folder)
     say(("Some techniques failed last time; analyzing again. " if saved else "")
-        + f"Analyzing the evidence per technique (Agent 2: {', '.join(techniques)}; {model}, effort {effort})...")
+        + f"Analyzing the evidence per technique (characterization agents: {', '.join(techniques)}; {model}, "
+          f"effort {effort})...")
     started = time.time()
     cc = CharacterizationConfig(techniques=techniques, reasoning_effort=effort, output_retries=1)
     evidence = asyncio.run(characterize(graph, project.paper_dir, folder, get_model(model), cc))
@@ -480,11 +481,11 @@ def _check_systems(project: Project, settings: Settings) -> dict[str, str]:
 
 def make_plan(project: Project, settings: Settings, evidence: ExperimentalEvidence, char_key: str,
               techniques: list[str], say: Callable[[str], None]) -> dict:
-    """Agent 3 on the chosen systems; the plan set is saved under its settings key."""
+    """The Planner on the chosen systems; the plan set is saved under its settings key."""
     model, effort = project.meta["model"], project.meta["effort"]
     names = _check_systems(project, settings)
     graph = project.focused_graph(settings.systems)
-    say(f"Planning structures (Agent 3) for {', '.join(names[i] for i in settings.systems)}: "
+    say(f"Planning structures (Planner) for {', '.join(names[i] for i in settings.systems)}: "
         f"{settings.method}, at most {settings.max_atoms} atoms, {settings.max_plans} hypothesis/es...")
     planner = make_planner(settings_config(project, settings, names))  # the planner the graph run would build
     started = time.time()
@@ -577,8 +578,9 @@ def run_generate(project: Project, settings: Settings, say: Callable[[str], None
     _write_json(run_dir / "config.json", {"config": cfg.model_dump(mode="json")})
     deps = build_deps(cfg, run_dir, seed=settings.seed)  # the loop budgets are in cfg.budgets
     deps.planner = SavedPlanner(PlanSet.model_validate(record["plans"]), deps.planner)
-    say("Starting the graph run: the saved summary, evidence and plan are loaded from disk (Agents 1-3 are not "
-        f"run again); then construction and review (Agents 4-5, {settings.method}, at most {settings.max_atoms} atoms, "
+    say("Starting the graph run: the saved summary, evidence and plan are loaded from disk (the Summarizer, the "
+        "characterization agents and the Planner are not run again); then construction and review (Constructor "
+        f"and Reviewer, {settings.method}, at most {settings.max_atoms} atoms, "
         f"sandbox {cfg.construction.sandbox}). A few minutes...")
     started = time.time()
     result = asyncio.run(run_workflow(deps))

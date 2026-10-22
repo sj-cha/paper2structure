@@ -43,7 +43,7 @@ def test_accept_path_writes_structures_and_report(tmp_path):
                  "token_log.json", "result.json", "workflow.mmd", "final_report.md",
                  "construction_reports.json", "inputs/experimental_evidence.json"):
         assert (run / name).exists(), name
-    # the fixture's saved summary and reports replaced Agents 1-2
+    # the fixture's saved summary and reports replaced the Summarizer and the characterization agents
     assert state["summary"]["metadata"]["title"].startswith("[SYNTHETIC FIXTURE]")
     assert set(state["evidence"]["reports"]) == {"FTIR", "LEED", "XPS", "XRD"}
     assert result.current_structure_ids == [sid] and json.loads((run / "result.json").read_text())["current_structure_ids"]
@@ -54,13 +54,13 @@ def test_accept_path_writes_structures_and_report(tmp_path):
     assert f"| {sid} | C1 | pass |" in report and "unchecked claims: S1:occupancy1" in report
 
 
-def test_revisit_evidence_reruns_agents_2_to_4_but_not_agent_1(tmp_path):
+def test_revisit_evidence_reruns_characterization_to_construction_but_not_the_summarizer(tmp_path):
     result, state = _run(tmp_path, [GOOD_SCRIPT], ["revisit_evidence", "accept_candidates"])
     h = state["node_history"]
     assert result.status == "accepted" and result.revisions == 1
     assert h.count("SummarizePaper") == 1
     assert h.count("AnalyzeEvidence") == h.count("PlanStructures") == h.count("ConstructStructures") == 2
-    assert h[h.index("ScientificRevision") + 1] == "AnalyzeEvidence"  # the loop re-enters at Agent 2
+    assert h[h.index("ScientificRevision") + 1] == "AnalyzeEvidence"  # the loop re-enters at the characterization step
     run = tmp_path / "run"
     assert sorted(p.name for p in (run / "inputs").iterdir()) == ["experimental_evidence.json", "paper_graph.json"]
     assert len(state["plan_history"]) == 2 and len(state["artifacts"]) == 2  # earlier versions kept
@@ -131,8 +131,8 @@ def test_loop_budgets_come_from_the_config(tmp_path):
 def test_graph_edges():
     text = build_graph().render(direction="TB")
     edges = re.findall(r"^\s*(\S+) --> (\S+)\s*$", text, re.M)
-    into_agent1 = [src for src, dst in edges if dst == "SummarizePaper"]
-    assert into_agent1 == ["start"]  # Agent 1 runs once
+    into_summarizer = [src for src, dst in edges if dst == "SummarizePaper"]
+    assert into_summarizer == ["start"]  # the Summarizer runs once
     decision = next(dst for src, dst in edges if src == "ScientificRevision")
     assert {dst for src, dst in edges if src == decision} == {"AnalyzeEvidence", "ConstructStructures", "FinalizeResults"}
     validate = next(dst for src, dst in edges if src == "ValidateStructures")

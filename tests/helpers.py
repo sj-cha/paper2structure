@@ -58,7 +58,8 @@ BAD_SCRIPT = SCRIPT.format(bond=0.4)  # C pushed into the Pt site: fails the ove
 
 
 def make_config(scenario: str = "pt111_co", **overrides) -> Paper2StructureConfig:
-    """A run on a synthetic fixture: its saved summary and characterization reports replace Agents 1-2."""
+    """A run on a synthetic fixture: its saved summary and characterization reports replace the
+    Summarizer and the characterization agents."""
     raw = {"inputs": {"paper_graph": str(FIXTURES / scenario / "paper_graph.json"),
                       "characterization": str(FIXTURES / scenario / "characterization")},
            "construction": {"code_timeout": 240.0, "memory_limit_gb": None}}

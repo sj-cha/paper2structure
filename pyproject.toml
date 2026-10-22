@@ -5,9 +5,9 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "paper2structure"
 version = "0.1.0"
-description = "Agentic workflow that turns your paper into a simulation-ready structure"
+description = "Agentic workflow that turns experimental materials paper to simulation-ready atomistic structures"
 requires-python = ">=3.12"
-license = "MIT AND Apache-2.0"
+license = "MIT"
 license-files = ["LICENSE"]
 dependencies = [
     "ase",
@@ -15,14 +15,13 @@ dependencies = [
     "numpy",
     "pydantic",
     "pydantic-ai==2.59.0",
-    # Coder harness (file + shell tools, Skills, Planning, Memory, Bubblewrap sandbox); 0.x API, so pinned.
-    # The sandbox also needs the `bwrap` binary: conda install -c conda-forge bubblewrap
     "pydantic-ai-harness[coder]==0.59.0",
     "pyyaml",
-    "pymupdf",  # PDF text and figure extraction (summarizer)
+    "pymupdf",
     "python-dotenv",
     "rdkit",
     "scipy",
+    "spglib",
     "matplotlib",
     "nvalchemi-toolkit-ops==0.5.0",
     "torch==2.10.0",

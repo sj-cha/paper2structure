@@ -35,7 +35,7 @@ def structural_claims(summary: PaperGraph, evidence: ExperimentalEvidence) -> li
                    for k, text in enumerate(st.site_occupancy, 1)]
         claims += [Claim(f"{sid}:other{k}", (sid,), f"{s.name}: {text}", "summary") for k, text in enumerate(st.other, 1)]
     for technique, report in sorted(evidence.reports.items()):
-        for c in report.structural_constraints:  # the claims list is where Agents 3 and 5 read the constraints
+        for c in report.structural_constraints:  # the Planner and the Reviewer read the constraints here
             notes = [f"from {', '.join(f'{technique}:{o}' for o in c.evidence)}"] if c.evidence else []
             if c.derivation:
                 notes.append(c.derivation)

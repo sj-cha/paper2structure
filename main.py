@@ -1,16 +1,3 @@
-"""Run the paper-to-structure workflow on one paper in a single graph run:
-
-    PDF -> summary (Agent 1) -> characterization (Agent 2) -> plans (Agent 3)
-        -> structures + the scripts that built them (Agent 4) -> review and report (Agent 5)
-
-    python main.py --pdf pdf/acs.chemmater.6b00847.pdf --random_seed 0
-    python main.py --pdf paper.pdf --techniques XRD TEM --random_seed 0     # characterize only these
-    python main.py --paper_graph runs/x/paper/paper_graph.json --random_seed 0   # reuse a summary
-    python main.py --config config/pt111_co.yml --random_seed 0             # synthetic fixture inputs
-
-A campaign YAML (--config) holds every setting; the flags override its run-level values.
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -27,7 +14,7 @@ logging.basicConfig(level=logging.INFO,
 os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
 
 from paper2structure.agents.constructor.workspace import sandbox_available  # noqa: E402
-from paper2structure.config import load_config  # noqa: E402
+from paper2structure.config import load_config, missing_api_key  # noqa: E402
 from paper2structure.graph.workflow import build_deps, run_workflow  # noqa: E402
 
 
@@ -38,7 +25,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--paper_graph", default=None,
                    help="paper_graph.json of an earlier run: skips the summarizer (sets inputs.paper_graph)")
     p.add_argument("--characterization", default=None,
-                   help="folder of saved characterization reports: skips Agent 2 (sets inputs.characterization)")
+                   help="folder of saved characterization reports: skips the characterization agents "
+                        "(sets inputs.characterization)")
     p.add_argument("--output_dir", default=None,
                    help="a new or empty folder; default: runs/<pdf or paper name>_<date-time>")
     p.add_argument("--random_seed", type=int, required=True,
@@ -77,9 +65,6 @@ def _resolve(path: str | None, config_path: str) -> str | None:
 def main() -> int:
     args = _build_parser().parse_args()
 
-    if not os.environ.get("OPENAI_API_KEY"):
-        print("ERROR: needs OPENAI_API_KEY in env or .env.", file=sys.stderr)
-        return 2
     if args.gpu is not None:
         os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
 
@@ -109,6 +94,10 @@ def main() -> int:
             return 2
     if args.model:
         cfg.campaign.model = args.model
+    key = missing_api_key(cfg.campaign.model)  # the chosen model's provider: OPENAI_API_KEY, GOOGLE_API_KEY, ...
+    if key:
+        print(f"ERROR: model {cfg.campaign.model or 'default'} needs {key} in env or .env.", file=sys.stderr)
+        return 2
     if args.techniques:
         cfg.characterization.techniques = args.techniques
     if args.no_figures:
@@ -151,7 +140,7 @@ def main() -> int:
     deps = build_deps(cfg, args.output_dir, seed=args.random_seed)
     cc, b = cfg.construction, cfg.budgets
     print(f"[paper2structure] paper={inputs.pdf or inputs.paper_graph} "
-          f"characterization={inputs.characterization or 'run Agent 2'} out={args.output_dir} "
+          f"characterization={inputs.characterization or 'run the agents'} out={args.output_dir} "
           f"model={cfg.campaign.model or 'default'} seed={args.random_seed} "
           f"techniques={cfg.characterization.techniques or 'all found'} "
           f"budget(revisions={b.max_revisions}, rebuilds={b.max_rebuilds}, repairs={b.max_repairs}, "

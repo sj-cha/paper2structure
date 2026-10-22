@@ -160,7 +160,7 @@ class StructurePlan(BaseModel):
 
 
 class PlanSet(BaseModel):
-    """Agent 3 output: competing structural hypotheses, each with a construction plan."""
+    """The Planner's output: competing structural hypotheses, each with a construction plan."""
     model_config = ConfigDict(extra="forbid")
     plans: list[StructurePlan] = Field(min_length=1)
     rationale: str

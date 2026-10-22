@@ -41,7 +41,7 @@ class RevisionDeps:
 
 
 class LLMReviser(StructuredAgent):
-    """Agent 5: judges whether the built structures represent what the paper describes, and writes
+    """The Reviewer: judges whether the built structures represent what the paper describes, and writes
     the final report when its decision ends the run."""
     _output_type = RevisionDecision
     _deps_type = RevisionDeps

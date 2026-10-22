@@ -1,4 +1,4 @@
-"""Agent 3, the structural planner."""
+"""The Planner: structural hypotheses as construction plans."""
 from paper2structure.agents.planner.agent import LLMPlanner, PlanningDeps, check_plan_set
 from paper2structure.agents.planner.schemas import (AdsorbateSpec, BulkSpec, Facet, LatticeParameters, NanocrystalSpec,
                                                     OxidationState, PlanSet, SolventSpec, StructurePlan, SurfaceSpec,

@@ -32,7 +32,7 @@ class FailedPlan(BaseModel):
 
 
 class ConstructionReport(BaseModel):
-    """Agent 4 output: which emitted structures realize which plans."""
+    """The Constructor's output: which emitted structures realize which plans."""
     model_config = ConfigDict(extra="forbid")
     structures: list[BuiltStructure] = Field(default_factory=list)
     failed: list[FailedPlan] = Field(default_factory=list)

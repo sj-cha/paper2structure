@@ -25,7 +25,7 @@ SCENARIOS = ("pt111_co", "cspbbr3_phosphonate", "anatase_formate", "cdse_zns_cor
 
 
 def _inputs(scenario="pt111_co"):
-    """A fixture's summary (Agent 1's PaperGraph) and characterization reports (Agent 2)."""
+    """A fixture's summary (the Summarizer's PaperGraph) and characterization reports."""
     s = load_graph(FIXTURES / scenario / "paper_graph.json")
     e = ExperimentalEvidence.load(FIXTURES / scenario / "characterization")
     return s, e

@@ -1,4 +1,4 @@
-"""Agent 4, the Construction agent: a pydantic-ai-harness Coder that writes and runs its own Python
+"""The Constructor: a pydantic-ai-harness Coder that writes and runs its own Python
 in a sandboxed workspace, with paper2structure.tools as an optional helper library. Every
 structure it reports is rebuilt by running its script alone in an empty directory, so the script
 handed to the user is exactly the code that generated the structure."""
@@ -271,7 +271,7 @@ def gate_report(deps: ConstructionDeps, output: ConstructionReport, atoms: dict)
 
 
 class LLMConstructor(StructuredAgent):
-    """Agent 4: realizes structure plans as standalone Python scripts, written and run by a coding
+    """The Constructor: realizes structure plans as standalone Python scripts, written and run by a coding
     agent in a sandboxed workspace."""
     _output_type = ConstructionReport
     _deps_type = ConstructionDeps

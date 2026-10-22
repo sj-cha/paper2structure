@@ -28,9 +28,9 @@ class ReconstructionState(BaseModel):
     """Typed, JSON-serializable graph state. Large data (structures, scripts) lives in the run
     directory and is referenced by path; agents and tools live in WorkflowDeps."""
     run_id: str
-    summary: Optional[PaperGraph] = None  # Agent 1: metadata, material systems, text and figure evidence
+    summary: Optional[PaperGraph] = None  # Summarizer: metadata, material systems, text and figure evidence
     paper_dir: Optional[str] = None  # folder of paper_graph.json; its figure image paths are relative to it
-    evidence: Optional[ExperimentalEvidence] = None  # Agent 2: one characterization report per technique
+    evidence: Optional[ExperimentalEvidence] = None  # characterization agents: one report per technique
     plan_history: list[PlanSet] = Field(default_factory=list)
     revision: int = 0  # loops taken back through evidence -> planning -> construction
     attempt: int = 0  # construction rounds within the current revision (repairs and rebuilds)
@@ -116,6 +116,6 @@ class WorkflowDeps:
     max_revisions: int  # loop budgets (cfg.budgets unless build_deps overrides them)
     max_repairs: int
     max_rebuilds: int
-    paper_model: Model | str | None = None  # Agents 1-2 (summarizer, characterization); None = cfg.campaign.model
+    paper_model: Model | str | None = None  # the Summarizer and the characterization agents; None = cfg.campaign.model
     paper_usage: dict[str, dict[str, int]] = field(default_factory=lambda: {"summarizer": new_usage(),
                                                                             "characterization": new_usage()})

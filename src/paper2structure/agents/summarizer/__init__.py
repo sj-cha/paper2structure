@@ -1,4 +1,4 @@
-"""Agent 1, the paper summarizer: reads the PDF once (text, figures, material systems) and writes a
+"""The Summarizer: reads the PDF once (text, figures, material systems) and writes a
 PaperGraph (paper_graph.json): metadata, material systems and per-technique evidence. graph.py has
 its steps; cli.py runs it on its own. summarize_paper is imported on first use: the schemas and
 load_graph do not need the PDF reader or the LLM agents."""

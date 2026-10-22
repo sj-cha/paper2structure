@@ -19,7 +19,7 @@ def _compact(obj) -> str:
 
 
 class CharacterizationAgent(StructuredAgent):
-    """Agent 2 for one technique: reads the figures and text records tagged with it. Transient API
+    """The characterization agent for one technique: reads the figures and text records tagged with it. Transient API
     errors are retried and token usage is counted (`usage`) like the other agents."""
     _output_type = CharacterizationReport
     _preflight_probe = "Health check: return a report for technique 'health check' with no observations."

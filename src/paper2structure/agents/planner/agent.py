@@ -282,7 +282,7 @@ def check_plan_set(plans: PlanSet, deps: PlanningDeps) -> list[str]:
 
 
 class LLMPlanner(StructuredAgent):
-    """Agent 3: turns the paper summary and evidence snapshot into competing structure plans."""
+    """The Planner: turns the paper summary and evidence snapshot into competing structure plans."""
     _output_type = PlanSet
     _deps_type = PlanningDeps
     _preflight_probe = ("Health check: return one plan with plan_id 'P1', model_type 'bulk', description 'fcc Cu "
@@ -329,9 +329,10 @@ class LLMPlanner(StructuredAgent):
 def planner_prompt(summary: PaperGraph, evidence: ExperimentalEvidence, history: list[PlanSet],
                    feedback: str, claims: list[Claim] | None = None) -> str:
     claims = structural_claims(summary, evidence) if claims is None else claims
-    parts = ["## Paper summary (Agent 1: metadata, material systems, text and figure evidence)", summary.prompt_json(),
-             "## Characterization reports (Agent 2: observations and findings per technique; their structural "
-             "constraints are in the claims list)", evidence.prompt_json()]
+    parts = ["## Paper summary (the Summarizer: metadata, material systems, text and figure evidence)",
+             summary.prompt_json(),
+             "## Characterization reports (the characterization agents: observations and findings per technique; "
+             "their structural constraints are in the claims list)", evidence.prompt_json()]
     if claims:
         parts += ["## Structural claims (every plan tests each claim about its systems with a check, "
                   "or lists it in unchecked with the reason)",
@@ -355,11 +356,11 @@ studies, and you write one construction plan per model. A separate Construction 
 plan with pymatgen, ASE and RDKit; {simulation_brief(simulation)}.
 
 Your inputs
-- The paper summary (Agent 1): metadata, the material systems studied (IDs S1, S2, ...; each with
+- The paper summary (from the Summarizer): metadata, the material systems studied (IDs S1, S2, ...; each with
   synthesis and the structural facts the paper states: crystal system, space group, lattice
   parameters, site occupancy, phase purity) and evidence items (IDs E001, ...) extracted from the
   text and figures, tagged by technique.
-- The characterization reports (Agent 2), one per technique: observations read from the figures
+- The characterization reports, one per technique: observations read from the figures
   and text (IDs O1, O2, ... within each report) and findings. Their structural constraints, with
   confidence, cited observations and derivation, are listed among the structural claims.
 - Cite evidence as summarizer evidence IDs ("E004") or as characterization observation IDs
