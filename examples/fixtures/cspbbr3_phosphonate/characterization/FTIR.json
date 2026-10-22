@@ -1,0 +1,88 @@
+{
+  "technique": "FTIR",
+  "observations": [
+    {
+      "observation_id": "O1",
+      "source_id": "E3",
+      "system_ids": [
+        "S1"
+      ],
+      "quantity": "P-OH band position",
+      "value": "950",
+      "unit": "cm-1",
+      "read_from": "stated_in_text",
+      "uncertainty": null,
+      "note": "page 4, Fig. 2a: P-OH band at 950 cm-1 disappears after binding"
+    },
+    {
+      "observation_id": "O2",
+      "source_id": "E4",
+      "system_ids": [
+        "S1"
+      ],
+      "quantity": "P=O stretch position after treatment",
+      "value": "1100",
+      "unit": "cm-1",
+      "read_from": "stated_in_text",
+      "uncertainty": null,
+      "note": "page 4, Fig. 2b: P=O stretch shifts from 1200 to 1100 cm-1"
+    }
+  ],
+  "findings": [
+    {
+      "claim": "Authors' interpretation: the phosphonic acid is deprotonated on binding.",
+      "system_ids": [
+        "S1"
+      ],
+      "evidence": [
+        "O1"
+      ],
+      "confidence": "medium"
+    },
+    {
+      "claim": "Authors' interpretation: P-O groups coordinate surface Pb.",
+      "system_ids": [
+        "S1"
+      ],
+      "evidence": [
+        "O2"
+      ],
+      "confidence": "medium"
+    }
+  ],
+  "structural_constraints": [
+    {
+      "property": "ligand protonation state",
+      "system_ids": [
+        "S1"
+      ],
+      "value": "at least one P-OH is deprotonated (phosphonate anion)",
+      "unit": null,
+      "derivation": "The P-OH band at 950 cm-1 disappears after binding; the authors conclude that the phosphonic acid is deprotonated on binding.",
+      "evidence": [
+        "O1"
+      ],
+      "confidence": "medium"
+    },
+    {
+      "property": "ligand-surface bond",
+      "system_ids": [
+        "S1"
+      ],
+      "value": "phosphonate oxygens bind surface Pb",
+      "unit": null,
+      "derivation": "The P-OH band at 950 cm-1 disappears after binding and the P=O stretch shifts from 1200 to 1100 cm-1 (the authors: P-O groups coordinate surface Pb). Also supported by XPS: P 2p peak at 133.2 eV after treatment (XPS:O2, evidence E6).",
+      "evidence": [
+        "O1",
+        "O2"
+      ],
+      "confidence": "medium"
+    }
+  ],
+  "caveats": [
+    "Synthetic fixture: hand-written, not extracted from a real paper.",
+    "Not provided by the paper: binding denticity (monodentate versus bidentate phosphonate binding).",
+    "Not provided by the paper: degree of deprotonation (one or two P-OH groups); the loss of the P-OH band shows only that at least one P-OH is deprotonated.",
+    "Not provided by the paper: ligand coverage per nm^2 (ligand surface coverage)."
+  ]
+}

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from pydantic_ai import ModelRetry, RunContext
 from pymatgen.core import Composition
@@ -10,7 +10,7 @@ from rdkit import Chem
 from paper2structure.agents.characterization.schemas import ExperimentalEvidence
 from paper2structure.agents.planner.schemas import BulkSpec, PlanSet
 from paper2structure.agents.structured_agent import StructuredAgent
-from paper2structure.agents.summarizer.schemas import PaperSummary
+from paper2structure.agents.summarizer.schemas import PaperGraph
 from paper2structure.config import OverridesConfig
 from paper2structure.tools.bulk_builder import build_bulk
 
@@ -23,6 +23,7 @@ class PlanningDeps:
     max_plans: int
     overrides: OverridesConfig
     max_atoms: int = 5000
+    system_ids: set[str] = field(default_factory=set)  # the summarizer's material systems; empty skips the check
 
 
 def _smiles_atoms(smiles: str) -> int:
@@ -71,6 +72,9 @@ def check_plan_set(plans: PlanSet, deps: PlanningDeps) -> list[str]:
             problems.append(f"{p.plan_id}: unknown evidence IDs {sorted(unknown)} (valid: {sorted(deps.evidence_ids)})")
         if not p.evidence_ids and not p.assumptions:
             problems.append(f"{p.plan_id}: cite supporting evidence IDs or state the assumptions it rests on")
+        unknown_systems = set(p.system_ids) - deps.system_ids if deps.system_ids else set()
+        if unknown_systems:
+            problems.append(f"{p.plan_id}: unknown system IDs {sorted(unknown_systems)} (valid: {sorted(deps.system_ids)})")
         for crystal in p.crystals:
             if crystal.lattice.source == "paper" and not crystal.lattice.evidence_ids:
                 problems.append(f"{p.plan_id}: lattice of {crystal.name!r} has source 'paper' but cites no evidence")
@@ -145,17 +149,20 @@ class LLMPlanner(StructuredAgent):
                                  + "\n- ".join(problems))
             return output
 
-    async def plan(self, summary: PaperSummary, evidence: ExperimentalEvidence,
+    async def plan(self, summary: PaperGraph, evidence: ExperimentalEvidence,
                    history: list[PlanSet], feedback: str) -> PlanSet:
-        deps = PlanningDeps(evidence_ids=evidence.ids, max_plans=self.max_plans, overrides=self.overrides,
-                            max_atoms=self.max_atoms)
+        deps = PlanningDeps(evidence_ids={e.evidence_id for e in summary.evidence} | evidence.ids,
+                            max_plans=self.max_plans, overrides=self.overrides, max_atoms=self.max_atoms,
+                            system_ids={s.system_id for s in summary.systems})
         return await self.arun(planner_prompt(summary, evidence, history, feedback), deps=deps)
 
 
-def planner_prompt(summary: PaperSummary, evidence: ExperimentalEvidence, history: list[PlanSet],
+def planner_prompt(summary: PaperGraph, evidence: ExperimentalEvidence, history: list[PlanSet],
                    feedback: str) -> str:
-    parts = ["## Paper summary", summary.model_dump_json(indent=1),
-             "## Experimental evidence snapshot", evidence.model_dump_json(indent=1)]
+    parts = ["## Paper summary (Agent 1: metadata, material systems, text and figure evidence)",
+             summary.model_dump_json(indent=1, exclude={"nodes", "edges"}),
+             "## Characterization reports (Agent 2: observations, findings and structural constraints per technique)",
+             evidence.model_dump_json(indent=1)]
     if history:
         parts += ["## Previous plan sets (oldest first)"] + [h.model_dump_json(indent=1) for h in history]
     if feedback:
@@ -168,11 +175,25 @@ def planner_prompt(summary: PaperSummary, evidence: ExperimentalEvidence, histor
 
 def planner_system_prompt(max_plans: int, max_atoms: int, min_vacuum: float, overrides: str) -> str:
     return f"""\
-You are the Structural Planning agent of Paper2Structure. From a paper summary and a fixed
-experimental-evidence snapshot you decide which atomic models best represent the system the paper
+You are the Structural Planning agent of Paper2Structure. From the paper summary and the
+characterization reports you decide which atomic models best represent the system the paper
 studies, and you write one construction plan per model. A separate Construction agent builds each
 plan with pymatgen, ASE and RDKit; the models are starting structures for machine-learned
 interatomic potential (MLIP) simulations.
+
+Your inputs
+- The paper summary (Agent 1): metadata, the material systems studied (IDs S1, S2, ...; each with
+  synthesis and the structural facts the paper states: crystal system, space group, lattice
+  parameters, site occupancy, phase purity) and evidence items (IDs E001, ...) extracted from the
+  text and figures, tagged by technique.
+- The characterization reports (Agent 2), one per technique: observations read from the figures
+  and text (IDs O1, O2, ... within each report), findings, and structural constraints with their
+  confidence.
+- Cite evidence as summarizer evidence IDs ("E004") or as characterization observation IDs
+  qualified by their technique ("XRD:O3"); no other IDs exist.
+- A paper may study several material systems (a doping or homologous series, several phases or
+  substrates). Give every plan the system_ids it models, and spend the plan limit on the systems
+  and hypotheses that matter most for the paper's question.
 
 The Construction agent is a coding agent: it writes its own Python (ASE, pymatgen, RDKit) on top
 of a helper library, so any well-defined atomistic model can be built - core-shell or alloyed
@@ -194,9 +215,17 @@ What each plan decides
   space group (Hermann-Mauguin symbol as pymatgen spells it, e.g. "Fm-3m", "Pm-3m", "P4_2/mnm",
   "I4_1/amd", "P6_3mc", "F-43m"), its asymmetric unit as Wyckoff representatives with fractional
   coordinates in the ITA standard setting (origin choice 1 where a group has two origins;
-  hexagonal axes for rhombohedral groups), lattice parameters and formula units per conventional
+  hexagonal axes for rhombohedral groups) or in the paper's own setting written as its symbol
+  ("Pbnm", "Pcab", "Cc2m"; lattice parameters and coordinates in that same setting), lattice parameters and formula units per conventional
   cell. Use lattice parameters reported in the evidence (source "paper", cite the evidence ID);
-  otherwise literature values (source "literature", listed as an assumption).
+  otherwise literature values (source "literature", listed as an assumption). Each crystal is
+  built from its sites exactly as written and must be complete: every atom of its formula, bonded
+  neighbours, no overlaps. A crystal you cannot give complete Wyckoff sites for - hybrid
+  organic-inorganic or molecular crystals (e.g. organic cations between inorganic layers),
+  frameworks with guest molecules, cells the paper only partly determines - stays out of
+  `crystals`: give its space group, lattice parameters, layer stacking or connectivity and its
+  molecules (SMILES with formal charges, number per cell) in the description, and the Construction
+  agent builds it in code. Never list a partial sublattice or an isolated layer as a crystal.
 - surface (optional helper): Miller index, termination described by its exposed species, minimum
   thickness (A), in-plane supercell, vacuum (at least {min_vacuum} A) and a fixed bottom region (A).
 - nanocrystal (optional helper): shape and size (closed-shell shapes for elemental metals; spheres
@@ -223,8 +252,10 @@ Scientific rules
   (literature lattice values, termination, coverage, protonation, binding mode, simplifications).
 - When the evidence admits several structural interpretations (binding mode, site, termination,
   protonation, coverage), write competing plans instead of forcing one answer: at most {max_plans}.
-- Ordered, single-composition models only: for a disordered or mixed material, model a
-  representative ordered end-member and state the simplification as an assumption.
+- Ordered models only: for partial occupancy, doping or mixing, model an ordered representative,
+  e.g. a supercell with explicit substitutions at the reported fraction (spread out, not clustered
+  unless the evidence says so), or an end-member when the atom budget forbids it; state the choice
+  as an assumption.
 - Keep every model below {max_atoms} atoms including adsorbates and solvent.
 - Never invent experimental values; if the evidence is silent, say so.
 

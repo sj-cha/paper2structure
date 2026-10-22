@@ -29,7 +29,7 @@ from paper2structure.agents.constructor.schemas import ConstructionReport
 from paper2structure.agents.constructor.workspace import make_workspace, replay
 from paper2structure.agents.planner.schemas import PlanSet, StructurePlan
 from paper2structure.agents.structured_agent import StructuredAgent
-from paper2structure.agents.summarizer.schemas import PaperSummary
+from paper2structure.agents.summarizer.schemas import PaperGraph
 from paper2structure.config import Paper2StructureConfig
 from paper2structure.tools.geometry_checks import validate_structure
 from paper2structure.tools.render import render_png
@@ -305,7 +305,7 @@ class LLMConstructor(StructuredAgent):
             return output
 
     async def construct(self, plans: PlanSet, plan_ids: list[str], workdir: Path, seed: int, feedback: str = "",
-                        previous_scripts: Optional[dict[str, str]] = None, summary: Optional[PaperSummary] = None,
+                        previous_scripts: Optional[dict[str, str]] = None, summary: Optional[PaperGraph] = None,
                         evidence: Optional[ExperimentalEvidence] = None) -> tuple[ConstructionReport, ConstructionDeps]:
         """Build `plan_ids` in a fresh workspace under `workdir`; returns the verified report and the
         deps holding the replayed structures, their scripts and their gate reports."""
@@ -326,14 +326,14 @@ class LLMConstructor(StructuredAgent):
 
 
 def prepare_workspace(workspace: Path, plans: PlanSet, plan_ids: list[str], feedback: str,
-                      previous_scripts: dict[str, str], summary: Optional[PaperSummary],
+                      previous_scripts: dict[str, str], summary: Optional[PaperGraph],
                       evidence: Optional[ExperimentalEvidence]) -> None:
     """Task files, the previous attempt's scripts, the skills library and a README for the user."""
     task = workspace / "task"
     task.mkdir(parents=True, exist_ok=True)
     (task / "plans.json").write_text(json.dumps([plans.get(p).model_dump(mode="json") for p in plan_ids], indent=1))
     if summary is not None:
-        (task / "paper_summary.json").write_text(summary.model_dump_json(indent=1))
+        (task / "paper_summary.json").write_text(summary.model_dump_json(indent=1, exclude={"nodes", "edges"}))
     if evidence is not None:
         (task / "evidence.json").write_text(evidence.model_dump_json(indent=1))
     if feedback:
@@ -401,8 +401,8 @@ interfaces, defects, supported particles, ...). The skills describe the library 
 structure-toolkit before writing the first script.
 
 The workspace
-- task/plans.json holds the plans; task/paper_summary.json and task/evidence.json the context they
-  come from; task/feedback.md and previous/ the problems and scripts of a previous attempt.
+- task/plans.json holds the plans; task/paper_summary.json (the paper's material systems and
+  evidence) and task/evidence.json (the characterization reports) the context they come from; task/feedback.md and previous/ the problems and scripts of a previous attempt.
 - Commands run in a sandbox: no network, and only this workspace is writable.
 
 The deliverable: one standalone build script per plan (or per group of closely related

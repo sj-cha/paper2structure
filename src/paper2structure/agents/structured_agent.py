@@ -7,15 +7,17 @@ from functools import cached_property
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import (ModelConnectionError, ModelRateLimitError, ModelRequestTimeout, ModelServerError,
                                     ModelUnavailableError)
+from pydantic_ai.models import Model
+from pydantic_ai.usage import RunUsage
+
+from paper2structure.config import get_model
+
+log = logging.getLogger(__name__)
 
 # provider hiccups worth retrying; anything else (a tool crash, a budget overrun, a validation dead end)
 # would only repeat the whole, possibly long, agent run
 TRANSIENT_ERRORS = (ModelConnectionError, ModelRateLimitError, ModelRequestTimeout, ModelServerError,
                     ModelUnavailableError)
-from pydantic_ai.models import Model
-from pydantic_ai.models.openai import OpenAIResponsesModel
-
-log = logging.getLogger(__name__)
 
 
 class StructuredAgent:
@@ -27,7 +29,7 @@ class StructuredAgent:
     max_attempts = 3
     retry_base_delay = 10.0  # seconds, for transient API errors
 
-    def __init__(self, model: str | Model, effort: str | None, system_prompt: str,
+    def __init__(self, model: str | Model | None, effort: str | None, system_prompt: str,
                  system_context: str = "", max_retry: int = 3, output_retries: int | None = None):
         self.model = model
         self.effort = effort
@@ -39,10 +41,11 @@ class StructuredAgent:
 
     @cached_property
     def agent(self) -> Agent:
-        """The pydantic-ai Agent, built on first use. `model` may be a model name (OpenAI
-        Responses API) or a pydantic-ai Model instance (e.g. a FunctionModel in tests)."""
+        """The pydantic-ai Agent, built on first use. `model` may be a model name (see
+        paper2structure.config.get_model; None is the default model) or a pydantic-ai Model instance
+        (e.g. a FunctionModel in tests)."""
         settings = {"openai_reasoning_effort": self.effort} if self.effort else {}
-        model = OpenAIResponsesModel(self.model) if isinstance(self.model, str) else self.model
+        model = self.model if isinstance(self.model, Model) else get_model(self.model)
         extra = {"deps_type": self._deps_type} if self._deps_type is not None else {}
         capabilities = self._capabilities()
         if capabilities:
@@ -61,8 +64,7 @@ class StructuredAgent:
     def _register(self, agent: Agent) -> None:
         """Hook for subclasses to add tools and output validators."""
 
-    def _accumulate(self, result) -> None:
-        u = result.usage
+    def _accumulate(self, u: RunUsage) -> None:
         self.usage["input"] += u.input_tokens
         self.usage["cached_input"] += u.cache_read_tokens  # part of input, billed at the cached rate
         self.usage["output"] += u.output_tokens
@@ -72,10 +74,11 @@ class StructuredAgent:
     async def arun(self, prompt, deps=None, usage_limits=None, **run_kwargs):
         """One agent run returning the validated output; transient API errors are retried with
         exponential backoff, everything else is raised. `run_kwargs` go to Agent.run (e.g. the
-        run's `workspace`)."""
+        run's `workspace`). Token usage is recorded for failed runs too."""
         for attempt in range(1, self.max_attempts + 1):
+            usage = RunUsage()
             try:
-                result = await self.agent.run(prompt, deps=deps, usage_limits=usage_limits, **run_kwargs)
+                result = await self.agent.run(prompt, deps=deps, usage_limits=usage_limits, usage=usage, **run_kwargs)
                 break
             except TRANSIENT_ERRORS as e:
                 if attempt == self.max_attempts:
@@ -84,7 +87,8 @@ class StructuredAgent:
                 log.warning("%s call failed (attempt %d/%d): %s; retrying in %.0fs",
                             type(self).__name__, attempt, self.max_attempts, e, delay)
                 await asyncio.sleep(delay)
-        self._accumulate(result)
+            finally:
+                self._accumulate(usage)
         return result.output
 
     def preflight(self, **run_kwargs) -> tuple[bool, str]:

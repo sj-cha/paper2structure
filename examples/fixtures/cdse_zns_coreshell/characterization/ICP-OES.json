@@ -1,0 +1,49 @@
+{
+  "technique": "ICP-OES",
+  "observations": [
+    {
+      "observation_id": "O1",
+      "source_id": "E5",
+      "system_ids": [
+        "S2"
+      ],
+      "quantity": "Zn:Cd molar ratio after shelling",
+      "value": "1.6",
+      "unit": null,
+      "read_from": "stated_in_text",
+      "uncertainty": null,
+      "note": "Page 3, Table 1."
+    }
+  ],
+  "findings": [
+    {
+      "claim": "The Zn:Cd molar ratio is consistent with two ZnS monolayers.",
+      "system_ids": [
+        "S2"
+      ],
+      "evidence": [
+        "O1"
+      ],
+      "confidence": "medium"
+    }
+  ],
+  "structural_constraints": [
+    {
+      "property": "shell composition and thickness",
+      "system_ids": [
+        "S2"
+      ],
+      "value": "ZnS, about 2 ML",
+      "unit": null,
+      "derivation": "Zn:Cd molar ratio of 1.6 after shelling, which the authors find consistent with two ZnS monolayers. Cross-technique support: TEM gives about 0.55 nm (two monolayers) of ZnS (TEM:O2, evidence E4).",
+      "evidence": [
+        "O1"
+      ],
+      "confidence": "medium"
+    }
+  ],
+  "caveats": [
+    "Not provided by the paper: exact particle stoichiometry.",
+    "Synthetic fixture: hand-written, not extracted from a real paper."
+  ]
+}

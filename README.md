@@ -1,17 +1,19 @@
 # Paper2Structure
 
-Multi-agent workflow (PydanticAI + pydantic-graph) that turns an experimental materials paper into
-simulation-ready atomic structures (POSCAR, optionally CIF/extxyz) for MLIP-based simulations.
+Multi-agent workflow (PydanticAI + pydantic-graph) that turns an experimental materials paper (PDF)
+into simulation-ready atomic structures (POSCAR, optionally CIF/extxyz) for MLIP-based simulations.
 Every structure comes with the standalone Python script that generated it.
 
 **Current slice.**
-- **Implemented:** the Planner (Agent 3), the Construction agent (Agent 4, a
-  [pydantic-ai-harness](https://pydantic.dev/docs/ai/harness/) coding agent), deterministic structure
-  validation and a minimal Scientific Revision agent (Agent 5).
-- **Placeholders:** Agents 1-2 (paper summary, experimental evidence) load the input files named in
-  the config.
-- **Inputs used so far:** the scenarios in `examples/fixtures/`, which are hand-written synthetic
-  inputs, not extracted from real papers.
+- **Implemented:** all five agents in one graph run: the summarizer (Agent 1) reads the PDF into a
+  knowledge graph of material systems and evidence; characterization (Agent 2) runs one agent per
+  technique on the figures and text; then the Planner (Agent 3), the Construction agent (Agent 4, a
+  [pydantic-ai-harness](https://pydantic.dev/docs/ai/harness/) coding agent), deterministic
+  structure validation and a minimal Scientific Revision agent (Agent 5).
+- **Partial:** technique knowledge is filled in for XRD, TEM, SEM and FTIR only; the other
+  techniques are stubs, skipped unless `characterization.include_stubs`.
+- **Inputs:** a paper PDF, or one of the scenarios in `examples/fixtures/`, which stand in for the
+  output of Agents 1-2 and are hand-written synthetic inputs, not extracted from real papers.
 
 ## Workflow
 
@@ -22,7 +24,7 @@ stateDiagram-v2
   AnalyzeEvidence --> PlanStructures
   PlanStructures --> ConstructStructures
   ConstructStructures --> ValidateStructures
-  ValidateStructures --> ConstructStructures: hard validation failure (max_repairs)
+  ValidateStructures --> ConstructStructures: hard validation failure or plan not built (max_repairs)
   ValidateStructures --> ScientificRevision
   ScientificRevision --> AnalyzeEvidence: revisit_evidence (max_revisions)
   ScientificRevision --> FinalizeResults: accept_candidates / stop_inconclusive
@@ -31,32 +33,74 @@ stateDiagram-v2
 
 | node | agent | does |
 |---|---|---|
-| SummarizePaper | Agent 1 (placeholder) | loads `inputs.paper_summary`; runs once |
-| AnalyzeEvidence | Agent 2 (placeholder) | loads `inputs.experimental_evidence`; re-entered when the reviewer finds that the structures do not resemble the paper |
-| PlanStructures | Agent 3, `LLMPlanner` | competing structural hypotheses as `StructurePlan`s: a free-form model type and construction brief, named crystals (space group + Wyckoff positions + lattice with provenance), optional surface/nanocrystal/adsorbate/solvent specs, measurable targets, evidence IDs, assumptions |
-| ConstructStructures | Agent 4, `LLMConstructor` | a Coder agent writes and runs its own Python in a sandboxed workspace; every reported structure is rebuilt by running its script alone from scratch and must pass the validation gate |
-| ValidateStructures | deterministic | the same gate checks plus the export round trip; hard failures go back to construction |
-| ScientificRevision | Agent 5, `LLMReviser` | accept / stop / revisit evidence (Agent 2 -> 3 -> 4); can read the build scripts; writes the final report (`write_report` tool) before ending the run |
+| SummarizePaper | Agent 1, summarizer | reads the PDF into a `PaperGraph` (material systems `S1`, `S2`, ...; text and figure evidence `E001`, ... tagged by technique) saved under `paper/`, or loads `inputs.paper_graph`; runs once |
+| AnalyzeEvidence | Agent 2, characterization | one `CharacterizationAgent` per technique found that has a filled-in spec, concurrently; each reads its figure images and text records and returns observations, findings and structural constraints (`characterization/<TECH>.json`); or loads `inputs.characterization`. Re-entered on `revisit_evidence`: the reports are kept and the reviewer's feedback goes to the planner |
+| PlanStructures | Agent 3, `LLMPlanner` | competing structural hypotheses as `StructurePlan`s: the material systems modeled (`system_ids`), a free-form model type and construction brief, named crystals (space group + Wyckoff positions + lattice with provenance), optional surface/nanocrystal/adsorbate/solvent specs, measurable targets, evidence IDs (summarizer `E004` or technique-qualified observations `XRD:O3`; unknown IDs go back to the planner), assumptions |
+| ConstructStructures | Agent 4, `LLMConstructor` | one Coder run per plan, concurrently, each in its own sandboxed workspace and request budget, writes and runs its own Python; every reported structure is rebuilt by running its script alone from scratch and must pass the validation gate; a run that fails or reports the plan as not built records the reason |
+| ValidateStructures | deterministic | the same gate checks plus the export round trip; hard failures and plans not built go back to construction with the reasons and the last attempt's scripts |
+| ScientificRevision | Agent 5, `LLMReviser` | accept / stop / revisit evidence (back through AnalyzeEvidence -> planning -> construction); can read the build scripts; writes the final report (`write_report` tool) before ending the run |
 
 The graph is built from `BaseNode` classes whose `run` return annotations are the edges
-(`src/paper2structure/graph/`). Each run renders its own diagram to `workflow.mmd`.
+(`src/paper2structure/graph/`). Each run renders its own diagram to `workflow.mmd`. When an agent
+fails, the run ends with status `failed` (a failed construction attempt still goes to review if
+earlier structures exist), and so does a paper in which the summarizer finds no material system;
+a failed technique agent is only recorded as an error.
+
+### The summarizer (Agent 1)
+
+`agents/summarizer/graph.py` is a pydantic-graph of its own:
+
+| step | LLM calls | does |
+|---|---|---|
+| ReadPDF | none | pymupdf: page text without the text inside figures; figure regions (embedded images and clustered vector drawings, merged) cut out as PNGs, each with its closest "Fig. N" caption and the body sentences citing it |
+| FindSystems | 1 | paper metadata and every distinct material system (each member of a doping series, phase or substrate is its own system) |
+| ExtractTextEvidence | 1 per system | synthesis, the structure the text states (space group, lattice parameters, site occupancy, phase purity) and one evidence item per technique: values, conditions, cited figures, a verbatim quote |
+| AnalyzeFigure | 1 per figure (vision) | catalogues each panel (technique, plot type, axes, systems shown) without reading values off it |
+| BuildGraph | none | merges series-wide text items returned once per system, numbers the evidence, builds the knowledge graph (paper -> system -> evidence -> technique / figure) and saves it |
+
+Technique names map onto one vocabulary (`config.TECHNIQUES`, canonical names with aliases, e.g.
+HRTEM and SAED -> TEM, Rietveld -> XRD), which also keys the characterization agents. Answers
+with unknown system IDs go back to the model; a system or figure that fails is logged in
+`paper/errors.txt` and the rest continues.
+
+### Characterization (Agent 2)
+
+Each technique agent's system prompt is generated from a `TechniqueSpec`
+(`agents/characterization/techniques/<tech>.py`: observables, how to read the figures, what may be
+inferred, interpretation rules, limitations). The agent gets the material systems, the figure
+records of its technique (caption, citing sentences, the panels to read) with the images, and the
+text records. It returns a `CharacterizationReport`: observations (`O1`, ...: quantity, value, the
+source figure or evidence ID, systems, and whether it is a printed label, an axis estimate, a
+visual feature or stated in the text), findings, structural constraints (value, derivation, cited
+observations, confidence) and caveats. Agents 3-5 see the reports as `ExperimentalEvidence`, with
+the skipped techniques and why (a stub spec, or a technique outside the vocabulary).
 
 ## Package layout
 
 ```
+main.py                  the CLI: one graph run, PDF -> structures
+app/                     web page for Agent 1: streamlit_app.py, structure_viewer.py (3D viewer),
+                         structure_mock.py (mock structure generator for the page's Structure tab)
+config/                  config.yml (every field documented) and the fixture campaigns
 src/paper2structure/
-  config.py              campaign YAML -> Pydantic config
-  agents/                one package per agent: agent.py + schemas.py
-    structured_agent.py  shared base (model, retries, usage, preflight)
-    summarizer/          Agent 1 (placeholder: loads inputs.paper_summary)
-    characterization/    Agent 2: technique agents (XRD, NMR, ...) to come; placeholder loads
-                         inputs.experimental_evidence
-    planner/             Agent 3
+  config.py              campaign YAML -> Pydantic config; get_model(); the technique vocabulary
+  agents/                one package per agent
+    structured_agent.py  shared base of Agents 3-5 (model, retries, usage, preflight)
+    summarizer/          Agent 1: graph.py (the steps), pdf_reader.py (text and figures), agents.py
+                         (the three LLM agents), knowledge_graph.py (graph, saved files, load_graph),
+                         schemas.py (PaperGraph), cli.py (standalone run), dry_run.py
+    characterization/    Agent 2: agent.py (CharacterizationAgent), spec.py (TechniqueSpec -> prompt),
+                         techniques/ (one spec per technique), schemas.py (CharacterizationReport,
+                         ExperimentalEvidence), dry_run.py
+    planner/             Agent 3: agent.py + schemas.py
     constructor/         Agent 4, plus workspace.py (sandbox, replay) and skills/
     reviser/             Agent 5, plus the final report (write_report tool)
   graph/                 nodes, state (incl. the run-directory store), workflow, run-level schemas
   tools/                 the structure toolkit construction scripts import, its checks and their schemas
+examples/fixtures/       synthetic scenario inputs (see its README)
 ```
+
+`dry_run.py` registers canned answers for the `dry-run` model (see Configuration).
 
 ## The Construction agent
 
@@ -107,37 +151,74 @@ The reviewer (Agent 5) gets a read-only harness workspace over `structures/`, wi
 ## Setup
 
 ```bash
-conda activate /net/csefiles/coc-fung-cluster/Jun/conda_envs/paper2structure
+conda create -n paper2structure python=3.12 && conda activate paper2structure   # any Python >= 3.12 env
 conda install -c conda-forge bubblewrap   # the sandbox (bwrap); needs unprivileged user namespaces
-pip install -e . --extra-index-url https://download.pytorch.org/whl/cu126
+pip install -e . --extra-index-url https://download.pytorch.org/whl/cu126   # ".[app]" adds Streamlit, ".[test]" pytest
 ```
 
 Torch and Warp are pinned to **CUDA 12 builds** (`torch==2.14.1+cu126`, `warp-lang 1.18.0+cu12`),
 because the cluster driver (550.x) supports CUDA <= 12.4 and the default CUDA 13 wheels cannot use
 the GPUs. Large neighbor searches use NVIDIA ALCHEMI Toolkit-Ops on the GPU when one is visible,
 and ASE otherwise. `pydantic-ai` and `pydantic-ai-harness[coder]` are pinned (the harness is 0.x).
+The summarizer reads PDFs with pymupdf.
 
-The API key is read from `.env` (`export OPENAI_API_KEY=...`):
+The API key goes in `.env` in the repo root (git-ignored):
 
-```bash
-set -a; source .env; set +a
 ```
+OPENAI_API_KEY=sk-...
+P2S_MODEL=openai:gpt-5.6-luna   # optional: the model when campaign.model is null
+```
+
+`paper2structure.config` loads it with python-dotenv, so `main.py`, the summarizer CLI and the web
+page need no `source .env`; an exported `OPENAI_API_KEY` works as well and takes precedence.
 
 ## Run
 
 ```bash
-python run_construction.py --config config/cdse_zns_coreshell.yml --output_dir runs/cdse_zns --random_seed 0 --gpu 0
+python main.py --pdf pdf/<paper>.pdf --random_seed 0                      # -> runs/<paper>/
+python main.py --pdf pdf/<paper>.pdf --random_seed 0 --output_dir runs/x --techniques XRD TEM --gpu 0
+python main.py --paper_graph runs/x/paper/paper_graph.json --characterization runs/x/characterization \
+    --output_dir runs/x_replan --random_seed 0                            # reuse Agents 1-2 of run x
+python main.py --config config/cdse_zns_coreshell.yml --random_seed 0     # synthetic fixture campaign
 ```
+
+`main.py` replaces `run_construction.py`. Settings come from the campaign YAML (`--config`); the
+flags set the run-level values and override the YAML where they overlap.
 
 | flag | meaning |
 |---|---|
-| `--config` | campaign YAML (see below) |
-| `--output_dir` | run directory |
+| `--pdf` | the paper (sets `inputs.pdf`) |
+| `--paper_graph` | `paper_graph.json` of an earlier run: skips the summarizer (sets `inputs.paper_graph`) |
+| `--characterization` | folder of saved characterization reports, e.g. an earlier run's `characterization/`: skips Agent 2 |
+| `--config` | campaign YAML (default `config/config.yml`; see below) |
+| `--output_dir` | run directory (default `runs/<pdf name>`; with `--paper_graph runs/x/paper/paper_graph.json`, `runs/x_replan`) |
 | `--random_seed` | the `SEED` the build scripts use (conformers, placement, packing) (required) |
+| `--model` | every agent's model, e.g. `openai:gpt-5.6-luna` (sets `campaign.model`) |
+| `--techniques` | characterize only these, e.g. `XRD TEM` (aliases work); default: every technique found |
+| `--include_stubs` | also run the technique agents whose spec is a stub |
+| `--no_figures` | the summarizer skips figure cataloguing, so Agent 2 reads only the text |
+| `--max_figures` | max figure regions cut from the PDF (default 30) |
 | `--max_revisions` | loops the reviewer may take back through evidence -> planning -> construction (default 1) |
-| `--max_repairs` | construction retries after hard validation failures (default 2) |
+| `--max_repairs` | construction retries after hard validation failures or unbuilt plans (default 2) |
 | `--gpu` | GPU index for neighbor lists in the workflow and in the sandboxed scripts (sets `CUDA_VISIBLE_DEVICES`, `construction.gpu`) |
-| `--skip_preflight` | skip the per-agent connectivity checks |
+| `--skip_preflight` | skip the connectivity checks of Agents 3-5 |
+
+The summarizer also runs alone (Agent 1 only, written to `outputs/<pdf name>/` by default):
+
+```bash
+python -m paper2structure.agents.summarizer.cli pdf/<paper>.pdf [--out DIR] [--model dry-run] [--no-figures]
+paper-summarizer pdf/<paper>.pdf    # the same, installed as a script
+paper-summarizer --show-graph       # its workflow as a Mermaid diagram
+```
+
+The web page (the `app` extra) uploads a PDF, runs the summarizer and shows the material systems,
+the evidence by technique with the figure crops and the knowledge graph, with a zip download;
+results go to `outputs/<pdf name>_<time>/`. Its Structure tab is a mock-up
+(`app/structure_mock.py` always shows a demo SrTiO3 crystal), not Agent 4's output.
+
+```bash
+streamlit run app/streamlit_app.py
+```
 
 ## Configuration
 
@@ -147,8 +228,10 @@ field). Run-level settings are CLI flags; both are snapshotted to `<output_dir>/
 
 | section | holds |
 |---|---|
-| `campaign` | LLM (`gpt-5.6-luna`, default reasoning effort), output-validation retries, whether agents see rendered structures |
-| `inputs` | Agent 1-2 outputs (paper summary, evidence snapshot) |
+| `campaign` | every agent's model as a pydantic-ai name (`openai:gpt-5.6-luna`, the OpenAI Responses API; null = `$P2S_MODEL` or that default; `dry-run` returns canned answers and works for Agents 1-2 only), reasoning effort of Agents 3-5 (null = provider default), output-validation retries, whether agents see rendered structures |
+| `inputs` | the paper: `pdf`, or `paper_graph` (an earlier run's `paper/paper_graph.json`, skips Agent 1); `characterization` (a folder of saved reports, skips Agent 2); paths relative to the working directory or the config's folder |
+| `summarizer` | `analyze_figures` (one vision call per figure), `max_figures` (default 30) |
+| `characterization` | `techniques` (null = every technique found), `include_stubs`, `reasoning_effort` (default high), `output_retries` |
 | `planning` | max plans, max atoms per structure (default 5000) |
 | `construction` | sandbox (`bubblewrap`/`none`), network, gpu, hidden paths, request and tool-call budget, replay timeout/memory, Planning, reminders, delegation, Memory |
 | `validation` | overlap / close-contact / bond / adsorbate-binding scale factors, minimum vacuum |
@@ -164,16 +247,19 @@ Without it, sandboxed scripts compute neighbor lists on the CPU.
 
 | path | content |
 |---|---|
+| `paper/` | Agent 1, for PDF runs: `paper_graph.json` (systems, evidence and the knowledge graph), `summary.md`, `graph.dot`, `figures/p<page>_f<n>.png`, `evidence_by_technique/<TECH>.json`, `errors.txt` if a step failed |
+| `characterization/<TECH>.json` | Agent 2: one `CharacterizationReport` per technique analyzed |
+| `inputs/experimental_evidence_v<n>.json` | the reports as Agents 3-5 saw them, with the skipped techniques and errors |
 | `structures/<id>.py` | **the standalone script that generated `<id>`**, verified by a from-scratch re-run; `python <id>.py` rebuilds it into `structures/` of the current directory |
 | `structures/<id>.vasp` | POSCAR (species grouped, fixed atoms as selective dynamics); `.cif`/`.extxyz` if configured |
 | `structures/<id>.json`, `.png` | per-atom roles (tags 0/1 substrate, 2 adsorbate, 3 solvent), molecule ids and records; top/side views |
 | `structures/README.md` | which script rebuilds which structure |
-| `final_report.md` | the reviewer's summary, assessment and next steps around the generated record: evidence used, hypotheses, structures with how they were built and the measured targets, validation, revision decisions, how to reproduce, limitations |
-| `construction/r<rev>_a<attempt>/workspace/` | the agent's workspace: `task/` (plans, context, feedback), every script it wrote, `structures/` (emitted), `.agents/skills/`, `README.md` |
+| `final_report.md` | the reviewer's summary, assessment and next steps around the generated record: paper and material systems, structural constraints per technique, hypotheses, structures with how they were built and the measured targets, validation, revision decisions, how to reproduce, limitations |
+| `construction/r<rev>_a<attempt>/<plan>/workspace/` | the agent's workspace: `task/` (plans, context, feedback), every script it wrote, `structures/` (emitted), `.agents/skills/`, `README.md` |
 | `construction/r<rev>_a<attempt>/replay/<script>/` | the from-scratch re-run of each final script |
 | `plans.json`, `artifacts.json`, `validation_reports.json`, `revision_history.json`, `construction_reports.json` | full history; nothing is overwritten across revisions |
 | `state/NN_<node>.json` | graph-state snapshot after every node |
-| `result.json`, `token_log.json`, `config.json`, `workflow.mmd`, `run.log` | run summary, LLM usage, config snapshot, graph, log |
+| `result.json`, `token_log.json`, `config.json`, `workflow.mmd` | run summary, LLM usage, config snapshot, graph (the log goes to the console; redirect it to keep it) |
 
 ## Helper library (`paper2structure.tools`)
 
@@ -201,14 +287,24 @@ Without it, sandboxed scripts compute neighbor lists on the CPU.
 ## Tests
 
 ```bash
-pytest            # offline: tools, sandbox, replay, skills, scripted Coder agents, graph routing (no LLM calls)
+pytest            # offline: tools, sandbox, replay, skills, scripted agents, graph routing, the pipeline (no LLM calls)
 pytest -m live    # end-to-end CLI run with the real LLM (needs OPENAI_API_KEY)
 ```
 
+`tests/test_pipeline.py` runs the whole graph offline, from a one-page PDF it generates through
+construction: the `dry-run` model answers for Agents 1-2 and scripted models for Agents 3-5. It
+also covers the technique selection, reusing a saved summary and reports, and the planner's ID
+checks.
+
 ## Limitations
 
-- Agents 1-2 are placeholders; revisiting the evidence re-reads the same snapshot and only forwards
-  the reviewer's feedback to the planner.
+- Agent 1 sends the full paper text once per material system (and once to find the systems) and
+  one image per figure, so its cost grows with both (`--no_figures`, `summarizer.max_figures`).
+- Characterization runs once per run: on `revisit_evidence` the reports are kept, not re-analyzed,
+  and only the reviewer's feedback reaches the planner.
+- Only the XRD, TEM, SEM and FTIR specs are filled in; other techniques reach the planner only
+  through the summarizer's evidence items (or, with `include_stubs`, through agents without
+  technique knowledge).
 - Structures are unrelaxed starting geometries; no MLIP/DFT relaxation and no simulated observables
   (XPS, IR, XRD). Agreement with experiment is judged qualitatively, and an accepted structure is a
   plausible starting point, not an experimentally established one.

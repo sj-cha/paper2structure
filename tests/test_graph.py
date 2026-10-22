@@ -33,8 +33,12 @@ def test_accept_path_writes_structures_and_report(tmp_path):
     checks = {c["name"] for c in state["validation_reports"][sid]["checks"]}
     assert {"overlaps", "adsorbate_binding", "export_roundtrip"} <= checks  # the gate's report + the round trip
     for name in ("plans.json", "artifacts.json", "validation_reports.json", "revision_history.json",
-                 "token_log.json", "result.json", "workflow.mmd", "final_report.md"):
+                 "token_log.json", "result.json", "workflow.mmd", "final_report.md",
+                 "inputs/experimental_evidence_v1.json"):
         assert (run / name).exists(), name
+    # the fixture's saved summary and reports replaced Agents 1-2
+    assert state["summary"]["metadata"]["title"].startswith("[SYNTHETIC FIXTURE]")
+    assert set(state["evidence"]["reports"]) == {"FTIR", "LEED", "XPS", "XRD"} and state["evidence_version"] == 1
     report = (run / "final_report.md").read_text()
     assert sid in report and "**Status:** accepted" in report and "## 1. Summary\nscripted summary" in report
 
@@ -46,6 +50,7 @@ def test_revisit_evidence_reruns_agents_2_to_4_but_not_agent_1(tmp_path):
     assert h.count("SummarizePaper") == 1
     assert h.count("AnalyzeEvidence") == h.count("PlanStructures") == h.count("ConstructStructures") == 2
     assert h[h.index("ScientificRevision") + 1] == "AnalyzeEvidence"  # the loop re-enters at Agent 2
+    assert state["evidence_version"] == 2  # the kept reports are snapshotted again for the new revision
     assert len(state["plan_history"]) == 2 and len(state["artifacts"]) == 2  # earlier versions kept
     assert state["review_feedback"] == "use bridge sites as well"
 

@@ -120,6 +120,8 @@ class StructurePlan(BaseModel):
     adsorbates: list[AdsorbateSpec] = Field(default_factory=list)
     solvent: list[SolventSpec] = Field(default_factory=list, description="solvent species and ions")
     targets: list[Target] = Field(default_factory=list)
+    system_ids: list[str] = Field(default_factory=list, description="the paper's material systems this plan models "
+                                                                    "(the summarizer's IDs, e.g. 'S2')")
     evidence_ids: list[str] = Field(default_factory=list)
     assumptions: list[str] = Field(default_factory=list)
     construction_notes: str = ""

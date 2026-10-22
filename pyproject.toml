@@ -19,6 +19,8 @@ dependencies = [
     # The sandbox also needs the `bwrap` binary: conda install -c conda-forge bubblewrap
     "pydantic-ai-harness[coder]==0.59.0",
     "pyyaml",
+    "pymupdf",  # PDF text and figure extraction (summarizer)
+    "python-dotenv",
     "rdkit",
     "scipy",
     "matplotlib",
@@ -32,6 +34,10 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest"]
+app = ["streamlit"]  # the web page in app/: streamlit run app/streamlit_app.py
+
+[project.scripts]
+paper-summarizer = "paper2structure.agents.summarizer.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -1,0 +1,123 @@
+{
+  "technique": "FTIR",
+  "observations": [
+    {
+      "observation_id": "O1",
+      "source_id": "E3",
+      "system_ids": [
+        "S1"
+      ],
+      "quantity": "asymmetric OCO stretch",
+      "value": "1560",
+      "unit": "cm-1",
+      "read_from": "stated_in_text",
+      "uncertainty": null,
+      "note": "measured by DRIFTS; reported by the authors (page 3, Fig. 2)"
+    },
+    {
+      "observation_id": "O2",
+      "source_id": "E4",
+      "system_ids": [
+        "S1"
+      ],
+      "quantity": "symmetric OCO stretch",
+      "value": "1360",
+      "unit": "cm-1",
+      "read_from": "stated_in_text",
+      "uncertainty": null,
+      "note": "measured by DRIFTS; reported by the authors (page 3, Fig. 2)"
+    },
+    {
+      "observation_id": "O3",
+      "source_id": "E5",
+      "system_ids": [
+        "S1"
+      ],
+      "quantity": "C=O stretching band",
+      "value": "no C=O stretching band near 1700 cm-1",
+      "unit": null,
+      "read_from": "stated_in_text",
+      "uncertainty": null,
+      "note": "measured by DRIFTS; reported by the authors (page 3, Fig. 2)"
+    }
+  ],
+  "findings": [
+    {
+      "claim": "The asymmetric OCO stretch at 1560 cm-1 is assigned to formate.",
+      "system_ids": [
+        "S1"
+      ],
+      "evidence": [
+        "O1"
+      ],
+      "confidence": "medium"
+    },
+    {
+      "claim": "The OCO splitting of 200 cm-1 (1560 - 1360 cm-1) indicates bridging bidentate formate over two five-fold coordinated Ti atoms.",
+      "system_ids": [
+        "S1"
+      ],
+      "evidence": [
+        "O1",
+        "O2"
+      ],
+      "confidence": "medium"
+    },
+    {
+      "claim": "No molecularly adsorbed (undissociated) formic acid is present.",
+      "system_ids": [
+        "S1"
+      ],
+      "evidence": [
+        "O3"
+      ],
+      "confidence": "medium"
+    }
+  ],
+  "structural_constraints": [
+    {
+      "property": "adsorbed species",
+      "system_ids": [
+        "S1"
+      ],
+      "value": "carboxylate (formate, HCOO-)",
+      "unit": null,
+      "derivation": "The asymmetric OCO stretch at 1560 cm-1 is assigned to formate.",
+      "evidence": [
+        "O1"
+      ],
+      "confidence": "medium"
+    },
+    {
+      "property": "formate binding mode",
+      "system_ids": [
+        "S1"
+      ],
+      "value": "bridging bidentate over two Ti5c: both formate oxygens bound, each to one Ti5c",
+      "unit": null,
+      "derivation": "OCO splitting = 1560 - 1360 = 200 cm-1, which the authors read as bridging bidentate formate.",
+      "evidence": [
+        "O1",
+        "O2"
+      ],
+      "confidence": "medium"
+    },
+    {
+      "property": "adsorbate species (excluded)",
+      "system_ids": [
+        "S1"
+      ],
+      "value": "undissociated monodentate formic acid (HCOOH) is not the main species",
+      "unit": null,
+      "derivation": "No C=O stretching band near 1700 cm-1: no molecularly adsorbed (undissociated) formic acid.",
+      "evidence": [
+        "O3"
+      ],
+      "confidence": "medium"
+    }
+  ],
+  "caveats": [
+    "Not provided by the paper: formate coverage.",
+    "Synthetic fixture: hand-written, not extracted from a real paper."
+  ]
+}

@@ -1,12 +1,22 @@
 campaign:
-  model: gpt-5.6-luna
-  reasoning_effort: null  # null keeps the provider default
+  model: openai:gpt-5.6-luna  # every agent; null = $P2S_MODEL or the default
+  reasoning_effort: null  # Agents 3-5; null keeps the provider default
   max_retry: 3
   use_images: true
 
-inputs:  # Agents 1-2 are placeholders: these are their (synthetic) outputs
-  paper_summary: examples/fixtures/cspbbr3_phosphonate/paper_summary.json
-  experimental_evidence: examples/fixtures/cspbbr3_phosphonate/experimental_evidence.json
+inputs:  # synthetic fixture: a hand-written summary and characterization reports (no PDF)
+  paper_graph: examples/fixtures/cspbbr3_phosphonate/paper_graph.json
+  characterization: examples/fixtures/cspbbr3_phosphonate/characterization
+
+summarizer:  # Agent 1
+  analyze_figures: true  # one vision call per figure region
+  max_figures: 30
+
+characterization:  # Agent 2: one agent per technique with evidence in the paper
+  techniques: null  # e.g. [XRD, TEM]; null = every technique found
+  include_stubs: false  # also run techniques whose spec is a stub
+  reasoning_effort: high
+  output_retries: 1
 
 planning:
   max_plans: 3

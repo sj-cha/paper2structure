@@ -16,14 +16,17 @@ from paper2structure.agents.constructor.workspace import sandbox_available
 from paper2structure.agents.planner import LLMPlanner, PlanningDeps, check_plan_set
 from paper2structure.agents.planner.schemas import PlanSet
 from paper2structure.agents.reviser import LLMReviser
-from paper2structure.agents.summarizer.schemas import PaperSummary
+from paper2structure.agents.summarizer import load_graph
 from paper2structure.config import OverridesConfig
 from paper2structure.graph.state import ArtifactStore, ReconstructionState
 
+SCENARIOS = ("pt111_co", "cspbbr3_phosphonate", "anatase_formate", "cdse_zns_coreshell")
+
 
 def _inputs(scenario="pt111_co"):
-    s = PaperSummary.model_validate_json((FIXTURES / scenario / "paper_summary.json").read_text())
-    e = ExperimentalEvidence.model_validate_json((FIXTURES / scenario / "experimental_evidence.json").read_text())
+    """A fixture's summary (Agent 1's PaperGraph) and characterization reports (Agent 2)."""
+    s = load_graph(FIXTURES / scenario / "paper_graph.json")
+    e = ExperimentalEvidence.load(FIXTURES / scenario / "characterization")
     return s, e
 
 
@@ -36,9 +39,30 @@ def _final(info: AgentInfo, payload: dict) -> ModelResponse:
 
 
 def test_fixtures_are_marked_synthetic():
-    for scenario in ("pt111_co", "cspbbr3_phosphonate", "anatase_formate", "cdse_zns_coreshell"):
+    for scenario in SCENARIOS:
         s, e = _inputs(scenario)
-        assert s.synthetic and e.synthetic and s.title.startswith("[SYNTHETIC FIXTURE]")
+        assert s.source_pdf == "synthetic" and s.metadata.title.startswith("[SYNTHETIC FIXTURE]"), scenario
+        assert s.metadata.summary.startswith("Synthetic fixture"), scenario
+        assert e.reports and all(any(c.startswith("Synthetic fixture") for c in r.caveats)
+                                 for r in e.reports.values()), scenario
+
+
+def test_fixture_reports_cite_the_paper_graph():
+    """One report per technique in the summary; every observation comes from an evidence item of
+    its own technique, and findings and constraints cite observations of their own report."""
+    for scenario in SCENARIOS:
+        s, e = _inputs(scenario)
+        systems = {x.system_id for x in s.systems}
+        technique = {x.evidence_id: x.technique for x in s.evidence}
+        assert set(technique.values()) == set(e.reports), scenario
+        assert all(x.system_ids and set(x.system_ids) <= systems for x in s.evidence), scenario
+        for name, r in e.reports.items():
+            observations = {o.observation_id for o in r.observations}
+            assert r.technique == name and observations, (scenario, name)
+            assert all(technique.get(o.source_id) == name and set(o.system_ids) <= systems
+                       for o in r.observations), (scenario, name)
+            assert all(set(c.evidence) <= observations and set(c.system_ids) <= systems
+                       for c in [*r.findings, *r.structural_constraints]), (scenario, name)
 
 
 def test_planner_rejects_invented_evidence_and_retries():
@@ -55,6 +79,7 @@ def test_planner_rejects_invented_evidence_and_retries():
     plans = asyncio.run(planner.plan(*_inputs(), [], ""))
     assert plans.plans[0].evidence_ids == ["E2", "E3"]
     assert len(seen) == 2 and "E99" in seen[1][0]
+    assert "'E5'" in seen[1][0] and "'LEED:O2'" in seen[1][0]  # summary and technique-qualified report IDs
 
 
 def test_check_plan_set_enforces_overrides_and_chemistry():
@@ -323,4 +348,7 @@ def test_reviser_writes_the_report_before_ending_the_run(tmp_path):
     assert state.report.summary == "scripted summary"
     report = (tmp_path / "final_report.md").read_text()
     assert "**Status:** under review" in report and "## 1. Summary\nscripted summary" in report
+    # the fixture's PaperGraph (systems) and characterization reports (constraints per technique)
+    assert "## 2. Paper and material systems\n- [SYNTHETIC FIXTURE]" in report and "| S1 | Pt(111) |" in report
+    assert "## 3. Characterization" in report and "| LEED | CO coverage (required) | S1 |" in report
     assert "## 7. Assessment\nscripted assessment" in report and "- relax with an MLIP" in report

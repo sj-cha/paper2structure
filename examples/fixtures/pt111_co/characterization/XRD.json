@@ -1,0 +1,49 @@
+{
+  "technique": "XRD",
+  "observations": [
+    {
+      "observation_id": "O1",
+      "source_id": "E1",
+      "system_ids": [
+        "S1"
+      ],
+      "quantity": "lattice parameter a",
+      "value": "3.924",
+      "unit": "Å",
+      "read_from": "stated_in_text",
+      "uncertainty": null,
+      "note": "Refined from the fcc Pt reflections; page 3, Fig. S1."
+    }
+  ],
+  "findings": [
+    {
+      "claim": "The reflections are those of bulk fcc Pt.",
+      "system_ids": [
+        "S1"
+      ],
+      "evidence": [
+        "O1"
+      ],
+      "confidence": "high"
+    }
+  ],
+  "structural_constraints": [
+    {
+      "property": "fcc lattice constant a",
+      "system_ids": [
+        "S1"
+      ],
+      "value": "3.924",
+      "unit": "Å",
+      "derivation": "Refined lattice parameter of bulk fcc Pt, stated in the text.",
+      "evidence": [
+        "O1"
+      ],
+      "confidence": "high"
+    }
+  ],
+  "caveats": [
+    "The paper does not provide the CO tilt angle.",
+    "Synthetic fixture: hand-written, not extracted from a real paper."
+  ]
+}

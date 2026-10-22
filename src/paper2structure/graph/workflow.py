@@ -20,8 +20,8 @@ NODES = (SummarizePaper, AnalyzeEvidence, PlanStructures, ConstructStructures, V
 
 
 def build_graph():
-    """SummarizePaper -> AnalyzeEvidence -> PlanStructures -> ConstructStructures <-> ValidateStructures
-    -> ScientificRevision -> (AnalyzeEvidence | FinalizeResults)."""
+    """SummarizePaper (PDF -> PaperGraph) -> AnalyzeEvidence (characterization reports) -> PlanStructures
+    -> ConstructStructures <-> ValidateStructures -> ScientificRevision -> (AnalyzeEvidence | FinalizeResults)."""
     g = GraphBuilder(state_type=ReconstructionState, deps_type=WorkflowDeps, output_type=ReconstructionResult)
 
     @g.step
@@ -34,8 +34,9 @@ def build_graph():
 
 def build_deps(cfg: Paper2StructureConfig, output_dir: str | Path, seed: int, max_revisions: int = 1,
                max_repairs: int = 2, models: Optional[dict] = None) -> WorkflowDeps:
-    """Agents and run directory for one run. `models` may map "planner"/"constructor"/"reviser"
-    to pydantic-ai Model instances (tests); otherwise cfg.campaign.model is used."""
+    """Agents and run directory for one run. `models` may map "paper" (Agents 1-2), "planner",
+    "constructor" and "reviser" to pydantic-ai Model instances or names (tests, "dry-run");
+    otherwise cfg.campaign.model is used."""
     models = models or {}
     c = cfg.campaign
     planner = LLMPlanner(models.get("planner", c.model), c.reasoning_effort, max_plans=cfg.planning.max_plans,
@@ -45,8 +46,8 @@ def build_deps(cfg: Paper2StructureConfig, output_dir: str | Path, seed: int, ma
     reviser = LLMReviser(models.get("reviser", c.model), c.reasoning_effort, max_retry=c.max_retry,
                          read_scripts=cfg.revision.read_scripts)
     return WorkflowDeps(cfg=cfg, store=ArtifactStore(output_dir), planner=planner, constructor=constructor,
-                        reviser=reviser, seed=int(seed), max_revisions=int(max_revisions),
-                        max_repairs=int(max_repairs))
+                        reviser=reviser, seed=int(seed), paper_model=models.get("paper"),
+                        max_revisions=int(max_revisions), max_repairs=int(max_repairs))
 
 
 async def run_workflow(deps: WorkflowDeps, run_id: Optional[str] = None) -> ReconstructionResult:

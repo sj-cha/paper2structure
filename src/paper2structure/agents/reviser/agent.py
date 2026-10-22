@@ -94,7 +94,7 @@ class LLMReviser(StructuredAgent):
             if output.action == "revisit_evidence" and deps.revisions_left <= 0:
                 problems.append("no revision budget is left: choose accept_candidates or stop_inconclusive")
             if output.action == "revisit_evidence" and not output.feedback.strip():
-                problems.append("revisit_evidence needs concrete feedback for the evidence and planning agents")
+                problems.append("revisit_evidence needs concrete feedback for the planning and construction agents")
             if output.action == "accept_candidates" and not output.accepted_structure_ids:
                 problems.append("accept_candidates needs the accepted structure IDs")
             if (not known and deps.state.failed_plans and deps.revisions_left > 0
@@ -124,8 +124,9 @@ class LLMReviser(StructuredAgent):
 
 
 def reviser_prompt(state: ReconstructionState, revisions_left: int) -> str:
-    parts = ["## Paper summary", state.summary.model_dump_json(indent=1),
-             "## Experimental evidence snapshot", state.evidence.model_dump_json(indent=1),
+    parts = ["## Paper summary (material systems, text and figure evidence)",
+             state.summary.model_dump_json(indent=1, exclude={"nodes", "edges"}),
+             "## Characterization reports (per technique)", state.evidence.model_dump_json(indent=1),
              "## Plans", state.plans.model_dump_json(indent=1), "## Constructed structures"]
     current = [state.artifact(i) for i in state.current_ids]
     if not current:
@@ -175,9 +176,10 @@ Actions
 - accept_candidates: one or more structures pass validation and represent the paper's system;
   list them in accepted_structure_ids. Keep several when the evidence cannot tell them apart.
 - revisit_evidence: an important feature of the paper is missing or wrong in the structures, or
-  plans could not be built, and re-reading the evidence and re-planning could fix it. This re-runs
-  evidence analysis, planning and construction. Write concrete feedback naming what is wrong and
-  what the paper indicates; for plans that could not be built, restate why.
+  plans could not be built, and re-planning from the same evidence could fix it. The planner gets
+  your feedback with the paper summary and the characterization reports (which are kept, not
+  re-analyzed), then planning and construction re-run. Write concrete feedback naming what is
+  wrong and what the paper indicates; for plans that could not be built, restate why.
 - stop_inconclusive: the evidence cannot support a meaningful model, the structures cannot be
   repaired with the information available, or no revisions are left.
 
@@ -199,20 +201,25 @@ def save_report(state: ReconstructionState, store: ArtifactStore) -> Path:
              "## 1. Summary",
              narrative.summary if narrative else "No reviewer summary: the run ended before a final review.", ""]
     if s is not None:
-        lines += ["## 2. Paper and material",
-                  f"- {s.title}" + (" (synthetic fixture, not a real publication)" if s.synthetic else ""),
-                  f"- Materials: {'; '.join(s.materials)}",
-                  f"- Adsorbates: {'; '.join(s.adsorbates) or 'none'}",
-                  f"- Objective: {s.objective}",
-                  f"- Reconstruction target: {s.reconstruction_target}", ""]
+        m = s.metadata
+        lines += ["## 2. Paper and material systems",
+                  f"- {m.title}" + (f" ({', '.join(m.authors[:3])}{' et al.' if len(m.authors) > 3 else ''}"
+                                    f"{', ' + str(m.year) if m.year else ''})" if m.authors else ""),
+                  f"- DOI: {m.doi or 'n/a'}; source: {s.source_pdf}", f"- {m.summary}", "",
+                  "| system | name | form | space group | lattice parameters |", "|---|---|---|---|---|"]
+        for sy in s.systems:
+            lat = ", ".join(f"{x.quantity}={x.value}{' ' + x.unit if x.unit else ''}" for x in sy.structure.lattice_parameters)
+            lines.append(f"| {sy.system_id} | {sy.name} | {sy.form or ''} | {sy.structure.space_group or ''} | {lat} |")
+        lines.append("")
     if ev is not None:
-        lines += ["## 3. Experimental evidence used (fixed snapshot)",
-                  "| ID | technique | observation | value | authors' interpretation |", "|---|---|---|---|---|"]
-        for e in ev.items:
-            val = f"{e.value:g} {e.unit or ''}".strip() if e.value is not None else "n/a"
-            lines.append(f"| {e.evidence_id} | {e.technique} | {e.observation} | {val} | {e.authors_interpretation or ''} |")
-        if ev.missing:
-            lines += ["", "Not provided by the paper: " + "; ".join(ev.missing)]
+        lines += ["## 3. Characterization (structural constraints per technique)",
+                  "| technique | property | systems | value | confidence |", "|---|---|---|---|---|"]
+        for tech, r in sorted(ev.reports.items()):
+            for c in r.structural_constraints:
+                value = c.value if not c.unit or c.value.rstrip().endswith(c.unit) else f"{c.value} {c.unit}"
+                lines.append(f"| {tech} | {c.property} | {', '.join(c.system_ids)} | {value} | {c.confidence} |")
+        if ev.skipped:
+            lines += ["", "Techniques not analyzed: " + "; ".join(f"{k} ({v})" for k, v in sorted(ev.skipped.items()))]
         lines.append("")
     lines.append("## 4. Structural hypotheses and plans")
     for r, ps in enumerate(state.plan_history):
@@ -258,9 +265,10 @@ def save_report(state: ReconstructionState, store: ArtifactStore) -> Path:
               "empty directory and reproduced the structure exactly. `python structures/<id>.py` rebuilds it into "
               "`structures/` of the current directory (needs the paper2structure package); edit the parameters at "
               "the top to explore variants. The agent's full workspaces, with every intermediate script, are in "
-              "`construction/r<revision>_a<attempt>/workspace/`."]
+              "`construction/r<revision>_a<attempt>/<plan>/workspace/`."]
     lines += ["", "## 10. Limitations",
-              "- Agents 1-2 are placeholders that load the input fixtures; the evidence was not re-analyzed on revision.",
+              "- The characterization reports are not re-analyzed on revision; the reviewer's feedback goes to the planner.",
+              "- Techniques without a filled-in specification are not analyzed (see section 3).",
               "- Structures are unrelaxed starting geometries; no energies, relaxations or simulated observables "
               "(XPS, IR, XRD) were computed, so agreement with experiment is qualitative only.",
               "- Acceptance means a plausible simulation starting point, not an experimentally established structure."]

@@ -76,8 +76,9 @@ def build_bulk(space_group: str | int, species: Sequence[str], coords: Sequence[
         formula_units: expected formula units per conventional cell (e.g. 4 for anatase TiO2);
             checked when given.
 
-    Coordinates follow the setting pymatgen uses: origin choice 1 for groups with two origin
-    choices, hexagonal axes for rhombohedral groups. Raises ValueError when the lattice does not
+    Coordinates follow the setting of the symbol: the standard setting pymatgen uses (origin
+    choice 1 for groups with two origin choices, hexagonal axes for rhombohedral groups), or a
+    non-standard setting pymatgen knows ("Pbnm", "Pcab", "Cc2m"), with the lattice in that setting. Raises ValueError when the lattice does not
     fit the space group, when symmetry-generated atoms overlap (usually wrong coordinates or the
     other origin choice), or when the cell holds a different number of formula units.
     """
@@ -86,8 +87,8 @@ def build_bulk(space_group: str | int, species: Sequence[str], coords: Sequence[
     if len(species) != len(coords):
         raise ValueError(f"{len(species)} species but {len(coords)} coordinate triples")
     lattice = _complete_lattice(sg, a, b, c, alpha, beta, gamma)
-    structure = Structure.from_spacegroup(sg.int_number, lattice, list(species),
-                                          [list(map(float, x)) for x in coords])
+    setting = sg.int_number if isinstance(space_group, int) or str(space_group).isdigit() else str(space_group)
+    structure = Structure.from_spacegroup(setting, lattice, list(species), [list(map(float, x)) for x in coords])
 
     dm = structure.distance_matrix
     np.fill_diagonal(dm, np.inf)

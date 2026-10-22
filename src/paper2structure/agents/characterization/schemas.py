@@ -1,55 +1,93 @@
-from __future__ import annotations
+"""Output of the characterization agents.
 
+The inputs are the summarizer's stored models (``MaterialSystem`` and ``Evidence`` from
+``paper2structure.agents.summarizer.schemas``): text evidence carries what the paper states,
+figure evidence carries the image, caption and citing sentences. IDs in this report point
+back to them: ``source_id`` is a figure ID (image file stem, e.g. 'p2_f1') or a text
+evidence ID (e.g. 'E003'), and ``system_ids`` are the summarizer's system IDs ('S1', ...).
+"""
+
+from pathlib import Path
 from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
-
-from paper2structure.agents.summarizer.schemas import SourceReference
+from pydantic import BaseModel, Field
 
 
-class EvidenceItem(BaseModel):
-    """One experimental observation, kept separate from its interpretation."""
-    model_config = ConfigDict(extra="forbid")
-    evidence_id: str
-    technique: str
-    observation: str
-    value: Optional[float] = None
+Confidence = Literal["high", "medium", "low"]
+
+
+class Observation(BaseModel):
+    observation_id: str = Field(description="Unique ID within the report, e.g. 'O1'.")
+    source_id: str = Field(description="Figure ID of the image or evidence ID of the text record this observation comes from.")
+    system_ids: list[str] = Field(default_factory=list, description="Systems the observation refers to, e.g. ['S2'].")
+    quantity: str = Field(description="What was read, e.g. '2theta peak position', 'FWHM', 'd-spacing', 'chemical shift'.")
+    value: str = Field(description="Value as read or stated; kept as text to allow ranges and '~'.")
     unit: Optional[str] = None
-    authors_interpretation: Optional[str] = None
-    structural_implication: Optional[str] = None
-    confidence: Literal["high", "medium", "low"] = "medium"
-    classification: Literal["reported", "inferred"] = "reported"
-    source: SourceReference = Field(default_factory=SourceReference)
+    read_from: Literal["printed_label", "axis_estimate", "visual", "stated_in_text"] = Field(
+        description="'printed_label' if the value is written on the figure; 'axis_estimate' if read against axis ticks; "
+                    "'visual' for qualitative features (e.g. a shoulder, an extra peak, peak broadening); "
+                    "'stated_in_text' if the value or claim comes from a text record.",
+    )
+    uncertainty: Optional[str] = Field(default=None, description="Reading precision, e.g. '±0.1 deg' from tick spacing, or the error bar stated in the text.")
+    note: str = Field(default="", description="Where in the source, e.g. 'trace 2 of 3, labelled (002)' or 'Rietveld result in Results'.")
+
+    @property
+    def source_type(self) -> Literal["figure", "text"]:
+        return "text" if self.read_from == "stated_in_text" else "figure"
+
+
+class Finding(BaseModel):
+    claim: str = Field(description="One interpretive conclusion drawn from the data.")
+    system_ids: list[str] = Field(default_factory=list, description="Systems the claim applies to.")
+    evidence: list[str] = Field(description="Observation IDs supporting the claim.")
+    confidence: Confidence
 
 
 class StructuralConstraint(BaseModel):
-    """What atomic configurations the evidence supports, excludes or requires."""
-    model_config = ConfigDict(extra="forbid")
-    constraint_id: str
-    statement: str
-    evidence_ids: list[str]
-    effect: Literal["supports", "excludes", "requires"] = "supports"
+    property: str = Field(description="Structural property constrained by the data, e.g. 'interlayer spacing', 'phase'.")
+    system_ids: list[str] = Field(default_factory=list, description="Systems the constraint applies to; several for a series-wide constraint.")
+    value: str = Field(description="Constrained value or range, as text.")
+    unit: Optional[str] = None
+    derivation: str = Field(default="", description="Relation or reasoning used, e.g. 'Bragg, lambda=1.5406 A, d = 2*d(002)'.")
+    evidence: list[str] = Field(description="Observation IDs supporting the constraint.")
+    confidence: Confidence
+
+
+class CharacterizationReport(BaseModel):
+    technique: str
+    observations: list[Observation] = Field(
+        default_factory=list,
+        description="Values and features read from the figure images or stated in the text records.",
+    )
+    findings: list[Finding] = Field(default_factory=list)
+    structural_constraints: list[StructuralConstraint] = Field(
+        default_factory=list,
+        description="Constraints usable as inputs to atomistic structure generation.",
+    )
+    caveats: list[str] = Field(
+        default_factory=list,
+        description="Unreadable regions, ambiguities, inconsistencies with the text, or limits of the technique.",
+    )
 
 
 class ExperimentalEvidence(BaseModel):
-    """Agent 2 output. Minimal placeholder schema while Agent 2 is a fixture loader."""
-    model_config = ConfigDict(extra="forbid")
-    synthetic: bool = Field(False, description="True for hand-written fixtures, not extracted from a real paper")
-    items: list[EvidenceItem]
-    constraints: list[StructuralConstraint] = Field(default_factory=list)
-    missing: list[str] = Field(default_factory=list, description="structural information the paper does not provide")
+    """Agent 2's output as the rest of the workflow sees it: one CharacterizationReport per
+    technique (canonical name) and the techniques found in the paper but not analyzed."""
 
-    @model_validator(mode="after")
-    def _ids(self) -> ExperimentalEvidence:
-        ids = [e.evidence_id for e in self.items]
-        if len(ids) != len(set(ids)):
-            raise ValueError("evidence IDs must be unique")
-        for c in self.constraints:
-            unknown = set(c.evidence_ids) - set(ids)
-            if unknown:
-                raise ValueError(f"constraint {c.constraint_id} cites unknown evidence {sorted(unknown)}")
-        return self
+    reports: dict[str, CharacterizationReport] = Field(default_factory=dict)
+    skipped: dict[str, str] = Field(default_factory=dict, description="Technique -> why it was not analyzed.")
+    errors: list[str] = Field(default_factory=list)
 
     @property
     def ids(self) -> set[str]:
-        return {e.evidence_id for e in self.items} | {c.constraint_id for c in self.constraints}
+        """Citable observation IDs, qualified by technique: 'XRD:O3'."""
+        return {f"{t}:{o.observation_id}" for t, r in self.reports.items() for o in r.observations}
+
+    @classmethod
+    def load(cls, folder: str | Path) -> "ExperimentalEvidence":
+        """The reports saved in `folder` (one CharacterizationReport JSON per technique)."""
+        paths = sorted(Path(folder).glob("*.json"))
+        if not paths:
+            raise FileNotFoundError(f"no characterization reports (*.json) in {folder}")
+        reports = [CharacterizationReport.model_validate_json(p.read_text()) for p in paths]
+        return cls(reports={r.technique: r for r in reports})

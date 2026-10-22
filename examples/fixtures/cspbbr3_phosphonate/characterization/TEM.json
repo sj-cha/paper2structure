@@ -1,0 +1,50 @@
+{
+  "technique": "TEM",
+  "observations": [
+    {
+      "observation_id": "O1",
+      "source_id": "E2",
+      "system_ids": [
+        "S1"
+      ],
+      "quantity": "nanocube edge length",
+      "value": "~10",
+      "unit": "nm",
+      "read_from": "stated_in_text",
+      "uncertainty": null,
+      "note": "page 3, Fig. 1b: cubes of ~10 nm edge length bounded by {100} facets"
+    }
+  ],
+  "findings": [
+    {
+      "claim": "Authors' interpretation: {100}-faceted nanocubes.",
+      "system_ids": [
+        "S1"
+      ],
+      "evidence": [
+        "O1"
+      ],
+      "confidence": "high"
+    }
+  ],
+  "structural_constraints": [
+    {
+      "property": "exposed facets (required)",
+      "system_ids": [
+        "S1"
+      ],
+      "value": "{100} facets are exposed",
+      "unit": null,
+      "derivation": "Cubes of ~10 nm edge length bounded by {100} facets: the exposed surfaces are {100} facets, so the model must expose {100} facets.",
+      "evidence": [
+        "O1"
+      ],
+      "confidence": "high"
+    }
+  ],
+  "caveats": [
+    "Synthetic fixture: hand-written, not extracted from a real paper.",
+    "Not provided by the paper: facet termination (CsBr- versus PbBr2-terminated facets).",
+    "Not provided by the paper: ligand coverage per nm^2 (ligand surface coverage)."
+  ]
+}

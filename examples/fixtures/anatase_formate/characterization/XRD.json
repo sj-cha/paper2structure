@@ -1,0 +1,63 @@
+{
+  "technique": "XRD",
+  "observations": [
+    {
+      "observation_id": "O1",
+      "source_id": "E1",
+      "system_ids": [
+        "S1"
+      ],
+      "quantity": "phase",
+      "value": "phase-pure anatase; lattice parameters not reported",
+      "unit": null,
+      "read_from": "stated_in_text",
+      "uncertainty": null,
+      "note": "reported by the authors (page 2, Fig. 1a)"
+    }
+  ],
+  "findings": [
+    {
+      "claim": "The nanoparticles are phase-pure anatase TiO2 (I4_1/amd).",
+      "system_ids": [
+        "S1"
+      ],
+      "evidence": [
+        "O1"
+      ],
+      "confidence": "high"
+    }
+  ],
+  "structural_constraints": [
+    {
+      "property": "bulk phase",
+      "system_ids": [
+        "S1"
+      ],
+      "value": "anatase TiO2 (I4_1/amd)",
+      "unit": null,
+      "derivation": "XRD shows phase-pure anatase (the authors' assignment).",
+      "evidence": [
+        "O1"
+      ],
+      "confidence": "high"
+    },
+    {
+      "property": "lattice parameters",
+      "system_ids": [
+        "S1"
+      ],
+      "value": "not reported; the anatase lattice values must come from the literature",
+      "unit": null,
+      "derivation": "XRD identifies the phase, but the paper reports no lattice parameters.",
+      "evidence": [
+        "O1"
+      ],
+      "confidence": "high"
+    }
+  ],
+  "caveats": [
+    "Not provided by the paper: lattice parameters.",
+    "Not provided by the paper: formate coverage.",
+    "Synthetic fixture: hand-written, not extracted from a real paper."
+  ]
+}

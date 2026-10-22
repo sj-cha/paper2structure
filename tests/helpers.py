@@ -29,6 +29,7 @@ PT_PLAN = {
                         "mode": "adsorb", "site_kind": "top", "site_elements": ["Pt"], "site": "atop Pt",
                         "count": 1, "bond_length": 1.85}],
         "targets": [{"property": "CO coverage", "value": "0.25 ML", "evidence_ids": ["E2"]}],
+        "system_ids": ["S1"],
         "evidence_ids": ["E2", "E3"],
         "assumptions": ["CO is upright"],
     }],
@@ -51,8 +52,9 @@ BAD_SCRIPT = SCRIPT.format(bond=0.4)  # C pushed into the Pt site: fails the ove
 
 
 def make_config(scenario: str = "pt111_co", **overrides) -> Paper2StructureConfig:
-    raw = {"inputs": {"paper_summary": str(FIXTURES / scenario / "paper_summary.json"),
-                      "experimental_evidence": str(FIXTURES / scenario / "experimental_evidence.json")},
+    """A run on a synthetic fixture: its saved summary and characterization reports replace Agents 1-2."""
+    raw = {"inputs": {"paper_graph": str(FIXTURES / scenario / "paper_graph.json"),
+                      "characterization": str(FIXTURES / scenario / "characterization")},
            "construction": {"code_timeout": 240.0, "memory_limit_gb": None}}
     for key, value in overrides.items():
         raw.setdefault(key, {}).update(value)

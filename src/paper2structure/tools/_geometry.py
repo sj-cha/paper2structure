@@ -227,7 +227,7 @@ _BARE_BACKSLASH = re.compile(r'\\(?![\\"/bfnrtu])')
 def get_molecules(atoms: Atoms) -> list[dict]:
     """Molecule records (adsorbates, solvent) attached to a structure."""
     raw = atoms.info.get(MOLECULES_KEY)
-    if not raw:
+    if raw is None or len(raw) == 0:  # extxyz reads an empty record list back as an empty array
         return []
     if not isinstance(raw, str):
         return list(raw)

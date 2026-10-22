@@ -1,0 +1,698 @@
+{
+  "source_pdf": "synthetic",
+  "model": "synthetic fixture (hand-written)",
+  "metadata": {
+    "title": "[SYNTHETIC FIXTURE] Hexylphosphonic acid passivation of CsPbBr3 nanocube surfaces",
+    "authors": [],
+    "doi": null,
+    "year": null,
+    "summary": "Synthetic fixture for pipeline testing, not a real publication: it asks how hexylphosphonic acid (HPA) treatment raises the photoluminescence quantum yield of CsPbBr3 nanocubes. XRD indexes the nanocubes to cubic CsPbBr3 with a = 5.87 A, and TEM shows ~10 nm cubes bounded by {100} facets. After treatment the FTIR P-OH band at 950 cm-1 disappears and the P=O band shifts from 1200 to 1100 cm-1, the XPS Br/Pb atomic ratio drops from 2.9 to 2.6 while a P 2p peak appears at 133.2 eV, and the PL quantum yield increases from 60% to 90%. The authors conclude that HPA binds as a deprotonated phosphonate to surface Pb, taking the place of surface bromide, and that removing undercoordinated surface Pb sites suppresses non-radiative recombination. The reconstruction target is the phosphonate-passivated CsPbBr3 {100} surface; monodentate versus bidentate binding, the degree of deprotonation (one or two P-OH groups), CsBr- versus PbBr2-terminated facets and the ligand surface coverage are unresolved."
+  },
+  "systems": [
+    {
+      "system_id": "S1",
+      "name": "CsPbBr3 nanocubes",
+      "family": null,
+      "composition_variables": {},
+      "material_class": "halide perovskite",
+      "form": "nanocubes (~10 nm edge length)",
+      "synthesis": {
+        "method": null,
+        "precursors": [],
+        "conditions": [],
+        "notes": "Studied before and after treatment with hexylphosphonic acid (HPA), SMILES CCCCCCP(=O)(O)O. The nanocube synthesis route is not reported."
+      },
+      "structure": {
+        "crystal_system": "cubic",
+        "space_group": "Pm-3m",
+        "lattice_parameters": [
+          {
+            "quantity": "a",
+            "value": "5.87",
+            "unit": "A",
+            "uncertainty": null,
+            "approximate": false
+          }
+        ],
+        "site_occupancy": [],
+        "phase_purity": null,
+        "other": [
+          "Nanocubes of ~10 nm edge length bounded by {100} facets (TEM)."
+        ]
+      }
+    }
+  ],
+  "evidence": [
+    {
+      "evidence_id": "E1",
+      "system_ids": [
+        "S1"
+      ],
+      "technique": "XRD",
+      "technique_as_written": null,
+      "technique_category": "diffraction",
+      "source_type": "text",
+      "source_ref": "page 3",
+      "summary": "Reflections indexed to cubic perovskite CsPbBr3. Authors' interpretation: cubic CsPbBr3 (Pm-3m).",
+      "measurements": [
+        {
+          "quantity": "lattice parameter a",
+          "value": "5.87",
+          "unit": "A",
+          "uncertainty": null,
+          "approximate": false
+        }
+      ],
+      "conditions": [],
+      "observations": [],
+      "figure_refs": [
+        "Fig. 1a"
+      ],
+      "quote": null,
+      "context": [],
+      "image_path": null
+    },
+    {
+      "evidence_id": "E2",
+      "system_ids": [
+        "S1"
+      ],
+      "technique": "TEM",
+      "technique_as_written": null,
+      "technique_category": "microscopy",
+      "source_type": "text",
+      "source_ref": "page 3",
+      "summary": "Cubes of ~10 nm edge length bounded by {100} facets. Authors' interpretation: {100}-faceted nanocubes.",
+      "measurements": [
+        {
+          "quantity": "nanocube edge length",
+          "value": "~10",
+          "unit": "nm",
+          "uncertainty": null,
+          "approximate": false
+        }
+      ],
+      "conditions": [],
+      "observations": [],
+      "figure_refs": [
+        "Fig. 1b"
+      ],
+      "quote": null,
+      "context": [],
+      "image_path": null
+    },
+    {
+      "evidence_id": "E3",
+      "system_ids": [
+        "S1"
+      ],
+      "technique": "FTIR",
+      "technique_as_written": null,
+      "technique_category": "spectroscopy",
+      "source_type": "text",
+      "source_ref": "page 4",
+      "summary": "P-OH band at 950 cm-1 disappears after binding. Authors' interpretation: the phosphonic acid is deprotonated on binding.",
+      "measurements": [
+        {
+          "quantity": "P-OH band position",
+          "value": "950",
+          "unit": "cm-1",
+          "uncertainty": null,
+          "approximate": false
+        }
+      ],
+      "conditions": [],
+      "observations": [],
+      "figure_refs": [
+        "Fig. 2a"
+      ],
+      "quote": null,
+      "context": [],
+      "image_path": null
+    },
+    {
+      "evidence_id": "E4",
+      "system_ids": [
+        "S1"
+      ],
+      "technique": "FTIR",
+      "technique_as_written": null,
+      "technique_category": "spectroscopy",
+      "source_type": "text",
+      "source_ref": "page 4",
+      "summary": "P=O stretch shifts from 1200 to 1100 cm-1. Authors' interpretation: P-O groups coordinate surface Pb.",
+      "measurements": [
+        {
+          "quantity": "P=O stretch position before treatment",
+          "value": "1200",
+          "unit": "cm-1",
+          "uncertainty": null,
+          "approximate": false
+        },
+        {
+          "quantity": "P=O stretch position after treatment",
+          "value": "1100",
+          "unit": "cm-1",
+          "uncertainty": null,
+          "approximate": false
+        }
+      ],
+      "conditions": [],
+      "observations": [],
+      "figure_refs": [
+        "Fig. 2b"
+      ],
+      "quote": null,
+      "context": [],
+      "image_path": null
+    },
+    {
+      "evidence_id": "E5",
+      "system_ids": [
+        "S1"
+      ],
+      "technique": "XPS",
+      "technique_as_written": null,
+      "technique_category": "spectroscopy",
+      "source_type": "text",
+      "source_ref": "page 5",
+      "summary": "Br/Pb atomic ratio decreases from 2.9 to 2.6. Authors' interpretation: surface bromide is replaced by phosphonate.",
+      "measurements": [
+        {
+          "quantity": "Br/Pb atomic ratio before treatment",
+          "value": "2.9",
+          "unit": null,
+          "uncertainty": null,
+          "approximate": false
+        },
+        {
+          "quantity": "Br/Pb atomic ratio after treatment",
+          "value": "2.6",
+          "unit": null,
+          "uncertainty": null,
+          "approximate": false
+        }
+      ],
+      "conditions": [],
+      "observations": [],
+      "figure_refs": [
+        "Fig. 3a"
+      ],
+      "quote": null,
+      "context": [],
+      "image_path": null
+    },
+    {
+      "evidence_id": "E6",
+      "system_ids": [
+        "S1"
+      ],
+      "technique": "XPS",
+      "technique_as_written": null,
+      "technique_category": "spectroscopy",
+      "source_type": "text",
+      "source_ref": "page 5",
+      "summary": "P 2p peak at 133.2 eV after treatment. Authors' interpretation: phosphonate bound to the surface.",
+      "measurements": [
+        {
+          "quantity": "P 2p binding energy",
+          "value": "133.2",
+          "unit": "eV",
+          "uncertainty": null,
+          "approximate": false
+        }
+      ],
+      "conditions": [],
+      "observations": [],
+      "figure_refs": [
+        "Fig. 3b"
+      ],
+      "quote": null,
+      "context": [],
+      "image_path": null
+    },
+    {
+      "evidence_id": "E7",
+      "system_ids": [
+        "S1"
+      ],
+      "technique": "PL",
+      "technique_as_written": null,
+      "technique_category": "spectroscopy",
+      "source_type": "text",
+      "source_ref": "page 6",
+      "summary": "PL quantum yield increases from 60% to 90%. Authors' interpretation: trap passivation.",
+      "measurements": [
+        {
+          "quantity": "PL quantum yield before treatment",
+          "value": "60",
+          "unit": "%",
+          "uncertainty": null,
+          "approximate": false
+        },
+        {
+          "quantity": "PL quantum yield after treatment",
+          "value": "90",
+          "unit": "%",
+          "uncertainty": null,
+          "approximate": false
+        }
+      ],
+      "conditions": [],
+      "observations": [],
+      "figure_refs": [
+        "Fig. 4"
+      ],
+      "quote": null,
+      "context": [],
+      "image_path": null
+    }
+  ],
+  "nodes": [
+    {
+      "id": "paper",
+      "type": "paper",
+      "label": "[SYNTHETIC FIXTURE] Hexylphosphonic acid passivation of CsPbBr3 nanocube surfaces",
+      "data": {
+        "title": "[SYNTHETIC FIXTURE] Hexylphosphonic acid passivation of CsPbBr3 nanocube surfaces",
+        "authors": [],
+        "doi": null,
+        "year": null,
+        "summary": "Synthetic fixture for pipeline testing, not a real publication: it asks how hexylphosphonic acid (HPA) treatment raises the photoluminescence quantum yield of CsPbBr3 nanocubes. XRD indexes the nanocubes to cubic CsPbBr3 with a = 5.87 A, and TEM shows ~10 nm cubes bounded by {100} facets. After treatment the FTIR P-OH band at 950 cm-1 disappears and the P=O band shifts from 1200 to 1100 cm-1, the XPS Br/Pb atomic ratio drops from 2.9 to 2.6 while a P 2p peak appears at 133.2 eV, and the PL quantum yield increases from 60% to 90%. The authors conclude that HPA binds as a deprotonated phosphonate to surface Pb, taking the place of surface bromide, and that removing undercoordinated surface Pb sites suppresses non-radiative recombination. The reconstruction target is the phosphonate-passivated CsPbBr3 {100} surface; monodentate versus bidentate binding, the degree of deprotonation (one or two P-OH groups), CsBr- versus PbBr2-terminated facets and the ligand surface coverage are unresolved."
+      }
+    },
+    {
+      "id": "S1",
+      "type": "system",
+      "label": "CsPbBr3 nanocubes",
+      "data": {
+        "system_id": "S1",
+        "name": "CsPbBr3 nanocubes",
+        "family": null,
+        "composition_variables": {},
+        "material_class": "halide perovskite",
+        "form": "nanocubes (~10 nm edge length)",
+        "synthesis": {
+          "method": null,
+          "precursors": [],
+          "conditions": [],
+          "notes": "Studied before and after treatment with hexylphosphonic acid (HPA), SMILES CCCCCCP(=O)(O)O. The nanocube synthesis route is not reported."
+        },
+        "structure": {
+          "crystal_system": "cubic",
+          "space_group": "Pm-3m",
+          "lattice_parameters": [
+            {
+              "quantity": "a",
+              "value": "5.87",
+              "unit": "A",
+              "uncertainty": null,
+              "approximate": false
+            }
+          ],
+          "site_occupancy": [],
+          "phase_purity": null,
+          "other": [
+            "Nanocubes of ~10 nm edge length bounded by {100} facets (TEM)."
+          ]
+        }
+      }
+    },
+    {
+      "id": "E1",
+      "type": "evidence",
+      "label": "XRD (page 3)",
+      "data": {
+        "evidence_id": "E1",
+        "system_ids": [
+          "S1"
+        ],
+        "technique": "XRD",
+        "technique_as_written": null,
+        "technique_category": "diffraction",
+        "source_type": "text",
+        "source_ref": "page 3",
+        "summary": "Reflections indexed to cubic perovskite CsPbBr3. Authors' interpretation: cubic CsPbBr3 (Pm-3m).",
+        "measurements": [
+          {
+            "quantity": "lattice parameter a",
+            "value": "5.87",
+            "unit": "A",
+            "uncertainty": null,
+            "approximate": false
+          }
+        ],
+        "conditions": [],
+        "observations": [],
+        "figure_refs": [
+          "Fig. 1a"
+        ],
+        "quote": null,
+        "context": [],
+        "image_path": null
+      }
+    },
+    {
+      "id": "tech:XRD",
+      "type": "technique",
+      "label": "XRD",
+      "data": {
+        "category": "diffraction"
+      }
+    },
+    {
+      "id": "E2",
+      "type": "evidence",
+      "label": "TEM (page 3)",
+      "data": {
+        "evidence_id": "E2",
+        "system_ids": [
+          "S1"
+        ],
+        "technique": "TEM",
+        "technique_as_written": null,
+        "technique_category": "microscopy",
+        "source_type": "text",
+        "source_ref": "page 3",
+        "summary": "Cubes of ~10 nm edge length bounded by {100} facets. Authors' interpretation: {100}-faceted nanocubes.",
+        "measurements": [
+          {
+            "quantity": "nanocube edge length",
+            "value": "~10",
+            "unit": "nm",
+            "uncertainty": null,
+            "approximate": false
+          }
+        ],
+        "conditions": [],
+        "observations": [],
+        "figure_refs": [
+          "Fig. 1b"
+        ],
+        "quote": null,
+        "context": [],
+        "image_path": null
+      }
+    },
+    {
+      "id": "tech:TEM",
+      "type": "technique",
+      "label": "TEM",
+      "data": {
+        "category": "microscopy"
+      }
+    },
+    {
+      "id": "E3",
+      "type": "evidence",
+      "label": "FTIR (page 4)",
+      "data": {
+        "evidence_id": "E3",
+        "system_ids": [
+          "S1"
+        ],
+        "technique": "FTIR",
+        "technique_as_written": null,
+        "technique_category": "spectroscopy",
+        "source_type": "text",
+        "source_ref": "page 4",
+        "summary": "P-OH band at 950 cm-1 disappears after binding. Authors' interpretation: the phosphonic acid is deprotonated on binding.",
+        "measurements": [
+          {
+            "quantity": "P-OH band position",
+            "value": "950",
+            "unit": "cm-1",
+            "uncertainty": null,
+            "approximate": false
+          }
+        ],
+        "conditions": [],
+        "observations": [],
+        "figure_refs": [
+          "Fig. 2a"
+        ],
+        "quote": null,
+        "context": [],
+        "image_path": null
+      }
+    },
+    {
+      "id": "tech:FTIR",
+      "type": "technique",
+      "label": "FTIR",
+      "data": {
+        "category": "spectroscopy"
+      }
+    },
+    {
+      "id": "E4",
+      "type": "evidence",
+      "label": "FTIR (page 4)",
+      "data": {
+        "evidence_id": "E4",
+        "system_ids": [
+          "S1"
+        ],
+        "technique": "FTIR",
+        "technique_as_written": null,
+        "technique_category": "spectroscopy",
+        "source_type": "text",
+        "source_ref": "page 4",
+        "summary": "P=O stretch shifts from 1200 to 1100 cm-1. Authors' interpretation: P-O groups coordinate surface Pb.",
+        "measurements": [
+          {
+            "quantity": "P=O stretch position before treatment",
+            "value": "1200",
+            "unit": "cm-1",
+            "uncertainty": null,
+            "approximate": false
+          },
+          {
+            "quantity": "P=O stretch position after treatment",
+            "value": "1100",
+            "unit": "cm-1",
+            "uncertainty": null,
+            "approximate": false
+          }
+        ],
+        "conditions": [],
+        "observations": [],
+        "figure_refs": [
+          "Fig. 2b"
+        ],
+        "quote": null,
+        "context": [],
+        "image_path": null
+      }
+    },
+    {
+      "id": "E5",
+      "type": "evidence",
+      "label": "XPS (page 5)",
+      "data": {
+        "evidence_id": "E5",
+        "system_ids": [
+          "S1"
+        ],
+        "technique": "XPS",
+        "technique_as_written": null,
+        "technique_category": "spectroscopy",
+        "source_type": "text",
+        "source_ref": "page 5",
+        "summary": "Br/Pb atomic ratio decreases from 2.9 to 2.6. Authors' interpretation: surface bromide is replaced by phosphonate.",
+        "measurements": [
+          {
+            "quantity": "Br/Pb atomic ratio before treatment",
+            "value": "2.9",
+            "unit": null,
+            "uncertainty": null,
+            "approximate": false
+          },
+          {
+            "quantity": "Br/Pb atomic ratio after treatment",
+            "value": "2.6",
+            "unit": null,
+            "uncertainty": null,
+            "approximate": false
+          }
+        ],
+        "conditions": [],
+        "observations": [],
+        "figure_refs": [
+          "Fig. 3a"
+        ],
+        "quote": null,
+        "context": [],
+        "image_path": null
+      }
+    },
+    {
+      "id": "tech:XPS",
+      "type": "technique",
+      "label": "XPS",
+      "data": {
+        "category": "spectroscopy"
+      }
+    },
+    {
+      "id": "E6",
+      "type": "evidence",
+      "label": "XPS (page 5)",
+      "data": {
+        "evidence_id": "E6",
+        "system_ids": [
+          "S1"
+        ],
+        "technique": "XPS",
+        "technique_as_written": null,
+        "technique_category": "spectroscopy",
+        "source_type": "text",
+        "source_ref": "page 5",
+        "summary": "P 2p peak at 133.2 eV after treatment. Authors' interpretation: phosphonate bound to the surface.",
+        "measurements": [
+          {
+            "quantity": "P 2p binding energy",
+            "value": "133.2",
+            "unit": "eV",
+            "uncertainty": null,
+            "approximate": false
+          }
+        ],
+        "conditions": [],
+        "observations": [],
+        "figure_refs": [
+          "Fig. 3b"
+        ],
+        "quote": null,
+        "context": [],
+        "image_path": null
+      }
+    },
+    {
+      "id": "E7",
+      "type": "evidence",
+      "label": "PL (page 6)",
+      "data": {
+        "evidence_id": "E7",
+        "system_ids": [
+          "S1"
+        ],
+        "technique": "PL",
+        "technique_as_written": null,
+        "technique_category": "spectroscopy",
+        "source_type": "text",
+        "source_ref": "page 6",
+        "summary": "PL quantum yield increases from 60% to 90%. Authors' interpretation: trap passivation.",
+        "measurements": [
+          {
+            "quantity": "PL quantum yield before treatment",
+            "value": "60",
+            "unit": "%",
+            "uncertainty": null,
+            "approximate": false
+          },
+          {
+            "quantity": "PL quantum yield after treatment",
+            "value": "90",
+            "unit": "%",
+            "uncertainty": null,
+            "approximate": false
+          }
+        ],
+        "conditions": [],
+        "observations": [],
+        "figure_refs": [
+          "Fig. 4"
+        ],
+        "quote": null,
+        "context": [],
+        "image_path": null
+      }
+    },
+    {
+      "id": "tech:PL",
+      "type": "technique",
+      "label": "PL",
+      "data": {
+        "category": "spectroscopy"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "paper",
+      "target": "S1",
+      "relation": "has_system"
+    },
+    {
+      "source": "S1",
+      "target": "E1",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "E1",
+      "target": "tech:XRD",
+      "relation": "uses_technique"
+    },
+    {
+      "source": "S1",
+      "target": "E2",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "E2",
+      "target": "tech:TEM",
+      "relation": "uses_technique"
+    },
+    {
+      "source": "S1",
+      "target": "E3",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "E3",
+      "target": "tech:FTIR",
+      "relation": "uses_technique"
+    },
+    {
+      "source": "S1",
+      "target": "E4",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "E4",
+      "target": "tech:FTIR",
+      "relation": "uses_technique"
+    },
+    {
+      "source": "S1",
+      "target": "E5",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "E5",
+      "target": "tech:XPS",
+      "relation": "uses_technique"
+    },
+    {
+      "source": "S1",
+      "target": "E6",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "E6",
+      "target": "tech:XPS",
+      "relation": "uses_technique"
+    },
+    {
+      "source": "S1",
+      "target": "E7",
+      "relation": "has_evidence"
+    },
+    {
+      "source": "E7",
+      "target": "tech:PL",
+      "relation": "uses_technique"
+    }
+  ]
+}

@@ -65,6 +65,26 @@ def test_build_bulk_rejects_swapped_perovskite_sites():
     assert "Pb CN 6 (Br 2.94 A)" in describe(ok) and "Cs CN 12 (Br 4.15 A)" in describe(ok)
 
 
+def test_build_bulk_honors_a_non_standard_setting():
+    # GdFeO3-type LaCrO3 as papers often write it (Pbnm, c the long axis) and as its Pnma transform
+    sites = (["La", "Cr", "O", "O"], [[0.996, 0.018, 0.25], [0.5, 0, 0], [0.07, 0.49, 0.25], [0.72, 0.28, 0.04]])
+    pbnm = build_bulk("Pbnm", *sites, a=5.48, b=5.52, c=7.76, formula_units=4)
+    pnma = build_bulk("Pnma", sites[0], [[y, z, x] for x, y, z in sites[1]], a=5.52, b=7.76, c=5.48, formula_units=4)
+    assert np.allclose(pbnm.cell.lengths(), [5.48, 5.52, 7.76])
+    first = lambda at: np.sort(at.get_all_distances(mic=True)[np.triu_indices(len(at), 1)])[:12]
+    assert np.allclose(first(pbnm), first(pnma), atol=2e-3)
+
+
+def test_empty_molecule_records_survive_extxyz(tmp_path, pt_bulk):
+    # ASE reads an empty JSON list back as an empty array; that must still mean "no molecules"
+    atoms = pt_bulk.copy()
+    atoms.info["p2s_molecules"] = []
+    atoms.write(tmp_path / "x.extxyz")
+    back = read(tmp_path / "x.extxyz")
+    assert isinstance(back.info["p2s_molecules"], np.ndarray) and get_molecules(back) == []
+    assert describe(back)
+
+
 def test_anion_contacts_are_flagged(cs_bulk):
     k = next(t.index for t in list_terminations(cs_bulk, (0, 0, 1), min_thickness=10) if t.top == "PbBr2")
     slab = build_slab(cs_bulk, (0, 0, 1), k, min_thickness=10, vacuum=15, supercell=(2, 2))

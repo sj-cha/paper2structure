@@ -1,8 +1,32 @@
-"""Agent 2, characterization: turns the paper's experimental data into an evidence snapshot
-(ExperimentalEvidence). Technique agents (XRD, NMR, XPS, IR, TEM, ...) go here as one module or
-subpackage each, every one contributing EvidenceItems; until they exist, `analyze_evidence` is a
-placeholder that loads a snapshot written beforehand."""
-from paper2structure.agents.characterization.agent import analyze_evidence
-from paper2structure.agents.characterization.schemas import EvidenceItem, ExperimentalEvidence, StructuralConstraint
+"""Agent 2, characterization: one agent per technique (techniques/, keyed by the canonical names in
+paper2structure.config.TECHNIQUES) reads the figures and text the summarizer tagged with it and
+returns a CharacterizationReport; ExperimentalEvidence bundles the reports for Agents 3-5."""
+from .agent import CharacterizationAgent
+from .schemas import (
+    CharacterizationReport,
+    ExperimentalEvidence,
+    Finding,
+    Observation,
+    StructuralConstraint,
+)
+from .spec import GENERIC, TechniqueSpec, generate_system_prompt
+from .techniques import FTIR, REGISTRY, SEM, TEM, XRD, find_spec, implemented_specs
 
-__all__ = ["analyze_evidence", "EvidenceItem", "ExperimentalEvidence", "StructuralConstraint"]
+__all__ = [
+    "CharacterizationAgent",
+    "CharacterizationReport",
+    "ExperimentalEvidence",
+    "Finding",
+    "FTIR",
+    "GENERIC",
+    "Observation",
+    "REGISTRY",
+    "SEM",
+    "StructuralConstraint",
+    "TEM",
+    "TechniqueSpec",
+    "XRD",
+    "find_spec",
+    "generate_system_prompt",
+    "implemented_specs",
+]

@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
+from pydantic_ai.models import Model
+
 from pydantic import BaseModel, Field
 from pydantic_core import to_json
 
@@ -11,7 +13,7 @@ from paper2structure.agents.characterization.schemas import ExperimentalEvidence
 from paper2structure.agents.constructor.schemas import ConstructionReport, StructureArtifact
 from paper2structure.agents.planner.schemas import PlanSet
 from paper2structure.agents.reviser.schemas import ReportNarrative, RevisionDecision
-from paper2structure.agents.summarizer.schemas import PaperSummary
+from paper2structure.agents.summarizer.schemas import PaperGraph
 from paper2structure.config import Paper2StructureConfig
 from paper2structure.tools.schemas import ValidationReport
 
@@ -25,8 +27,9 @@ class ReconstructionState(BaseModel):
     """Typed, JSON-serializable graph state. Large data (structures, scripts) lives in the run
     directory and is referenced by path; agents and tools live in WorkflowDeps."""
     run_id: str
-    summary: Optional[PaperSummary] = None
-    evidence: Optional[ExperimentalEvidence] = None
+    summary: Optional[PaperGraph] = None  # Agent 1: metadata, material systems, text and figure evidence
+    paper_dir: Optional[str] = None  # folder of paper_graph.json; its figure image paths are relative to it
+    evidence: Optional[ExperimentalEvidence] = None  # Agent 2: one characterization report per technique
     evidence_version: int = 0
     plan_history: list[PlanSet] = Field(default_factory=list)
     revision: int = 0  # loops taken back through evidence -> planning -> construction
@@ -89,5 +92,6 @@ class WorkflowDeps:
     constructor: LLMConstructor
     reviser: LLMReviser
     seed: int
+    paper_model: Model | str | None = None  # Agents 1-2 (summarizer, characterization); None = cfg.campaign.model
     max_revisions: int = 1
     max_repairs: int = 2
