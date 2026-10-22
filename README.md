@@ -79,8 +79,8 @@ the skipped techniques and why (a stub spec, or a technique outside the vocabula
 
 ```
 main.py                  the CLI: one graph run, PDF -> structures
-app/                     web page for Agent 1: streamlit_app.py, structure_viewer.py (3D viewer),
-                         structure_mock.py (mock structure generator for the page's Structure tab)
+app/                     the web tool: server.py (Starlette app + JSON API), projects.py (project store, the three
+                         stages, job runner), static/ (the page, 3Dmol.js viewers), structure_info.py (size, compute estimate)
 config/                  config.yml (every field documented) and the fixture campaigns
 src/paper2structure/
   config.py              campaign YAML -> Pydantic config; get_model(); the technique vocabulary
@@ -153,7 +153,7 @@ The reviewer (Agent 5) gets a read-only harness workspace over `structures/`, wi
 ```bash
 conda create -n paper2structure python=3.12 && conda activate paper2structure   # any Python >= 3.12 env
 conda install -c conda-forge bubblewrap   # the sandbox (bwrap); needs unprivileged user namespaces
-pip install -e . --extra-index-url https://download.pytorch.org/whl/cu126   # ".[app]" adds Streamlit, ".[test]" pytest
+pip install -e . --extra-index-url https://download.pytorch.org/whl/cu126   # ".[app]" adds the web tool's server, ".[test]" pytest
 ```
 
 Torch and Warp are pinned to **CUDA 12 builds** (`torch==2.14.1+cu126`, `warp-lang 1.18.0+cu12`),
@@ -211,14 +211,27 @@ paper-summarizer pdf/<paper>.pdf    # the same, installed as a script
 paper-summarizer --show-graph       # its workflow as a Mermaid diagram
 ```
 
-The web page (the `app` extra) uploads a PDF, runs the summarizer and shows the material systems,
-the evidence by technique with the figure crops and the knowledge graph, with a zip download;
-results go to `outputs/<pdf name>_<time>/`. Its Structure tab is a mock-up
-(`app/structure_mock.py` always shows a demo SrTiO3 crystal), not Agent 4's output.
+### The web tool
+
+`app/server.py` (the `app` extra) is the same workflow as a three-panel page for people who do not
+want to touch the CLI or the YAML. Everything it makes is kept under `outputs/projects/<paper>_<time>/`,
+so a paper can be reopened later and each step is reused rather than repeated:
 
 ```bash
-streamlit run app/streamlit_app.py
+.venv/bin/python app/server.py            # then open http://127.0.0.1:8600
 ```
+
+| panel | does | runs | reused when |
+|---|---|---|---|
+| 1 Paper & model | upload the PDF; pick the model (with its price per 1M tokens) and the reasoning effort; open an earlier paper | Agent 1 -> `paper/` | always (re-read on request) |
+| 2 Summary & system | the paper's systems, evidence by technique with the figure crops; tick the material system(s) to model, the techniques to analyze and the number of hypotheses | Agent 2 -> `characterization/<key>/`, then Agent 3 on the chosen systems -> `plans/<key>.json` | Agent 2 per model + technique set; Agent 3 per settings |
+| 3 Structures | DFT or MD, a "computationally tractable <-> closer to experiment" slider that sets the atom budget and the planner's brief, structure type, seed, reviewer loops; the built structures in 3Dmol.js with size, compute estimate, target checks, downloads and the reviewer's report | Agents 3-5 as one graph run -> `runs/<time>/` (the plan of panel 2 is handed to the graph; the planner only runs again when the settings changed) | every run is kept; pick earlier runs from the list |
+
+Panel 2 gives the planner only the systems the user ticked (a copy of the summary restricted to them,
+`runs/<time>/inputs/paper_graph.json`), so the plans cannot drift to the other samples of a series.
+Jobs run one at a time on a worker thread and the page polls their log; the API key comes from `.env`
+or can be pasted on panel 1 for the server session. Without bubblewrap (macOS) construction runs
+with `sandbox: none`, as the CLI does.
 
 ## Configuration
 
