@@ -13,6 +13,7 @@ from pymatgen.symmetry.groups import SpaceGroup
 from paper2structure.tools._geometry import ROLE_SUBSTRATE, cation_elements, clean_arrays, coordination_pairs, rcov
 from paper2structure.tools._symmetry import orbit, space_group_number, symmetry_operations
 
+OVERLAP_SCALE = 0.6  # x covalent-radius sum: the validation gate's overlap threshold
 SETTING_HINT = ("pymatgen uses the ITA standard setting: origin choice 1 for the space groups with two "
                 "origins (e.g. anatase I4_1/amd has Ti at (0, 0, 0) and O at (0, 0, ~0.208)) and "
                 "hexagonal axes for rhombohedral groups.")
@@ -111,9 +112,10 @@ def build_bulk(space_group: str | int, species: Sequence[str], coords: Sequence[
     r = rcov([str(s.specie) for s in structure])
     ratio = dm / (r[:, None] + r[None, :])
     i, j = np.unravel_index(int(np.argmin(ratio)), ratio.shape)
-    if ratio[i, j] < 0.5:
+    if ratio[i, j] < OVERLAP_SCALE:
         raise ValueError(f"symmetry-generated atoms overlap: {structure[i].specie}-{structure[j].specie} at "
-                         f"{dm[i, j]:.2f} A ({len(structure)} atoms generated). Check the Wyckoff "
+                         f"{dm[i, j]:.2f} A, below {OVERLAP_SCALE} x their covalent-radius sum ({len(structure)} "
+                         "atoms generated). Check the Wyckoff "
                          f"coordinates. {SETTING_HINT}")
 
     reduced, n_fu = structure.composition.get_reduced_composition_and_factor()
