@@ -11,6 +11,7 @@ XRD = TechniqueSpec(
         "Reference or simulated patterns (often drop lines / sticks) plotted for comparison",
         "Rietveld or Le Bail fits: observed, calculated, difference curve, and tick marks",
         "2D detector images (GIWAXS) with rings or spots",
+        "Rendered structures from a single-crystal or Rietveld refinement (polyhedral or ORTEP views), sometimes with printed distances",
     ),
     reading_guidelines=(
         "Check the x-axis quantity first: 2theta (deg), q (A^-1 or nm^-1), or d (A); do not mix them.",
@@ -21,6 +22,9 @@ XRD = TechniqueSpec(
         "Note markers (asterisks, symbols) that authors use to flag impurity or substrate peaks, and what the legend says they mean.",
         "Note when intensity is on a log or sqrt scale, or when the axis is broken or rescaled in an inset.",
         "Look for weak features near the baseline: small extra peaks, shoulders, and asymmetric peaks.",
+        "If a listed panel is a rendered structure rather than a pattern, do not skip it: record printed values "
+        "(layer thickness, distances, angles) as printed_label, plus the viewing direction and layer count; "
+        "leave motif and tilt analysis to the Structure model agent.",
     ),
     inferable_properties=(
         "Phase identity and purity (match to reference or simulated patterns)",
@@ -36,6 +40,7 @@ XRD = TechniqueSpec(
         "Strong (00l) dominance in thin films indicates preferred orientation, not necessarily phase purity.",
         "Unindexed extra peaks indicate an impurity or secondary phase; small low-angle peaks may indicate a different layer number n.",
         "Peak shifts between samples indicate lattice expansion or contraction; state the direction.",
+        "Check printed layer thicknesses or interlayer distances against the stacking-axis lattice parameter and the (0k0)/(00l) d-spacings.",
     ),
     limitations=(
         "Hydrogen positions and organic molecular conformation are not determined by XRD peak positions alone.",

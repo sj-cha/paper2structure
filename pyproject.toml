@@ -25,10 +25,7 @@ dependencies = [
     "scipy",
     "matplotlib",
     "nvalchemi-toolkit-ops==0.5.0",
-    # CUDA 12 builds: the cluster's NVIDIA driver (550.x) supports CUDA <= 12.4, so the default
-    # CUDA 13 wheels cannot reach the GPUs. Install with
-    #   pip install -e . --extra-index-url https://download.pytorch.org/whl/cu126
-    "torch==2.14.1+cu126",
+    "torch==2.10.0",
     "warp-lang @ https://github.com/NVIDIA/warp/releases/download/v1.18.0/warp_lang-1.18.0%2Bcu12-py3-none-manylinux_2_28_x86_64.whl",
 ]
 
