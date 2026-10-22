@@ -1,6 +1,9 @@
 # Paper2Structure — From an experimental materials paper to simulation-ready atomistic structures
 
-![Schematic](docs/images/image.png)
+![Schematic](docs/images/logo.png)
+
+![Schematic](docs/images/image1.png)
+![Schematic](docs/images/image2.png)
 
 Paper2Structure is a multi-agent workflow (Pydantic AI + pydantic-graph), which reads a paper the way a materials scientist would: what was made, what each measurement shows, and what that implies about the atomic structure. 
 
