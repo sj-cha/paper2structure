@@ -12,20 +12,17 @@ const cssId = (s) => String(s).replace(/[^A-Za-z0-9_-]/g, '_');
 
 const S = {
   info: null, projects: [], pid: null, project: null, run: null, runName: null, step: 1, openSeq: 0,
-  jobs: {}, watching: new Set(), pollTimer: null, polling: false, pollFailures: {}, viewers: {}, atomsAuto: true,
+  jobs: {}, watching: new Set(), pollTimer: null, polling: false, pollFailures: {}, viewers: {},
   settings: defaultSettings(), files: [],
 };
 
+// techniques: empty = every technique with an analysis agent (the Advanced box on panel 2 can exclude some);
+// the atom limit is the one control of panel 3 (the server derives the planner's DFT/MD brief from it)
 function defaultSettings() {
-  return {systems: [], techniques: [], max_plans: 1, method: 'DFT', realism: 0.3, max_atoms: 220,
-          model_type: '', seed: 0, max_revisions: 0, max_repairs: 1};
+  return {systems: [], techniques: [], max_plans: 1, max_atoms: 220, model_type: '', seed: 0, max_revisions: 0, max_repairs: 1};
 }
 
-// mirrors projects.default_max_atoms
-function defaultMaxAtoms(method, realism) {
-  const [lo, hi] = method === 'DFT' ? [60, 600] : [500, 10000];
-  return Math.round((lo + (hi - lo) * realism) / 10) * 10;
-}
+const DFT_MAX_ATOMS = 600;  // mirrors projects.DFT_MAX_ATOMS
 
 // ---------------------------------------------------------------- helpers
 
@@ -55,12 +52,12 @@ const providerOf = (name) => (name === 'dry-run' ? 'none' : name.includes(':') ?
 const providerName = (p) => ({openai: 'OpenAI', google: 'Gemini'}[p] || p);
 
 function settingsLabel(s) {
-  if (!s || !s.method) return '';
-  return `${s.method} · ≤${s.max_atoms} atoms · realism ${Number(s.realism).toFixed(2)}${s.model_type ? ` · ${s.model_type}` : ''}`;
+  if (!s || s.max_atoms == null) return '';
+  return `≤${s.max_atoms} atoms${s.model_type ? ` · ${s.model_type}` : ''}`;
 }
 
 function statusText(status) {
-  return {accepted: 'accepted by the reviewer', inconclusive: 'built, reviewer not convinced',
+  return {accepted: 'accepted by the reviser agent', inconclusive: 'built, reviser agent not convinced',
           failed: 'failed', unfinished: 'unfinished'}[status] || status;
 }
 
@@ -254,9 +251,9 @@ function initSettingsFromProject() {
     if (!S.settings.systems.length && ids.length) S.settings.systems = [ids[0]];
     const ready = p.available_techniques;
     S.settings.techniques = S.settings.techniques.filter((t) => ready.includes(t));
-    if (!S.settings.techniques.length) S.settings.techniques = [...ready];
+    if (sameList(S.settings.techniques, ready)) S.settings.techniques = [];  // all = the default
   }
-  S.atomsAuto = !base || base.max_atoms === defaultMaxAtoms(base.method, base.realism);
+  S.settings.max_plans = 1;
 }
 
 // ---------------------------------------------------------------- jobs (all polled together)
@@ -302,7 +299,7 @@ async function pollOnce() {
       S.pollFailures[id] = 0;
       job.full = true;
       S.jobs[id] = job;
-      if (job.status === 'done' || job.status === 'failed') {
+      if (job.status === 'done' || job.status === 'failed' || job.status === 'cancelled') {
         try { await onJobFinished(job); S.watching.delete(id); }
         catch (e) {  // keep watching so the finish is processed on the next poll
           job.refreshFailures = (job.refreshFailures || 0) + 1;
@@ -325,6 +322,7 @@ async function onJobFinished(job) {
   if (job.notified) return;
   job.notified = true;
   const name = job.title.length > 50 ? job.title.slice(0, 50) + '…' : job.title;
+  if (job.status === 'cancelled') { toast(`Stopped: ${name}`); return; }
   if (job.status === 'failed') { toast(`${name}: ${job.error}`, 'error'); return; }
   if (job.kind === 'summarize') {
     toast(job.result && job.result.characterization_error ? `Summary ready (evidence analysis skipped): ${name}` : `Summary ready: ${name}`);
@@ -334,14 +332,18 @@ async function onJobFinished(job) {
   } else if (job.kind === 'generate' && job.result && job.result.run) {
     toast(`Run finished (${statusText(job.result.status)}): ${name}`);
     if (job.project_id === S.pid) await loadRun(job.result.run);
+  } else if (job.kind === 'variant' && job.result && job.result.run) {
+    toast(`Variant built: ${job.result.structures} structure${job.result.structures === 1 ? '' : 's'}`);
+    if (job.project_id === S.pid && S.runName === job.result.run) await loadRun(job.result.run);
   }
 }
 
 function jobTitle(job) {
   const log = job.log || [];
-  return {summarize: 'Reading the paper (Summarizer)' + (log.some((l) => /^Analyzing the evidence|^Evidence analyzed/.test(l)) ? ' and analyzing the evidence (characterization agents)' : ''),
-          characterize: 'Analyzing the evidence (characterization agents)',
-          generate: log.some((l) => /^A plan for exactly these settings exists/.test(l)) ? 'Building and reviewing (Constructor and Reviewer; saved plan reused)' : 'Planning, building and reviewing (Planner, Constructor and Reviewer)'}[job.kind] || job.kind;
+  return {summarize: 'Reading the paper (summarizer agent)' + (log.some((l) => /^Analyzing the evidence|^Evidence analyzed/.test(l)) ? ' and analyzing the evidence (characterization agent)' : ''),
+          characterize: 'Analyzing the evidence (characterization agent)',
+          generate: log.some((l) => /^A plan for exactly these settings exists/.test(l)) ? 'Building and reviewing (constructor and reviser agents; saved plan reused)' : 'Planning, building and reviewing (planner, constructor and reviser agents)',
+          variant: 'Building more structures from the saved script (no agent)'}[job.kind] || job.kind;
 }
 
 // Panel 1: one row per job of any paper, the active ones first; open expanders survive the 2 s re-render.
@@ -354,9 +356,17 @@ function renderJobList() {
     <details class="sub" data-job="${esc(j.id)}" ${j.status === 'failed' || open.has(j.id) ? 'open' : ''}><summary><div class="job"><span class="spinner ${j.status}"></span>
       <div><div class="t">${esc(j.title)} <span class="badge kind">${esc(j.kind)}</span> <span class="badge ${j.status}">${esc(j.status)}</span> <span class="muted small">${elapsed(j)}</span></div>
         <div class="l">${esc(j.error || ((j.log || []).length ? j.log[j.log.length - 1] : 'queued'))}</div></div>
-      <button class="small" data-open="${esc(j.project_id)}">open</button></div></summary>
+      <span class="row">${j.status === 'queued' || j.status === 'running' ? `<button class="small stop" data-stop="${esc(j.id)}" ${j.cancel_requested ? 'disabled' : ''}>Stop</button>` : ''}<button class="small" data-open="${esc(j.project_id)}">open</button></span></div></summary>
       <pre class="log">${esc((j.log || []).slice(-40).join('\n'))}</pre></details>`).join('') + '</div>';
   $$('[data-open]', el).forEach((b) => (b.onclick = (e) => { e.preventDefault(); openProject(b.dataset.open, 2); }));
+  $$('[data-stop]', el).forEach((b) => (b.onclick = (e) => { e.preventDefault(); cancelJob(b.dataset.stop); }));
+}
+
+async function cancelJob(id) {
+  const j = S.jobs[id];
+  if (!confirm(`Stop "${j ? j.title : id}"? What it already saved stays; the rest of this step is lost.`)) return;
+  try { await api(`/api/jobs/${id}/cancel`, {method: 'POST'}); toast('Stopping at the next step…'); pollOnce(); }
+  catch (e) { toast(e.message, 'error'); }
 }
 
 // The progress card of the open project on panels 2 and 3, with a stage strip for the graph run.
@@ -373,7 +383,7 @@ function renderProjectProgress() {
     job.fetching = true;
     api(`/api/jobs/${job.id}`).then((j) => { S.jobs[j.id] = Object.assign(j, {full: true}); renderProjectProgress(); }).catch(() => { job.fetching = false; });
   }
-  const box = $(job.kind === 'generate' ? '#progress3' : '#progress2');
+  const box = $(job.kind === 'characterize' ? '#progress2' : '#progress3');
   const logOpen = !!box.querySelector('details[open]');
   box.classList.remove('hidden');
   const log = job.log || [];
@@ -395,11 +405,15 @@ function renderProjectProgress() {
     }).join('') + '</div>';
   }
   const said = log.filter((l) => !/^\[/.test(l) && !/^ERROR/.test(l));
+  const stoppable = job.status === 'queued' || job.status === 'running';
   box.innerHTML = `<div class="job-head"><span class="spinner ${job.status}"></span><strong>${esc(jobTitle(job))}</strong>
-      <span class="badge ${job.status}">${esc(job.status)}</span><span class="muted small">${elapsed(job)}</span></div>
+      <span class="badge ${job.status}">${esc(job.status)}</span><span class="muted small">${elapsed(job)}</span>
+      ${stoppable ? `<span class="grow"></span><button class="small stop" data-stop="${esc(job.id)}" ${job.cancel_requested ? 'disabled' : ''}>Stop</button>` : ''}</div>
     ${strip}
     ${job.error ? `<div class="error">${esc(job.error)}</div>` : `<div class="current">${esc(said[said.length - 1] || 'starting…')}</div>`}
     <details class="sub" ${logOpen ? 'open' : ''}><summary>Agent log (${log.length} lines)</summary><pre class="log">${esc(log.slice(-150).join('\n'))}</pre></details>`;
+  const stop = $('[data-stop]', box);
+  if (stop) stop.onclick = () => cancelJob(stop.dataset.stop);
 }
 
 // ---------------------------------------------------------------- panel 1
@@ -519,23 +533,31 @@ function renderStep2() {
     catch (e) { toast(e.message, 'error'); }
   };
 
-  const chips = p.summary.techniques.map((t) => {
-    const ready = t.agent === 'ready', on = st.techniques.includes(t.name);
-    const why = 'not in the technique vocabulary';
-    return `<label class="chip ${ready ? '' : 'off'}" title="${ready ? `${t.count} evidence items` : why}">
-      <input type="checkbox" data-tech="${esc(t.name)}" ${on ? 'checked' : ''} ${ready ? '' : 'disabled'}> ${esc(t.name)} <span class="muted">${t.count}</span></label>`;
-  }).join('');
+  // every technique with an analysis agent is used; the Advanced box can leave some out
+  const usable = p.summary.techniques.filter((t) => t.agent === 'ready'), unusable = p.summary.techniques.filter((t) => t.agent !== 'ready');
+  const ticked = tickedTechniques();
+  const listing = usable.map((t) => `<span class="chip plain ${ticked.includes(t.name) ? '' : 'off'}" title="${t.count} evidence items${ticked.includes(t.name) ? '' : ' — left out in Advanced'}">${esc(t.name)} <span class="muted">${t.count}</span></span>`).join('');
+  const boxes = usable.map((t) => `<label class="chip"><input type="checkbox" data-tech="${esc(t.name)}" ${ticked.includes(t.name) ? 'checked' : ''}> ${esc(t.name)} <span class="muted">${t.count}</span></label>`).join('');
   const cur = currentCharacterization();
-  const status = cur ? `analyzed with ${modelTitle(cur.model)}, ${cur.effort} effort · ${cur.seconds} s · ${cur.techniques.join(', ')}` : 'not analyzed yet for these techniques, model and effort';
+  const status = cur ? `analyzed with ${modelTitle(cur.model)}, ${cur.effort} effort · ${cur.seconds} s` : 'not analyzed yet for this model and effort';
   tech.innerHTML = `<div class="card">
-      <h2>Evidence analysis <span class="muted">one characterization agent per technique reads its figures and text</span></h2>
-      <div class="chips" id="techChips">${chips || '<span class="muted">no technique with evidence in this paper</span>'}</div>
+      <h2>Evidence analysis <span class="muted">Characterization agent: one per technique reads its figures and text</span></h2>
+      <div class="field"><label>Techniques used <span class="muted">everything the paper reports that has an analysis agent</span></label>
+        <div class="chips">${listing || '<span class="muted">no technique with an analysis agent in this paper</span>'}</div>
+        ${unusable.length ? `<span class="hint">No analysis agent for: ${esc(unusable.map((t) => `${t.name} (${t.count})`).join(', '))} — their text still reaches the planner agent through the summary.</span>` : ''}</div>
       <div class="actions"><button class="primary" id="charBtn">Analyze evidence</button><span class="hint" id="charStatus">${esc(status)}</span></div>
-      <details class="adv"><summary>Model for this step</summary><div class="row wrap gap small">
+      <details class="adv"><summary>Advanced: leave techniques out, model for this step</summary>
+        <div class="chips" id="techChips" style="margin:8px 0">${boxes}</div>
+        <div class="row wrap gap small">
         <label class="inline">Model ${modelSelectHtml('projModel2', pr.model)}</label><label class="inline">Effort ${effortSelectHtml('projEffort2', pr.effort, pr.model)}</label>
         <span class="hint">applies to this paper's remaining steps</span></div></details>
     </div>`;
-  $$('#techChips input').forEach((c) => (c.onchange = () => { st.techniques = $$('#techChips input').filter((x) => x.checked).map((x) => x.dataset.tech); renderStep2Results(); renderPlanStatus(); }));
+  $$('#techChips input').forEach((c) => (c.onchange = () => {
+    const sel = $$('#techChips input').filter((x) => x.checked).map((x) => x.dataset.tech);
+    st.techniques = sameList(sel, p.available_techniques) ? [] : sel;
+    renderStep2();
+    renderPlanStatus();
+  }));
   $('#charBtn').onclick = startCharacterize;
   $('#projModel2').onchange = () => updateProjectSettings({model: $('#projModel2').value});
   $('#projEffort2').onchange = () => updateProjectSettings({effort: $('#projEffort2').value});
@@ -552,11 +574,11 @@ async function updateProjectSettings(body) {
 }
 
 async function startCharacterize() {
-  if (!S.settings.techniques.length) { toast('Tick at least one technique', 'error'); return; }
+  if (!tickedTechniques().length) { toast('Keep at least one technique (Advanced)', 'error'); return; }
   const btn = $('#charBtn');
   btn.disabled = true;
   try {
-    const r = await api(`/api/projects/${S.pid}/characterize`, {method: 'POST', body: {techniques: S.settings.techniques}});
+    const r = await api(`/api/projects/${S.pid}/characterize`, {method: 'POST', body: {techniques: tickedTechniques()}});
     trackJob(r.job_id, 'characterize', S.pid, S.project.project.title);
   } catch (e) { toast(e.message, 'error'); btn.disabled = false; }
 }
@@ -581,7 +603,7 @@ function renderStep2Results() {
   }
   const stale = cur !== currentCharacterization();
   res.innerHTML = `<div class="card">
-    <h2>What the evidence says <span class="muted">${esc(cur.techniques.join(', '))} · ${esc(modelTitle(cur.model))}, ${esc(cur.effort)} effort · ${cur.seconds} s${stale ? ' · (older analysis: not the ticked techniques or current model)' : ''}</span></h2>
+    <h2>What the evidence says <span class="muted">${esc(cur.techniques.join(', '))} · ${esc(modelTitle(cur.model))}, ${esc(cur.effort)} effort · ${cur.seconds} s${stale ? ' · (older analysis: other techniques or model)' : ''}</span></h2>
     ${cur.reports_detail.map((r, i) => `<details class="ev" ${i === 0 ? 'open' : ''}><summary><b>${esc(r.technique)}</b> · ${r.observations} observations · ${r.constraints.length} structural constraints</summary>
       ${r.constraints.length ? `<table class="tbl small"><thead><tr><th>Property</th><th>Value</th><th>Systems</th><th>Confidence</th></tr></thead><tbody>
         ${r.constraints.map((c) => `<tr title="${esc(c.derivation)}"><td>${esc(c.property)}</td><td>${esc(c.value)} ${esc(c.unit || '')}</td><td>${esc(c.system_ids.join(', '))}</td><td><span class="badge conf-${esc(c.confidence)}">${esc(c.confidence)}</span></td></tr>`).join('')}</tbody></table>` : '<p class="muted small">No structural constraints from this technique.</p>'}
@@ -599,11 +621,7 @@ function renderStep2Results() {
 // ---------------------------------------------------------------- panel 3: what to build, runs
 
 function wireStep3() {
-  $$('#method button').forEach((b) => (b.onclick = () => { S.settings.method = b.dataset.v; syncAtoms(); renderStep3Form(); }));
-  $('#realism').oninput = () => { S.settings.realism = +$('#realism').value; syncAtoms(); renderStep3Form(); };
-  $('#maxAtoms').onchange = () => { S.settings.max_atoms = Math.max(10, Math.min(50000, +$('#maxAtoms').value || 10)); S.atomsAuto = false; renderStep3Form(); };
-  $('#atomsAuto').onchange = () => { S.atomsAuto = $('#atomsAuto').checked; syncAtoms(); renderStep3Form(); };
-  $('#maxPlans').onchange = () => { S.settings.max_plans = +$('#maxPlans').value; renderPlanStatus(); };
+  $('#maxAtoms').onchange = () => { S.settings.max_atoms = Math.max(10, Math.min(50000, Math.round(+$('#maxAtoms').value) || 10)); renderStep3Form(); };
   $('#modelType').onchange = () => { S.settings.model_type = $('#modelType').value; renderPlanStatus(); };
   $('#seed').onchange = () => { S.settings.seed = +$('#seed').value || 0; };
   $('#maxRevisions').onchange = () => { S.settings.max_revisions = Math.max(0, Math.min(2, +$('#maxRevisions').value || 0)); };
@@ -613,8 +631,6 @@ function wireStep3() {
   $('#generateBtn').onclick = startGenerate;
   $('#runSelect').onchange = () => loadRun($('#runSelect').value);
 }
-
-function syncAtoms() { if (S.atomsAuto) S.settings.max_atoms = defaultMaxAtoms(S.settings.method, S.settings.realism); }
 
 function renderStep3() {
   if (!S.project) return;
@@ -628,12 +644,10 @@ function renderStep3Form() {
     $('#sysChips').innerHTML = p.summary.systems.map((s) => `<label class="chip" title="${esc(s.form || '')}"><input type="checkbox" data-sys="${esc(s.system_id)}" ${st.systems.includes(s.system_id) ? 'checked' : ''}> <b>${esc(s.system_id)}</b> ${esc(s.name)}</label>`).join('');
     $$('#sysChips input').forEach((c) => (c.onchange = () => { st.systems = $$('#sysChips input').filter((x) => x.checked).map((x) => x.dataset.sys); renderPlanStatus(); }));
   }
-  $$('#method button').forEach((b) => b.classList.toggle('on', b.dataset.v === st.method));
-  $('#realism').value = st.realism;
-  $('#realismVal').textContent = Number(st.realism).toFixed(2);
   $('#maxAtoms').value = st.max_atoms;
-  $('#atomsAuto').checked = S.atomsAuto;
-  $('#maxPlans').value = st.max_plans;
+  $('#atomsHint').textContent = st.max_atoms <= DFT_MAX_ATOMS
+    ? 'DFT-sized: the planner agent is asked for small periodic cells; the smaller the limit, the simpler the model'
+    : 'MD-sized (machine-learned potential): the planner agent may use supercells, surfaces, particles and defects';
   $('#modelType').value = st.model_type || '';
   $('#seed').value = st.seed;
   $('#maxRevisions').value = st.max_revisions;
@@ -651,8 +665,7 @@ function planFor(settings) {
   return p.plans.find((r) => {
     const a = r.settings;
     return r.model === pr.model && r.effort === pr.effort && sameList(r.techniques || [], ticked) && sameList(a.systems, b.systems)
-      && a.max_plans === b.max_plans && a.method === b.method && Math.abs(a.realism - b.realism) < 1e-9
-      && a.max_atoms === b.max_atoms && (a.model_type || '') === (b.model_type || '');
+      && a.max_plans === 1 && a.max_atoms === b.max_atoms && (a.model_type || '') === (b.model_type || '');
   }) || null;
 }
 
@@ -663,7 +676,7 @@ function renderPlanStatus() {
   const cur = currentCharacterization();
   parts.push(cur ? `evidence ✓ (${cur.techniques.join(', ')})` : 'evidence: will be analyzed first');
   if (!S.settings.systems.length) parts.push('tick a system');
-  else parts.push(planFor(S.settings) ? 'plan for these settings ✓ → builds directly' : 'will plan first (~1 min), then build');
+  else parts.push(planFor(S.settings) ? 'plan for these settings ✓ → builds directly' : 'planner agent runs first (~1 min), then build');
   el.textContent = parts.join(' · ');
 }
 
@@ -674,7 +687,10 @@ async function startGenerate() {
   const btn = $('#generateBtn');
   btn.disabled = true;
   try {
-    const r = await api(`/api/projects/${S.pid}/generate`, {method: 'POST', body: {...S.settings, techniques: tickedTechniques(), model_type: S.settings.model_type || null}});
+    const s = S.settings;
+    const body = {systems: s.systems, techniques: tickedTechniques(), max_plans: 1, max_atoms: s.max_atoms, model_type: s.model_type || null,
+                  seed: s.seed, max_revisions: s.max_revisions, max_repairs: s.max_repairs};  // method and realism follow from max_atoms
+    const r = await api(`/api/projects/${S.pid}/generate`, {method: 'POST', body});
     trackJob(r.job_id, 'generate', S.pid, S.project.project.title);
   } catch (e) { toast(e.message, 'error'); btn.disabled = false; }
 }
@@ -683,7 +699,7 @@ function renderRuns() {
   const p = S.project, sel = $('#runSelect'), bar = $('#runsBar');
   if (!p || !p.runs.length) { bar.classList.add('hidden'); $('#runDetail').innerHTML = ''; S.run = null; return; }
   bar.classList.remove('hidden');
-  sel.innerHTML = p.runs.map((r) => `<option value="${esc(r.name)}">${esc(r.created.slice(0, 16))} · ${esc(statusText(r.status))} · ${r.n_accepted}/${r.n_structures} accepted · ${esc(Object.values(r.systems || {}).join(', ').slice(0, 40))} · ${esc(settingsLabel(r.settings))}</option>`).join('');
+  sel.innerHTML = p.runs.map((r) => `<option value="${esc(r.name)}">${esc(r.created.slice(0, 16))} · ${esc(statusText(r.status))} · ${r.n_accepted}/${r.n_structures} accepted${r.n_unreported ? ` + ${r.n_unreported} not handed in` : ''} · ${esc(Object.values(r.systems || {}).join(', ').slice(0, 40))} · ${esc(settingsLabel(r.settings))}</option>`).join('');
   if (!S.runName || !p.runs.some((r) => r.name === S.runName)) S.runName = p.runs[0].name;
   sel.value = S.runName;
   if (!S.run || S.run.name !== S.runName) loadRun(S.runName);
@@ -712,21 +728,108 @@ function renderRun() {
         <span class="muted small">${esc(settingsLabel(st))} · ${esc(Object.values(r.settings.systems || {}).join(', '))} · ${esc(modelTitle(r.settings.model))}, ${esc(r.settings.effort)} effort · sandbox ${esc(r.settings.sandbox)}</span>
         <span class="grow"></span><a class="btn small" href="${esc(r.zip_url)}">Download run (.zip)</a></div>
       ${r.errors.length ? `<div class="warn">${r.errors.map(esc).join('<br>')}</div>` : ''}
-      ${d ? `<p class="small"><b>Reviewer:</b> ${esc(d.reasoning)}</p>${d.unresolved.length ? `<p class="small muted">Unresolved: ${esc(d.unresolved.join('; '))}</p>` : ''}`
-          : '<p class="muted small">The run ended before the reviewer saw any structure.</p>'}
+      ${d ? `<p class="small"><b>Reviser agent:</b> ${esc(d.reasoning)}</p>${d.unresolved.length ? `<p class="small muted">Unresolved: ${esc(d.unresolved.join('; '))}</p>` : ''}`
+          : '<p class="muted small">The run ended before the reviser agent saw any structure.</p>'}
+      ${(r.status === 'inconclusive' || r.status === 'revision_budget_exhausted') && (r.structures.length || r.unreported.length)
+          ? '<div class="warn">The reviser agent did not accept the structures of this run. Treat that as a warning, not a verdict: every structure below can still be viewed, downloaded and varied.</div>' : ''}
       ${r.plans.length ? `<details class="sub"><summary>Plan used (${r.plans.length} hypothes${r.plans.length === 1 ? 'is' : 'es'}${r.plan_record ? `, planned in ${r.plan_record.seconds} s` : ''})</summary>${r.plans.map(planCard).join('')}</details>` : ''}
-      <details class="sub"><summary>Usage</summary><p class="small muted">Tokens: ${r.usage.input.toLocaleString()} in / ${r.usage.output.toLocaleString()} out${r.usage.cost != null ? ` · ≈ $${r.usage.cost.toFixed(3)}` : ''} (planner, builder and reviewer of this run; the planner shows 0 when the saved plan was reused)</p></details>
+      <details class="sub"><summary>Usage</summary><p class="small muted">Tokens: ${r.usage.input.toLocaleString()} in / ${r.usage.output.toLocaleString()} out${r.usage.cost != null ? ` · ≈ $${r.usage.cost.toFixed(3)}` : ''} (planner, constructor and reviser agents of this run; the planner agent shows 0 when the saved plan was reused)</p></details>
     </div>
-    ${r.structures.length ? r.structures.map((s) => structureCard(s, verdicts[s.structure_id])).join('')
-      : '<div class="card"><p class="empty">No structure was built in this run — see the errors above and the final report.</p></div>'}
+    ${paperFiguresHtml(r)}
+    ${r.structures.map((s) => structureCard(s, verdicts[s.structure_id])).join('')}
+    ${r.unreported.length ? `<div class="card slim"><b>Built by the constructor agent, but not handed in</b> <span class="muted small">— emitted in its workspace before it gave the plan up (its reason is on each card). Checked, downloadable and variable all the same; not verified by a from-scratch re-run.</span></div>`
+      + r.unreported.map((s) => structureCard(s, null)).join('') : ''}
+    ${!r.structures.length && !r.unreported.length ? `<div class="card"><p class="empty">No structure was built in this run.</p>${r.failures.length ? `<ul class="small">${r.failures.map((f) => `<li><b>${esc(f.plan_id)}:</b> ${esc(f.reason)}</li>`).join('')}</ul>` : ''}</div>` : ''}
     ${r.report ? `<details class="card"><summary><b>Final report</b> <span class="muted small">(final_report.md)</span></summary><div class="md">${renderMd(r.report)}</div></details>` : ''}`;
+  const all = [...r.structures, ...r.unreported];
   const observer = 'IntersectionObserver' in window ? new IntersectionObserver((entries) => {
-    entries.forEach((en) => { if (en.isIntersecting) { observer.unobserve(en.target); mountViewer(r.structures.find((s) => s.structure_id === en.target.dataset.sid), r.name); } });
+    entries.forEach((en) => { if (en.isIntersecting) { observer.unobserve(en.target); mountViewer(all.find((s) => s.structure_id === en.target.dataset.sid), r.name); } });
   }, {rootMargin: '200px'}) : null;
-  r.structures.forEach((s, i) => {
+  all.forEach((s, i) => {
     const card = $(`.structure[data-sid="${CSS.escape(s.structure_id)}"]`, el);
     if (i < 2 || !observer) mountViewer(s, r.name); else observer.observe(card);
+    wireVariants(card, s, r.name);
   });
+}
+
+// "Build more structures": the parameter form of a structure's saved script and the variants built with it.
+function paramInput(p) {
+  const id = `prm-${cssId(p.name)}`;
+  const v = p.value;
+  const input = p.kind === 'bool' ? `<label class="chk"><input type="checkbox" data-param="${esc(p.name)}" ${v ? 'checked' : ''}> ${v ? 'true' : 'false'}</label>`
+    : p.kind === 'number' ? `<input type="number" step="any" data-param="${esc(p.name)}" value="${esc(v)}">`
+    : p.kind === 'list' ? `<input type="text" data-param="${esc(p.name)}" value="${esc(v.join(', '))}" placeholder="comma-separated">`
+    : `<input type="text" data-param="${esc(p.name)}" value="${esc(v)}">`;
+  return `<div class="param"><span class="n">${esc(p.name)}</span>${input}${p.comment ? `<span class="c">${esc(p.comment)}</span>` : ''}</div>`;
+}
+
+function variantsHtml(s) {
+  if (s.unreported && !s.has_script) return `<details class="sub"><summary>Build more structures from this script</summary><p class="muted small">This structure was built inline by the agent (no script file), so there is nothing to re-run; the files above still download.</p></details>`;
+  if (!s.params.length) return `<details class="sub"><summary>Build more structures from this script</summary><p class="muted small">This script has no named parameters at the top, so there is nothing to vary; download it and edit it instead.</p></details>`;
+  const variants = s.variants || [];
+  return `<details class="sub variants" ${variants.length ? 'open' : ''}><summary>Build more structures from this script <span class="muted">(${s.params.length} parameters${variants.length ? `, ${variants.length} built` : ''})</span></summary>
+    <p class="small muted">The validated script that built this structure, re-run with other values — no agent, a few seconds. Each result is checked for geometry and exported.</p>
+    <div class="params">${s.params.map(paramInput).join('')}</div>
+    <div class="actions"><button class="primary small" data-build="${esc(s.structure_id)}">Build with these values</button><span class="hint">a supercell or diameter above the run's atom limit is allowed here; it is marked, not rejected</span></div>
+    ${variants.map((v) => `<div class="variant" data-vid="${esc(v.id)}">
+      <div class="run-head"><span class="badge ${v.error ? 'bad' : 'ok'}">${v.error ? 'failed' : 'built'}</span>
+        <span class="changed">${esc(Object.entries(v.changed).map(([k, x]) => `${k} = ${Array.isArray(x) ? x.join(', ') : x}`).join(' · ') || 'original values')}</span>
+        <span class="muted small">${esc(v.created)} · ${v.seconds} s</span><span class="grow"></span><a class="btn small" href="${esc(v.script_url)}" download>script</a></div>
+      ${v.error ? `<p class="small error">${esc(v.error)}</p><details class="sub"><summary>Output</summary><pre class="log">${esc((v.stdout + '\n' + v.stderr).trim())}</pre></details>` : ''}
+      ${v.structures.map((x) => `<div class="vstruct" data-name="${esc(x.name)}">
+        <div><div class="struct-head"><h3>${esc(x.name)}</h3><span class="badge ${x.validation.passed ? 'ok' : 'bad'}">geometry ${x.validation.passed ? '✓' : '✗'}</span>${x.over_budget ? '<span class="badge busy">over the run\'s atom limit</span>' : ''}
+            <span class="facts">${esc(x.formula)} · ${x.n_atoms.toLocaleString()} atoms · ${x.info.cell_lengths_A.join(' × ')} Å</span></div>
+          <div class="downloads">${Object.entries(x.downloads).filter(([k]) => k !== 'metadata').map(([k, u]) => `<a class="btn small" href="${esc(u)}" download>${esc({poscar: 'POSCAR', cif: 'CIF', extxyz: 'XYZ'}[k] || k)}</a>`).join('')}
+            <button class="small" data-view="${esc(v.id)}|${esc(x.name)}">Show in 3D</button></div>
+          ${x.validation.checks.some((c) => c.status !== 'pass') ? `<p class="small muted">Checks: ${esc(x.validation.checks.filter((c) => c.status !== 'pass').map((c) => `${c.name} (${c.status}: ${c.detail})`).join('; '))}</p>` : ''}
+          <details class="sub"><summary>Compute estimate</summary><table class="tbl small"><tbody>${Object.entries(x.estimate).map(([k, y]) => `<tr><td>${esc(k)}</td><td>${esc(y)}</td></tr>`).join('')}</tbody></table></details></div>
+        <div class="vviewer"><img src="${esc(x.image_url)}" alt="" style="max-width:100%;border-radius:10px;border:1px solid var(--line)"></div>
+      </div>`).join('')}
+    </div>`).join('')}
+  </details>`;
+}
+
+function wireVariants(card, s, runName) {
+  const build = $('[data-build]', card);
+  if (!build) return;
+  build.onclick = async () => {
+    const params = {};
+    $$('[data-param]', card).forEach((inp) => { params[inp.dataset.param] = inp.type === 'checkbox' ? inp.checked : inp.value; });
+    build.disabled = true;
+    try {
+      const r = await api(`/api/projects/${S.pid}/runs/${runName}/structures/${encodeURIComponent(s.structure_id)}/variants`, {method: 'POST', body: {params}});
+      trackJob(r.job_id, 'variant', S.pid, S.project.project.title);
+      toast('Building…');
+    } catch (e) { toast(e.message, 'error'); build.disabled = false; }
+  };
+  $$('[data-view]', card).forEach((b) => (b.onclick = () => {
+    const [vid, name] = b.dataset.view.split('|');
+    const holder = b.closest('.vstruct').querySelector('.vviewer');
+    holder.innerHTML = `<div class="viewer small" id="vv-${cssId(vid + name)}"></div><div class="viewer-bar"><span class="legend" id="vl-${cssId(vid + name)}"></span></div>`;
+    b.disabled = true;
+    mountViewerAt($(`#vv-${cssId(vid + name)}`), $(`#vl-${cssId(vid + name)}`), null,
+                  `/api/projects/${S.pid}/runs/${runName}/variants/${encodeURIComponent(vid)}/structures/${encodeURIComponent(name)}/model`);
+  }));
+}
+
+// The paper's own pictures of the structure (micrographs, crystal-structure drawings, schematics) for
+// the systems of the run, from the summarizer's figure crops: what the built structures are compared with.
+const STRUCTURE_WORDS = /\bstructur|crystal structure|\bcrystals?\b|\blattice\b|unit cell|schematic|\bmodel\b|polyhedr|\batomic\b|\bpacking\b|coordination|morpholog|\bparticles?\b|micrograph|HRTEM|SAED/i;
+const NOT_STRUCTURE = new Set(['magnetic', 'electrical', 'thermal']);  // plots of properties, not pictures of the structure
+function paperFiguresHtml(r) {
+  const p = S.project;
+  if (!p || !p.summary) return '';
+  const systems = Object.keys(r.settings.systems || {});
+  const seen = new Set();
+  const figs = p.summary.evidence.filter((e) => e.image_url && (!e.system_ids.length || e.system_ids.some((i) => systems.includes(i)))
+    && !NOT_STRUCTURE.has(e.technique_category)
+    && (e.technique_category === 'microscopy' || /structure model/i.test(e.technique) || STRUCTURE_WORDS.test(`${e.technique} ${e.summary}`))
+    && !seen.has(e.image_url) && seen.add(e.image_url));
+  if (!figs.length) return '';
+  return `<details class="card" open><summary><b>From the paper, for comparison</b> <span class="muted small">— ${figs.length} figure${figs.length === 1 ? '' : 's'} showing the structure or morphology of ${esc(Object.values(r.settings.systems || {}).join(', '))}; click to open full size</span></summary>
+    <div class="figstrip">${figs.map((e) => `<a class="fig" href="${esc(e.image_url)}" target="_blank" title="${esc(e.quote || e.summary)}">
+      <img src="${esc(e.image_url)}" alt="" loading="lazy"><span class="cap"><b>${esc(e.source_ref)}</b> · ${esc(e.technique)}<br>${esc(e.summary.length > 110 ? e.summary.slice(0, 110) + '…' : e.summary)}</span></a>`).join('')}</div>
+  </details>`;
 }
 
 function planCard(pl) {
@@ -749,7 +852,8 @@ function structureCard(s, verdict) {
   const verdictBadge = s.accepted ? '<span class="badge ok">accepted</span>'
     : (verdict ? `<span class="badge ${verdict.resembles_paper ? 'ok' : 'bad'}">${verdict.resembles_paper ? 'resembles the paper' : 'does not resemble the paper'}</span>` : '');
   return `<div class="card structure" data-sid="${esc(s.structure_id)}">
-    <div class="struct-head"><h3>${esc(s.structure_id)}</h3>${verdictBadge}
+    <div class="struct-head"><h3>${esc(s.unreported ? `${s.name} (${s.attempt})` : s.structure_id)}</h3>${verdictBadge}
+      ${s.unreported ? '<span class="badge busy" title="emitted in the constructor agent\'s workspace; the agent then reported the plan as not built">not handed in</span>' : ''}
       ${s.current === false && !s.accepted ? '<span class="badge" title="rebuilt, repaired or from an earlier plan set">superseded</span>' : ''}
       <span class="badge ${s.validation.passed ? 'ok' : 'bad'}">geometry ${s.validation.passed ? '✓' : '✗'}</span>
       <span class="facts">${esc(i.formula)} · ${i.atoms.toLocaleString()} atoms · ${a} × ${b} × ${c} Å · periodic ${esc(i.periodic)}</span>
@@ -760,10 +864,11 @@ function structureCard(s, verdict) {
         <div class="viewer-bar"><button data-style="ballstick" class="on">Ball &amp; stick</button><button data-style="spacefill">Space filling</button>
           <button data-spin>Spin</button><button data-reset>Reset</button><span class="legend" id="lg-${id}"></span></div></div>
       <div>
+        ${s.unreported ? `<p class="small"><b>Why the constructor agent did not hand it in:</b> ${esc(s.reason || 'no reason recorded')}</p>${s.notes ? `<p class="small muted">${esc(s.notes)}</p>` : ''}` : ''}
         ${s.plan ? `<p class="small"><b>Hypothesis (${esc(s.plan.model_type)}):</b> ${esc(s.plan.hypothesis)}</p>` : ''}
         ${s.target_checks.length ? `<table class="tbl small"><thead><tr><th>Target</th><th>Measured</th><th></th></tr></thead><tbody>
           ${s.target_checks.map((t) => `<tr><td>${esc(t.property)}</td><td>${esc(t.measured)}</td><td>${t.satisfied ? '✅' : '❌'}</td></tr>`).join('')}</tbody></table>` : ''}
-        ${verdict && verdict.issues.length ? `<p class="small"><b>Reviewer issues:</b> ${esc(verdict.issues.join('; '))}</p>` : ''}
+        ${verdict && verdict.issues.length ? `<p class="small"><b>Reviser agent:</b> ${esc(verdict.issues.join('; '))}</p>` : ''}
       </div>
     </div>
     <details class="sub"><summary>Details: size, compute estimate, how it was built</summary>
@@ -776,6 +881,7 @@ function structureCard(s, verdict) {
       ${s.deviations.length ? `<p class="small muted">Deviations from the plan: ${esc(s.deviations.join('; '))}</p>` : ''}
       ${bad.length ? `<p class="small muted">Checks: ${esc(bad.map((x) => `${x.name} (${x.status}: ${x.detail})`).join('; '))}</p>` : ''}
     </details>
+    ${variantsHtml(s)}
   </div>`;
 }
 
@@ -800,31 +906,42 @@ async function mountViewer(s, runName) {
   if (!s) return;
   const id = cssId(s.structure_id), box = $(`#v-${id}`);
   if (!box || S.viewers[s.structure_id]) return;
-  if (!window.$3Dmol) { box.innerHTML = '<p class="empty">The 3D viewer needs 3Dmol.js from the internet; the files still download.</p>'; return; }
+  const card = box.closest('.structure');
+  const v = await mountViewerAt(box, $(`#lg-${id}`), card, `/api/projects/${S.pid}/runs/${runName}/structures/${encodeURIComponent(s.structure_id)}/model`);
+  if (v) S.viewers[s.structure_id] = v;
+}
+
+// A 3Dmol.js viewer in `box` for the model at `url`; `card` (optional) holds the style/spin/reset buttons.
+async function mountViewerAt(box, legend, card, url) {
+  if (!window.$3Dmol) { box.innerHTML = '<p class="empty">The 3D viewer needs 3Dmol.js from the internet; the files still download.</p>'; return null; }
   const probe = document.createElement('canvas');
-  if (!(probe.getContext('webgl2') || probe.getContext('webgl'))) { box.innerHTML = '<p class="empty">This browser has no WebGL, which the 3D viewer needs; the files still download.</p>'; return; }
+  if (!(probe.getContext('webgl2') || probe.getContext('webgl'))) { box.innerHTML = '<p class="empty">This browser has no WebGL, which the 3D viewer needs; the files still download.</p>'; return null; }
   try {
-    const data = await api(`/api/projects/${S.pid}/runs/${runName}/structures/${encodeURIComponent(s.structure_id)}/model`);
-    if (!document.body.contains(box)) return;  // the run view was replaced while loading
+    const data = await api(url);
+    if (!document.body.contains(box)) return null;  // the view was replaced while loading
     const viewer = $3Dmol.createViewer(box, {backgroundColor: viewerBg()});
     const model = viewer.addModel(data.text, data.format, {doAssembly: false, duplicateAssemblyAtoms: false});
     const v = {viewer, model, n: data.n_atoms, style: 'ballstick', spinning: false};
-    S.viewers[s.structure_id] = v;
     applyStyle(v);
-    if (data.periodic) viewer.addUnitCell(model, {box: {color: '#888'}});
+    if (data.cell && typeof model.setCrystData === 'function') {  // plain XYZ coordinates + the cell drawn by the viewer
+      model.setCrystData(data.cell.a, data.cell.b, data.cell.c, data.cell.alpha, data.cell.beta, data.cell.gamma);
+      viewer.addUnitCell(model, {box: {color: '#888'}});
+    }
     viewer.zoomTo();
     viewer.render();
-    $(`#lg-${id}`).innerHTML = data.elements.map((e) => `<span class="chip-el"><i style="background:${elementColor(e)}"></i>${esc(e)}</span>`).join('');
-    const card = box.closest('.structure');
-    $$('[data-style]', card).forEach((b) => (b.onclick = () => {
-      v.style = b.dataset.style;
-      $$('[data-style]', card).forEach((x) => x.classList.toggle('on', x === b));
-      applyStyle(v);
-      viewer.render();
-    }));
-    $('[data-spin]', card).onclick = () => { v.spinning = !v.spinning; viewer.spin(v.spinning ? 'y' : false); };
-    $('[data-reset]', card).onclick = () => { viewer.zoomTo(); viewer.render(); };
-  } catch (e) { box.innerHTML = `<p class="empty">Viewer failed: ${esc(e && e.message ? e.message : e)}</p>`; }
+    if (legend) legend.innerHTML = data.elements.map((e) => `<span class="chip-el"><i style="background:${elementColor(e)}"></i>${esc(e)}</span>`).join('');
+    if (card) {
+      $$('[data-style]', card).forEach((b) => (b.onclick = () => {
+        v.style = b.dataset.style;
+        $$('[data-style]', card).forEach((x) => x.classList.toggle('on', x === b));
+        applyStyle(v);
+        viewer.render();
+      }));
+      $('[data-spin]', card).onclick = () => { v.spinning = !v.spinning; viewer.spin(v.spinning ? 'y' : false); };
+      $('[data-reset]', card).onclick = () => { viewer.zoomTo(); viewer.render(); };
+    }
+    return v;
+  } catch (e) { box.innerHTML = `<p class="empty">Viewer failed: ${esc(e && e.message ? e.message : e)}</p>`; return null; }
 }
 
 function resizeViewers() {
