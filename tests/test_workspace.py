@@ -5,7 +5,7 @@ import pytest
 
 from helpers import GOOD_SCRIPT, REPO, make_config
 from paper2structure.agents.constructor import skills
-from paper2structure.agents.constructor.workspace import make_workspace, replay, sandbox_available
+from paper2structure.agents.constructor.workspace import bwrap_args, make_workspace, replay, sandbox_available
 
 SANDBOX, WHY = sandbox_available()
 needs_sandbox = pytest.mark.skipif(not SANDBOX, reason=f"bubblewrap unavailable: {WHY}")
@@ -51,6 +51,23 @@ def test_sandbox_blocks_network_secrets_and_host_writes(tmp_path, monkeypatch):
     assert not written
     assert "network: blocked" in res.stdout and "outside: read-only" in res.stdout
     assert "sk-do-not-leak" not in res.stdout and "api key: False" in res.stdout
+
+
+def test_mounts_use_real_paths_behind_symlinks(tmp_path, monkeypatch):
+    # a home directory linked to another file system: bwrap cannot create a mount point below the link
+    real = tmp_path / "real"
+    (real / ".ssh").mkdir(parents=True)
+    (real / ".netrc").write_text("machine example.org password secret")
+    (real / "warp").mkdir()
+    home = tmp_path / "home"
+    home.symlink_to(real)
+    monkeypatch.setenv("WARP_CACHE_PATH", str(home / "warp"))
+    cc = make_config(construction={"hide_paths": [str(home / ".ssh"), str(home / ".netrc")], "gpu": True}).construction
+    args = bwrap_args(cc, tmp_path / "ws")
+    real = real.resolve()
+    assert {("--tmpfs", str(real / ".ssh")), ("/dev/null", str(real / ".netrc")),
+            ("--bind", str(real / "warp"))} <= set(zip(args, args[1:]))
+    assert not any(a.startswith(str(home)) for a in args)
 
 
 @needs_sandbox

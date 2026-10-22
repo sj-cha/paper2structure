@@ -45,14 +45,16 @@ def command_env(workdir: Path, gpu: bool = True) -> dict[str, str]:
 def _hidden(raw: str) -> list[Path]:
     path = Path(os.path.expanduser(raw))
     if path.is_absolute():
-        return [path]
+        return [path.resolve()]
     return list(dict.fromkeys(p.resolve() for p in (Path.cwd() / path, PROJECT_ROOT / path)))
 
 
 def bwrap_args(cc: ConstructionConfig, workdir: Path) -> list[str]:
     """Extra bubblewrap arguments: hide secrets and, with `gpu`, expose the NVIDIA devices and Warp's
     kernel cache. CUDA fails under the harness's network-off seccomp socket filter, so GPU sandboxes
-    keep the network off with their own (empty) network namespace instead."""
+    keep the network off with their own (empty) network namespace instead. Mount points are real
+    paths: bwrap cannot create one below a symlinked directory (e.g. a home directory linked to
+    another file system), and inside the sandbox the symlink still leads to the mount."""
     workdir = workdir.resolve()
     args: list[str] = []
     for raw in cc.hide_paths:
@@ -70,6 +72,7 @@ def bwrap_args(cc: ConstructionConfig, workdir: Path) -> list[str]:
             args += ["--dev-bind", dev, dev]
         cache = os.environ.get("WARP_CACHE_PATH")
         if cache and os.path.isdir(cache):
+            cache = os.path.realpath(cache)
             args += ["--bind", cache, cache]
     return args
 
