@@ -183,9 +183,9 @@ class LLMReviser(StructuredAgent):
 
 def reviser_prompt(state: ReconstructionState, revisions_left: int, rebuilds_left: int = 0) -> str:
     plans = state.plans.plans if state.plans else []
-    parts = ["## Paper summary (material systems, text and figure evidence)",
-             state.summary.model_dump_json(exclude_none=True),
-             "## Characterization reports (per technique)", state.evidence.model_dump_json(exclude_none=True),
+    parts = ["## Paper summary (material systems, text and figure evidence)", state.summary.prompt_json(),
+             "## Characterization reports (observations and findings per technique; their structural constraints "
+             "are in the claims list)", state.evidence.prompt_json(),
              "## Plans", state.plans.model_dump_json(exclude_none=True)]
     claims = claims_about(structural_claims(state.summary, state.evidence), {i for p in plans for i in p.system_ids})
     if claims:

@@ -6,7 +6,7 @@ import logging
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from ase.io import read
 from pydantic_ai.models import Model
@@ -14,17 +14,19 @@ from pydantic_ai.usage import RunUsage
 from pydantic_graph import BaseNode, End, GraphRunContext
 
 from paper2structure.agents.characterization import CharacterizationAgent, ExperimentalEvidence, find_spec
-from paper2structure.agents.constructor.agent import WORKSPACE, ConstructionDeps
 from paper2structure.agents.constructor.schemas import ConstructionReport, StructureArtifact
 from paper2structure.agents.reviser import save_report, save_structures_readme
 from paper2structure.agents.structured_agent import add_usage
-from paper2structure.agents.summarizer import PaperGraph, load_graph, summarize_paper
+from paper2structure.agents.summarizer import PaperGraph, load_graph
 from paper2structure.config import CharacterizationConfig, canonical_technique, get_model
 from paper2structure.graph.schemas import ReconstructionResult
 from paper2structure.graph.state import ReconstructionState, WorkflowDeps
 from paper2structure.tools.geometry_checks import check_roundtrip
 from paper2structure.tools.render import render_png
 from paper2structure.tools.structure_export import describe, export_structure
+
+if TYPE_CHECKING:  # the constructor's agent loads with the workflow (WorkflowDeps), not with these nodes
+    from paper2structure.agents.constructor.agent import ConstructionDeps
 
 log = logging.getLogger(__name__)
 Ctx = GraphRunContext[ReconstructionState, WorkflowDeps]
@@ -71,6 +73,8 @@ class SummarizePaper(BaseNode[ReconstructionState, WorkflowDeps, ReconstructionR
                 if not path.is_relative_to(deps.store.root):  # the run keeps its own copy of what it used
                     deps.store.write_json("inputs/paper_graph.json", st.summary)
             elif inputs.pdf:
+                from paper2structure.agents.summarizer import summarize_paper  # the PDF reader, only when needed
+
                 out = deps.store.path("paper", "paper_graph.json").parent
                 (out / "errors.txt").unlink(missing_ok=True)  # the summarizer only writes it when steps fail
                 sc, usage = deps.cfg.summarizer, RunUsage()
@@ -273,6 +277,8 @@ class ConstructStructures(BaseNode[ReconstructionState, WorkflowDeps, Reconstruc
                     scripts.setdefault((store.root / a.script).read_text(), a.structure_id)
             previous = {f"{sid}.py": code for code, sid in scripts.items()}
             if plan_id in st.failed_plans:  # not built last time: that attempt's scripts too
+                from paper2structure.agents.constructor.agent import WORKSPACE
+
                 last = store.root / "construction" / f"r{st.revision}_a{st.attempt - 1}" / plan_id / WORKSPACE
                 previous.update({f"last_attempt/{p.name}": p.read_text() for p in sorted(last.glob("*.py"))})
         workdir = store.path("construction", f"r{st.revision}_a{st.attempt}", plan_id)
@@ -358,14 +364,17 @@ class ValidateStructures(BaseNode[ReconstructionState, WorkflowDeps, Reconstruct
     async def run(self, ctx: Ctx) -> ConstructStructures | ScientificRevision:
         _enter(ctx, "ValidateStructures")
         st, store = ctx.state, ctx.deps.store
+        new = [st.artifact(i) for i in st.current_ids
+               if not any(c.name == "export_roundtrip" for c in st.validation_reports[i].checks)]
+
+        def roundtrip(a: StructureArtifact):
+            return check_roundtrip(read(store.root / a.source), {k: str(store.root / p) for k, p in a.files.items()})
+
+        for a, check in zip(new, await asyncio.gather(*(asyncio.to_thread(roundtrip, a) for a in new))):
+            st.validation_reports[a.structure_id] = st.validation_reports[a.structure_id].with_check(check)
         failing, notes = set(), {}
         for sid in st.current_ids:
-            a = st.artifact(sid)
-            rep = st.validation_reports[sid]
-            if not any(c.name == "export_roundtrip" for c in rep.checks):
-                files = {k: str(store.root / p) for k, p in a.files.items()}
-                roundtrip = check_roundtrip(read(store.root / a.source), files)
-                rep = st.validation_reports[sid] = rep.with_check(roundtrip)
+            a, rep = st.artifact(sid), st.validation_reports[sid]
             if not rep.passed and a.plan_id in st.pending_plan_ids:  # plans not rebuilt now stay with the reviewer
                 failing.add(a.plan_id)
                 notes.setdefault(a.plan_id, []).append(f"{a.name} (plan {a.plan_id}): {rep.summary()}")

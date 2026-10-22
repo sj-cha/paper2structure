@@ -97,6 +97,12 @@ class ExperimentalEvidence(BaseModel):
         """Citable observation IDs, qualified by technique: 'XRD:O3'."""
         return {f"{t}:{o.observation_id}" for t, r in self.reports.items() for o in r.observations}
 
+    def prompt_json(self) -> str:
+        """The reports as Agents 3 and 5 read them: compact JSON without default fields and without
+        the structural constraints, which the claims list gives in full (ID, systems, value,
+        confidence, cited observations, derivation)."""
+        return self.model_dump_json(exclude_defaults=True, exclude={"reports": {"__all__": {"structural_constraints"}}})
+
     def focused(self, system_ids: set[str]) -> "ExperimentalEvidence":
         """The reports restricted to these systems: the observations, findings and constraints about
         them or about no system in particular, plus every observation a kept finding or constraint

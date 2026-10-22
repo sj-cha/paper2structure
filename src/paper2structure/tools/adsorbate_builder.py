@@ -1,5 +1,3 @@
-"""Adsorbate construction ported from PerovKit's Ligand/BindingMotif (https://github.com/sj-cha/PerovKit),
-generalized away from perovskite-specific sites."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field

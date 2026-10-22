@@ -14,6 +14,10 @@ from .schemas import CharacterizationReport
 from .spec import GENERIC, TechniqueSpec, generate_system_prompt
 
 
+def _compact(obj) -> str:
+    return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
+
+
 class CharacterizationAgent(StructuredAgent):
     """Agent 2 for one technique: reads the figures and text records tagged with it. Transient API
     errors are retried and token usage is counted (`usage`) like the other agents."""
@@ -64,9 +68,9 @@ class CharacterizationAgent(StructuredAgent):
         ]
         system_table = [s.model_dump(include={"system_id", "name", "composition_variables", "form"}, exclude_none=True) for s in systems]
         content: list = [
-            f"Material systems:\n{json.dumps(system_table, indent=2)}",
-            f"Figure records:\n{json.dumps(list(figures.values()), indent=2)}",
-            f"Text records:\n{json.dumps(texts, indent=2)}",
+            f"Material systems:\n{_compact(system_table)}",
+            f"Figure records:\n{_compact(list(figures.values()))}",
+            f"Text records:\n{_compact(texts)}",
         ]
 
         for image_path, record in figures.items():

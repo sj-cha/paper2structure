@@ -188,6 +188,16 @@ def _pair_text(atoms: Atoms, i: int, j: int, d: float) -> str:
     return f"{atoms[i].symbol}{i}-{atoms[j].symbol}{j} {d:.2f} A"
 
 
+def _read_back(fmt: str, path: str) -> Atoms:
+    """An exported file as written. The CIF is P1, so its atom sites are read as they are: ASE's
+    reader would expand them by symmetry and merge duplicates, quadratic in the number of atoms."""
+    if fmt == "cif":
+        from ase.io.cif import parse_cif
+
+        return next(parse_cif(path)).get_unsymmetrized_structure()
+    return read(path)
+
+
 def check_roundtrip(atoms: Atoms, files: dict[str, str]) -> CheckResult:
     """Re-read every exported file (`files`: format -> path) and compare species order, cell and positions."""
     ordered = atoms[grouped_order(atoms)]
@@ -196,7 +206,7 @@ def check_roundtrip(atoms: Atoms, files: dict[str, str]) -> CheckResult:
         if fmt == "metadata":
             continue
         try:
-            back = read(path)
+            back = _read_back(fmt, path)
         except Exception as e:  # noqa: BLE001
             problems.append(f"{fmt}: unreadable ({e})")
             continue

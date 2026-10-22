@@ -329,10 +329,9 @@ class LLMPlanner(StructuredAgent):
 def planner_prompt(summary: PaperGraph, evidence: ExperimentalEvidence, history: list[PlanSet],
                    feedback: str, claims: list[Claim] | None = None) -> str:
     claims = structural_claims(summary, evidence) if claims is None else claims
-    parts = ["## Paper summary (Agent 1: metadata, material systems, text and figure evidence)",
-             summary.model_dump_json(exclude_none=True),
-             "## Characterization reports (Agent 2: observations, findings and structural constraints per technique)",
-             evidence.model_dump_json(exclude_none=True)]
+    parts = ["## Paper summary (Agent 1: metadata, material systems, text and figure evidence)", summary.prompt_json(),
+             "## Characterization reports (Agent 2: observations and findings per technique; their structural "
+             "constraints are in the claims list)", evidence.prompt_json()]
     if claims:
         parts += ["## Structural claims (every plan tests each claim about its systems with a check, "
                   "or lists it in unchecked with the reason)",
@@ -361,8 +360,8 @@ Your inputs
   parameters, site occupancy, phase purity) and evidence items (IDs E001, ...) extracted from the
   text and figures, tagged by technique.
 - The characterization reports (Agent 2), one per technique: observations read from the figures
-  and text (IDs O1, O2, ... within each report), findings, and structural constraints with their
-  confidence.
+  and text (IDs O1, O2, ... within each report) and findings. Their structural constraints, with
+  confidence, cited observations and derivation, are listed among the structural claims.
 - Cite evidence as summarizer evidence IDs ("E004") or as characterization observation IDs
   qualified by their technique ("XRD:O3"), or the structural claims below by their IDs; no other
   IDs exist.

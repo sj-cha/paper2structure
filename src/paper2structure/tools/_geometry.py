@@ -7,6 +7,7 @@ import json
 import re
 import os
 import random
+import sys
 from typing import Iterable, Optional, Sequence
 
 import numpy as np
@@ -17,7 +18,9 @@ from scipy.spatial import cKDTree
 
 ROLE_FIXED, ROLE_SUBSTRATE, ROLE_ADSORBATE, ROLE_SOLVENT = 0, 1, 2, 3  # OC20-style tags (+ solvent)
 MOLECULES_KEY = "p2s_molecules"
-NVALCHEMI_MIN_ATOMS = 1500  # below this, ASE is faster than importing torch/warp
+NVALCHEMI_MIN_ATOMS = 1500  # from here nvalchemiops beats ASE once torch is loaded
+NVALCHEMI_COLD_MIN_ATOMS = 20000  # ... and also when it first has to import torch and warp (5-10 s)
+_backend_failed = False  # nvalchemiops failed once in this process: stay with ASE
 
 
 def ensure_warp_cache() -> None:
@@ -66,8 +69,12 @@ def neighbor_pairs(atoms: Atoms, cutoff):
     """Ordered pairs (i, j, D) with D the minimum-image vector from i to j, closer than `cutoff`
     (a float) or than r_i + r_j when `cutoff` is a per-atom list of radii.
 
-    Large structures use the NVIDIA ALCHEMI Toolkit-Ops neighbor list (GPU when torch sees one),
-    small ones ASE; P2S_NEIGHBOR_BACKEND = "ase" | "nvalchemiops" | "auto" overrides the choice."""
+    Large structures use the NVIDIA ALCHEMI Toolkit-Ops neighbor list (GPU when torch sees one):
+    from NVALCHEMI_MIN_ATOMS atoms when torch is already loaded, from NVALCHEMI_COLD_MIN_ATOMS
+    otherwise, since importing it costs more than ASE saves on smaller structures (a short-lived
+    build script pays that import every run). P2S_NEIGHBOR_BACKEND = "ase" | "nvalchemiops" | "auto"
+    overrides the choice."""
+    global _backend_failed
     from ase.neighborlist import neighbor_list
 
     radii = np.asarray(cutoff, dtype=float) if np.ndim(cutoff) else None
@@ -75,12 +82,15 @@ def neighbor_pairs(atoms: Atoms, cutoff):
     if len(atoms) < 2 or rc <= 0:
         return np.array([], dtype=int), np.array([], dtype=int), np.zeros((0, 3))
     backend = os.environ.get("P2S_NEIGHBOR_BACKEND", "auto")
-    if backend == "nvalchemiops" or (backend == "auto" and len(atoms) >= NVALCHEMI_MIN_ATOMS):
+    big = len(atoms) >= (NVALCHEMI_MIN_ATOMS if "torch" in sys.modules else NVALCHEMI_COLD_MIN_ATOMS)
+    if backend == "nvalchemiops" or (backend == "auto" and big and not _backend_failed):
         try:
             i, j, D = _nvalchemi_pairs(atoms, rc)
-        except Exception:  # noqa: BLE001 - fall back to ASE unless explicitly requested
+        except Exception as e:  # noqa: BLE001 - fall back to ASE unless explicitly requested
             if backend == "nvalchemiops":
                 raise
+            _backend_failed = True
+            print(f"[paper2structure] nvalchemiops neighbor list unavailable ({type(e).__name__}: {e}); using ASE")
             i, j, D = neighbor_list("ijD", atoms, rc)
     else:
         i, j, D = neighbor_list("ijD", atoms, rc)

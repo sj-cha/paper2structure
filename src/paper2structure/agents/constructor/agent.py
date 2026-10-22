@@ -12,7 +12,7 @@ import shutil
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import numpy as np
 from ase.io import read
@@ -24,24 +24,27 @@ from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.memory import FileStore
 from pydantic_ai_harness.system_reminders import Reminder
 
-from paper2structure.agents.characterization.schemas import ExperimentalEvidence
 from paper2structure.agents.constructor import skills
 from paper2structure.agents.constructor.schemas import ConstructionReport
 from paper2structure.agents.constructor.workspace import make_workspace, replay
-from paper2structure.agents.planner.schemas import StructurePlan
 from paper2structure.agents.structured_agent import StructuredAgent
-from paper2structure.agents.summarizer.schemas import PaperGraph
-from paper2structure.config import Paper2StructureConfig, ValidationConfig, simulation_brief
+from paper2structure.config import simulation_brief
 from paper2structure.tools.geometry_checks import validate_structure
 from paper2structure.tools.render import render_png
 from paper2structure.tools.schemas import CheckResult, ValidationReport
 from paper2structure.tools.structure_export import EMIT_DIR, MANIFEST, NAME, describe, structure_path
 
+if TYPE_CHECKING:  # annotations only
+    from paper2structure.agents.characterization.schemas import ExperimentalEvidence
+    from paper2structure.agents.planner.schemas import StructurePlan
+    from paper2structure.agents.summarizer.schemas import PaperGraph
+    from paper2structure.config import Paper2StructureConfig, ValidationConfig
+
 log = logging.getLogger(__name__)
 
 WORKSPACE = "workspace"  # the agent's directory inside an attempt directory
 REPLAYS = "replay"  # from-scratch runs of the final scripts, next to it
-MAX_PARALLEL_REPLAYS = 4
+MAX_PARALLEL_REPLAYS = 4  # per LLMConstructor, across the plans it builds at once
 
 
 @dataclass
@@ -54,6 +57,7 @@ class ConstructionDeps:
     reports: dict[str, ValidationReport] = field(default_factory=dict)  # structure name -> gate report
     replays: dict[Path, tuple[str, CommandResult]] = field(default_factory=dict)  # script -> (content hash, result)
     gate_rejections: int = 0  # final reports sent back by the validation gate
+    replay_limit: Optional[asyncio.Semaphore] = None  # shared with the other plans' runs (default: this run's own)
 
     @property
     def workspace(self) -> Path:
@@ -188,7 +192,7 @@ def check_report(deps: ConstructionDeps, output: ConstructionReport) -> tuple[li
 async def replay_scripts(deps: ConstructionDeps, scripts: list[Path]) -> dict[Path, CommandResult]:
     """Run each script alone in an empty directory, up to MAX_PARALLEL_REPLAYS at once. A script
     whose content already reproduced in this run is not run again (its replay directory is kept)."""
-    limit = asyncio.Semaphore(MAX_PARALLEL_REPLAYS)
+    limit = deps.replay_limit or asyncio.Semaphore(MAX_PARALLEL_REPLAYS)
 
     async def run(script: Path) -> CommandResult:
         digest = hashlib.sha256(script.read_bytes()).hexdigest()
@@ -208,12 +212,20 @@ async def replay_scripts(deps: ConstructionDeps, scripts: list[Path]) -> dict[Pa
 
 async def verify_report(deps: ConstructionDeps, output: ConstructionReport) -> list[str]:
     """Problems with a final report: its bookkeeping (check_report), scripts that do not reproduce
-    their structures when run alone from scratch, then the validation gate on the replayed ones."""
+    their structures when run alone from scratch, then the validation gate on the replayed ones.
+    Reading and checking the structures is CPU work, done off the event loop the other plans' runs
+    share."""
     problems, by_script = check_report(deps, output)
     if problems:
         return problems
     results = await replay_scripts(deps, list(by_script))
-    fresh_atoms = {}
+    return await asyncio.to_thread(_check_replays, deps, output, by_script, results)
+
+
+def _check_replays(deps: ConstructionDeps, output: ConstructionReport, by_script: dict[Path, list[str]],
+                   results: dict[Path, CommandResult]) -> list[str]:
+    """The replayed structures must equal the emitted ones and pass the validation gate."""
+    problems, fresh_atoms = [], {}
     for script, names in by_script.items():
         res = results[script]
         if res.exit_code != 0:
@@ -269,6 +281,14 @@ class LLMConstructor(StructuredAgent):
         super().__init__(model, effort, constructor_system_prompt(cfg), max_retry=cfg.campaign.max_retry,
                          output_retries=cfg.campaign.max_retry + cfg.construction.gate_retries)
         self.cfg = cfg
+        self._replay_limit: Optional[tuple[asyncio.AbstractEventLoop, asyncio.Semaphore]] = None
+
+    def replay_limit(self) -> asyncio.Semaphore:
+        """The cap on concurrent replays shared by the plans this agent builds at once (one per event loop)."""
+        loop = asyncio.get_running_loop()
+        if self._replay_limit is None or self._replay_limit[0] is not loop:
+            self._replay_limit = (loop, asyncio.Semaphore(MAX_PARALLEL_REPLAYS))
+        return self._replay_limit[1]
 
     def _capabilities(self) -> list:
         cc = self.cfg.construction
@@ -323,7 +343,7 @@ class LLMConstructor(StructuredAgent):
                         evidence: Optional[ExperimentalEvidence] = None) -> tuple[ConstructionReport, ConstructionDeps]:
         """Build `plan` in a fresh workspace under `workdir`; returns the verified report and the deps
         holding the replayed structures, their scripts and their gate reports."""
-        deps = ConstructionDeps(workdir=Path(workdir), plan=plan, cfg=self.cfg)
+        deps = ConstructionDeps(workdir=Path(workdir), plan=plan, cfg=self.cfg, replay_limit=self.replay_limit())
         for leftover in (deps.workspace, deps.workdir / REPLAYS):  # a reused run directory: start clean
             shutil.rmtree(leftover, ignore_errors=True)
         previous_scripts = previous_scripts or {}
@@ -350,7 +370,7 @@ def prepare_workspace(workspace: Path, plan: StructurePlan, feedback: str, previ
     task.mkdir(parents=True, exist_ok=True)
     (task / "plan.json").write_text(plan.model_dump_json(indent=1))
     if summary is not None:
-        (task / "paper_summary.json").write_text(summary.model_dump_json(exclude_none=True))
+        (task / "paper_summary.json").write_text(summary.prompt_json())
     if evidence is not None:
         (task / "evidence.json").write_text(evidence.model_dump_json(exclude_none=True))
     if feedback:
@@ -388,7 +408,7 @@ REMINDER = ("Final structures come from standalone scripts (one file, SEED passe
 
 
 def constructor_prompt(plan: StructurePlan, seed: int, feedback: str, previous_scripts: dict[str, str]) -> str:
-    parts = ["## Plan to build (also in task/plan.json)", plan.model_dump_json(indent=1), f"Use SEED = {seed}."]
+    parts = ["## Plan to build (also in task/plan.json)", plan.model_dump_json(exclude_none=True), f"Use SEED = {seed}."]
     if feedback:
         parts += ["## Feedback on the previous attempt (also in task/feedback.md)", feedback]
     if previous_scripts:

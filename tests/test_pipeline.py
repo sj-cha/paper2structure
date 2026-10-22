@@ -8,7 +8,9 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+import re
 from pathlib import Path
+from types import SimpleNamespace
 
 import pymupdf
 import pytest
@@ -20,7 +22,10 @@ from helpers import GOOD_SCRIPT, PT_PLAN, coding_model, constructor_model, cover
 from paper2structure.agents.characterization import (CharacterizationReport, ExperimentalEvidence, Observation,
                                                      StructuralConstraint)
 from paper2structure.agents.planner import LLMPlanner, PlanningDeps, PlanSet, check_plan_set
+from paper2structure.agents.planner.claims import structural_claims
 from paper2structure.agents.summarizer import Evidence, MaterialSystem, PaperGraph, load_graph
+from paper2structure.agents.summarizer.graph import ExtractEvidence, SummarizerDeps, SummarizerState, figure_groups
+from paper2structure.agents.summarizer.pdf_reader import ExtractedFigure, PaperDocument
 from paper2structure.agents.summarizer.pdf_reader import read_pdf
 from paper2structure.agents.summarizer.schemas import PaperMetadata
 from paper2structure.agents.structured_agent import StructuredAgent
@@ -202,7 +207,7 @@ def test_pdf_to_structures_in_one_graph_run(tmp_path, paper_pdf):
 
     # Agent 4 got both in its workspace; the accepted structure passed validation and was exported
     task = run / "construction" / "r0_a0" / "P1" / "workspace" / "task"  # one workspace per plan
-    assert load_graph(task / "paper_summary.json").metadata.title == "Dry-run paper"
+    assert json.loads((task / "paper_summary.json").read_text())["metadata"]["title"] == "Dry-run paper"
     assert set(ExperimentalEvidence.model_validate_json((task / "evidence.json").read_text()).reports) == {"XRD"}
     sid = result.accepted_structure_ids[0]
     assert state["validation_reports"][sid]["passed"] and (run / result.structure_files[sid]["poscar"]).exists()
@@ -309,6 +314,95 @@ def test_saved_summary_and_reports_replace_agents_1_and_2(tmp_path):
     assert load_graph(run / "inputs" / "paper_graph.json") == load_graph(earlier / "paper" / "paper_graph.json")
     assert state["evidence"]["reports"]["XRD"] == _xrd_report().model_dump(mode="json")
     assert len(prompts) == 1 and "Synthetic paper" in prompts[0] and '"value":"Pnma"' in prompts[0]
+
+
+def _crop(tmp_path: Path, figure_id: str, page: int, caption: str, kind: str = "figure") -> ExtractedFigure:
+    path = tmp_path / "figures" / f"{figure_id}.png"
+    path.parent.mkdir(exist_ok=True)
+    pix = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 8, 8), False)
+    pix.clear_with(200)
+    pix.save(str(path))
+    return ExtractedFigure(figure_id=figure_id, page=page, caption=caption, image_path=path, kind=kind)
+
+
+def _summarizer_ctx(tmp_path: Path, model, n_systems: int = 1, figures=()) -> SimpleNamespace:
+    """What ExtractEvidence reads from its graph context: the state after FindSystems, and the deps."""
+    state = SummarizerState(pdf_path=tmp_path / "paper.pdf", out_dir=tmp_path,
+                            document=PaperDocument(pages=["The paper text."], figures=list(figures)),
+                            systems=[MaterialSystem(system_id=f"S{k}", name=f"Sample{k}") for k in range(1, n_systems + 1)])
+    return SimpleNamespace(state=state, deps=SummarizerDeps(model=model, on_progress=lambda message: None))
+
+
+def test_the_crops_of_one_figure_are_catalogued_in_one_call(tmp_path):
+    crops = [_crop(tmp_path, "p2_f1", 2, "Fig. 1 XRD and TEM."), _crop(tmp_path, "p2_f2", 2, "Fig. 1 XRD and TEM."),
+             _crop(tmp_path, "p2_f3", 2, ""), _crop(tmp_path, "p3_t1", 3, "Table 1 Lattice.", kind="table")]
+    groups = figure_groups(crops)
+    assert [[f.figure_id for f in g] for g in groups] == [["p2_f1", "p2_f2"], ["p2_f3"], ["p3_t1"]]
+    calls = []
+
+    def fn(messages, info):
+        calls.append(messages)
+        ids = ["p2_f1", "p2_f2"] if len(calls) > 1 else [None, None]  # the first answer leaves the images out
+        return _final(info, {"figure_label": "Fig. 1", "panels": [
+            {"panel_label": label, "plot_type": kind, "technique": technique, "system_ids": ["S1"],
+             "description": kind, "image_id": image}
+            for label, kind, technique, image in zip("ab", ("XRD pattern", "TEM image"), ("XRD", "TEM"), ids)]})
+
+    evidence, error = asyncio.run(ExtractEvidence._figure(_summarizer_ctx(tmp_path, FunctionModel(fn)), 0, groups))
+    assert error == "" and len(calls) == 2  # sent back once for the image ids
+    assert sum(isinstance(x, BinaryContent) for x in _user_items(calls[0])) == 2  # both crops in one call
+    assert [e.image_path for e in evidence] == ["figures/p2_f1.png", "figures/p2_f2.png"]
+    assert {e.quote for e in evidence} == {"Fig. 1 XRD and TEM."}
+
+
+def test_evidence_calls_run_concurrently_after_the_first_text_call(tmp_path):
+    events, prompts = [], {}
+
+    async def fn(messages, info):
+        text = _text(_user_items(messages))
+        key = (re.search(r"TARGET SYSTEM: (S\d)", text) or re.search(r"Figure id: (\S+)", text)).group(1)
+        prompts[key] = text
+        events.append(("start", key))
+        await asyncio.sleep(0.05)
+        events.append(("end", key))
+        if key.startswith("S"):
+            return _final(info, {"synthesis": {}, "structure": {}, "evidence": [
+                {"system_ids": [key], "technique": "XRD", "summary": f"{key} XRD", "page": 1}]})
+        return _final(info, {"figure_label": key, "panels": [
+            {"plot_type": "XRD pattern", "technique": "XRD", "system_ids": ["S1"], "description": "x"}]})
+
+    ctx = _summarizer_ctx(tmp_path, FunctionModel(fn), n_systems=3,
+                          figures=[_crop(tmp_path, "p2_f1", 2, "Fig. 1"), _crop(tmp_path, "p3_f1", 3, "Fig. 2")])
+    asyncio.run(ExtractEvidence().run(ctx))
+    start = {k: events.index(("start", k)) for k in prompts}
+    end = {k: events.index(("end", k)) for k in prompts}
+    assert end["S1"] < start["S2"] and end["S1"] < start["S3"]  # the others reuse its cached paper-text prefix
+    assert start["S3"] < end["S2"] and start["p2_f1"] < end["S1"]  # the rest run at once
+    assert all(prompts[s].startswith("PAPER TEXT:\n") for s in ("S1", "S2", "S3"))
+    assert [e.summary for e in ctx.state.evidence[:3]] == ["S1 XRD", "S2 XRD", "S3 XRD"]  # kept in input order
+    assert [e.source_ref for e in ctx.state.evidence[3:]] == ["p2_f1 (page 2)", "p3_f1 (page 3)"]
+
+
+def test_prompt_views_are_compact_and_leave_out_what_the_claims_list_gives():
+    figure = dict(technique="XRD", source_type="figure", source_ref="Fig. 1 (page 1)", quote="Fig. 1 XRD.",
+                  context=["As Fig. 1 shows."], image_path="figures/p1_f1.png")
+    paper = _paper([_xrd_text("E001"), Evidence(evidence_id="E002", system_ids=["S1"], summary="pattern a", **figure),
+                    Evidence(evidence_id="E003", system_ids=["S2"], summary="pattern b", **figure)])
+    view = json.loads(paper.prompt_json())
+    assert set(view) == {"metadata", "systems", "text_evidence", "figures"}  # no source PDF or model
+    assert [e["evidence_id"] for e in view["text_evidence"]] == ["E001"]
+    [fig] = view["figures"]  # the two panels of one image, with its caption and citing sentences once
+    assert (fig["figure"], fig["caption"], fig["cited_by"]) == ("p1_f1", "Fig. 1 XRD.", ["As Fig. 1 shows."])
+    assert [set(p) for p in fig["panels"]] == [{"evidence_id", "system_ids", "technique", "source_ref", "summary"}] * 2
+    assert "\n" not in paper.prompt_json() and '": ' not in paper.prompt_json()
+
+    report = _xrd_report().model_copy(update={"structural_constraints": [StructuralConstraint(
+        property="phase", system_ids=["S1"], value="Pnma", evidence=["O1"], confidence="high",
+        derivation="indexed pattern")]})
+    evidence = ExperimentalEvidence(reports={"XRD": report})
+    assert "structural_constraints" not in evidence.prompt_json() and '"observation_id":"O1"' in evidence.prompt_json()
+    [claim] = [c for c in structural_claims(paper, evidence) if c.claim_id == "XRD:C1"]
+    assert claim.text == "phase: Pnma [high confidence] (from XRD:O1; indexed pattern)"
 
 
 def test_saved_reports_of_another_summary_end_the_run(tmp_path):

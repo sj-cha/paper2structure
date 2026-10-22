@@ -10,6 +10,8 @@ Two kinds of models live here:
 
 from __future__ import annotations
 
+import json
+from pathlib import PurePath
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -105,10 +107,11 @@ class FigurePanel(BaseModel):
     system_ids: list[str] = Field(description="Systems shown in this panel (use the given IDs).")
     description: str = Field(description="What the panel shows (samples, plot layout, insets), without reading any values off it.")
     axes: list[str] = Field(default_factory=list, description="Axis labels with units, e.g. ['2θ (deg)', 'Intensity (arb.)'].")
+    image_id: str | None = Field(default=None, description="The id of the image the panel is in, when the figure comes as several images.")
 
 
 class FigureOutput(BaseModel):
-    """Output of step 3 for ONE figure image."""
+    """Output of step 3 for ONE figure (one image, or the crops of one figure)."""
 
     figure_label: str = Field(description="e.g. 'Fig. 2'.")
     panels: list[FigurePanel]
@@ -181,3 +184,23 @@ class PaperGraph(BaseModel):
     metadata: PaperMetadata
     systems: list[MaterialSystem]
     evidence: list[Evidence]
+
+    def prompt_json(self) -> str:
+        """The summary as Agents 3-5 read it: compact JSON without empty or default fields and without
+        the run's provenance (source PDF, model). Text evidence is listed item by item; figure evidence
+        is grouped per image under its figure ID (the source_id the characterization reports cite),
+        with the caption and the sentences citing it once, then its panels."""
+        derived = {"source_type", "technique_category", "image_path"}  # implied by where an item is listed
+        text, figures = [], {}
+        for e in self.evidence:
+            if not e.image_path:
+                text.append(e.model_dump(mode="json", exclude_defaults=True, exclude=derived))
+                continue
+            fig = figures.setdefault(e.image_path, {"figure": PurePath(e.image_path).stem, "caption": e.quote,
+                                                    "cited_by": e.context, "panels": []})
+            fig["panels"].append(e.model_dump(mode="json", exclude_defaults=True, exclude=derived | {"quote", "context"}))
+        view = {"metadata": self.metadata.model_dump(mode="json", exclude_defaults=True),
+                "systems": [s.model_dump(mode="json", exclude_defaults=True) for s in self.systems],
+                "text_evidence": text,
+                "figures": [{k: v for k, v in f.items() if v} for f in figures.values()]}
+        return json.dumps(view, ensure_ascii=False, separators=(",", ":"))

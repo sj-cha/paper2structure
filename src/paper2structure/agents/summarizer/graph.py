@@ -1,7 +1,7 @@
 """The summarizer workflow, written as a pydantic-graph.
 
-    ReadPDF -> FindSystems -> ExtractTextEvidence (repeats once per system)
-            -> AnalyzeFigure (repeats once per figure) -> BuildGraph -> End
+    ReadPDF -> FindSystems -> ExtractEvidence (one call per system and per figure, concurrently)
+            -> BuildGraph -> End
 
 Each step is a class that inherits from ``BaseNode``. Its ``run`` method does the work and
 *returns the next step*. The return type hint (e.g. ``-> FindSystems``) is how pydantic-graph
@@ -14,6 +14,7 @@ and the token usage every LLM call adds to.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -25,7 +26,7 @@ from pydantic_graph import BaseNode, End, GraphBuilder, GraphRunContext
 
 from .agents import AgentDeps, figure_analyst, system_finder, text_extractor
 from .knowledge_graph import build_graph, save_outputs
-from .pdf_reader import PaperDocument, read_pdf
+from .pdf_reader import ExtractedFigure, PaperDocument, read_pdf
 from .schemas import Evidence, MaterialSystem, PaperGraph, PaperMetadata
 
 
@@ -78,7 +79,7 @@ class ReadPDF(BaseNode[SummarizerState, SummarizerDeps, PaperGraph]):
 class FindSystems(BaseNode[SummarizerState, SummarizerDeps, PaperGraph]):
     """LLM call 1: how many material systems were evaluated?"""
 
-    async def run(self, ctx: Ctx) -> ExtractTextEvidence | BuildGraph:
+    async def run(self, ctx: Ctx) -> ExtractEvidence | BuildGraph:
         ctx.deps.on_progress("Identifying the material systems studied...")
         result = await system_finder.run(ctx.state.document.full_text, model=ctx.deps.model, usage=ctx.deps.usage)
         ctx.state.metadata = result.output.metadata
@@ -90,96 +91,111 @@ class FindSystems(BaseNode[SummarizerState, SummarizerDeps, PaperGraph]):
         if not ctx.state.systems:
             ctx.state.errors.append("No material systems found.")
             return BuildGraph()
-        return ExtractTextEvidence(index=0)
+        return ExtractEvidence()
+
+
+MAX_CONCURRENT_CALLS = 8  # LLM calls ExtractEvidence runs at once
+
+
+def figure_groups(figures: list[ExtractedFigure]) -> list[list[ExtractedFigure]]:
+    """The images one vision call catalogues: the crops of one figure (figures on the same page with
+    the same caption) together, every table and every uncaptioned crop alone; in reading order."""
+    groups: dict[tuple, list[ExtractedFigure]] = {}
+    for f in figures:
+        key = (f.page, f.caption) if f.caption and f.kind == "figure" else (f.figure_id,)
+        groups.setdefault(key, []).append(f)
+    return list(groups.values())
 
 
 @dataclass
-class ExtractTextEvidence(BaseNode[SummarizerState, SummarizerDeps, PaperGraph]):
-    """LLM call 2 (once per system): synthesis, structure and per-technique evidence from the text."""
+class ExtractEvidence(BaseNode[SummarizerState, SummarizerDeps, PaperGraph]):
+    """LLM calls 2 and 3, at most MAX_CONCURRENT_CALLS at a time: per system, its synthesis, structure
+    and per-technique evidence from the text; per figure (all its crops in one vision call), a
+    catalogue of its panels. The first text call runs before the other text calls, which then reuse
+    its cached prompt prefix (the paper text). A system or figure that fails is recorded and the rest
+    continue; the evidence is kept in input order (text by system, then figures)."""
 
-    index: int = 0
+    async def run(self, ctx: Ctx) -> BuildGraph:
+        state, deps = ctx.state, ctx.deps
+        limit = asyncio.Semaphore(MAX_CONCURRENT_CALLS)
+        groups = figure_groups(state.document.figures) if deps.analyze_figures else []
 
-    async def run(self, ctx: Ctx) -> ExtractTextEvidence | AnalyzeFigure | BuildGraph:
+        async def limited(coro):
+            async with limit:
+                return await coro
+
+        async def texts() -> list:
+            first = await limited(self._text(ctx, 0))
+            return [first, *await asyncio.gather(*(limited(self._text(ctx, k)) for k in range(1, len(state.systems))))]
+
+        by_system, by_figure = await asyncio.gather(
+            texts(), asyncio.gather(*(limited(self._figure(ctx, k, groups)) for k in range(len(groups)))))
+        for evidence, error in [*by_system, *by_figure]:
+            state.evidence += evidence
+            if error:
+                state.errors.append(error)
+                deps.on_progress(f"  ! {error}")
+        return BuildGraph()
+
+    @staticmethod
+    async def _text(ctx: Ctx, k: int) -> tuple[list[Evidence], str]:
         state = ctx.state
-        system = state.systems[self.index]
-        ctx.deps.on_progress(f"Reading text evidence for {system.system_id} ({system.name}) [{self.index + 1}/{len(state.systems)}]...")
-        prompt = (
+        system = state.systems[k]
+        ctx.deps.on_progress(f"Reading text evidence for {system.system_id} ({system.name}) [{k + 1}/{len(state.systems)}]...")
+        prompt = (  # the paper text first: the calls for the other systems share it as a cached prefix
+            f"PAPER TEXT:\n{state.document.full_text}\n\n"
             f"Material systems in this paper:\n{state.systems_text()}\n\n"
-            f"TARGET SYSTEM: {system.system_id} ({system.name})\n\n"
-            f"PAPER TEXT:\n{state.document.full_text}"
+            f"TARGET SYSTEM: {system.system_id} ({system.name})"
         )
         try:
             result = await text_extractor.run(prompt, model=ctx.deps.model, deps=AgentDeps({s.system_id for s in state.systems}),
                                               usage=ctx.deps.usage)
-            out = result.output
-            system.synthesis = out.synthesis
-            system.structure = out.structure
-            for item in out.evidence:
-                state.evidence.append(
-                    Evidence(
-                        evidence_id="",  # BuildGraph numbers the evidence once it is merged
-                        source_type="text",
-                        source_ref=f"page {item.page}" if item.page else "text",
-                        **item.model_dump(exclude={"page"}),
-                    )
-                )
         except Exception as e:  # keep going: one failed system should not lose the whole paper
-            state.errors.append(f"Text extraction failed for {system.system_id}: {e}")
-            ctx.deps.on_progress(f"  ! {state.errors[-1]}")
+            return [], f"Text extraction failed for {system.system_id}: {e}"
+        out = result.output
+        system.synthesis = out.synthesis
+        system.structure = out.structure
+        return [Evidence(evidence_id="",  # BuildGraph numbers the evidence once it is merged
+                         source_type="text", source_ref=f"page {item.page}" if item.page else "text",
+                         **item.model_dump(exclude={"page"})) for item in out.evidence], ""
 
-        # Where to go next? This is the "loop": come back to this same step for the next system.
-        if self.index + 1 < len(state.systems):
-            return ExtractTextEvidence(index=self.index + 1)
-        if ctx.deps.analyze_figures and state.document.figures:
-            return AnalyzeFigure(index=0)
-        return BuildGraph()
-
-
-@dataclass
-class AnalyzeFigure(BaseNode[SummarizerState, SummarizerDeps, PaperGraph]):
-    """LLM call 3 (once per figure): send the image to a vision model."""
-
-    index: int = 0
-
-    async def run(self, ctx: Ctx) -> AnalyzeFigure | BuildGraph:
+    @staticmethod
+    async def _figure(ctx: Ctx, k: int, groups: list[list[ExtractedFigure]]) -> tuple[list[Evidence], str]:
         state = ctx.state
-        figures = state.document.figures
-        fig = figures[self.index]
-        ctx.deps.on_progress(f"Looking at figure {fig.figure_id} (page {fig.page}) [{self.index + 1}/{len(figures)}]...")
-        prompt = [
-            f"Material systems in this paper:\n{state.systems_text()}\n\n"
-            f"Figure id: {fig.figure_id}" + (" (this image is a TABLE)" if fig.kind == "table" else "") + "\n"
-            f"Most likely caption for this image: {fig.caption or '(none found)'}\n"
-            f"All captions on page {fig.page}: {fig.page_captions}",
-            BinaryContent(data=fig.image_path.read_bytes(), media_type="image/png"),
-        ]
+        group = groups[k]
+        head, ids = group[0], [f.figure_id for f in group]
+        ctx.deps.on_progress(f"Looking at figure {'+'.join(ids)} (page {head.page}) [{k + 1}/{len(groups)}]...")
+        if len(group) == 1:
+            intro = f"Figure id: {head.figure_id}" + (" (this image is a TABLE)" if head.kind == "table" else "")
+        else:
+            intro = (f"These {len(group)} images are crops of one figure, in this order: {', '.join(ids)}. Give every "
+                     "panel the image_id of the image it is in.")
+        prompt: list = [f"Material systems in this paper:\n{state.systems_text()}\n\n{intro}\n"
+                        f"Most likely caption for this figure: {head.caption or '(none found)'}\n"
+                        f"All captions on page {head.page}: {head.page_captions}"]
+        for f in group:
+            if len(group) > 1:
+                prompt.append(f"Image {f.figure_id}:")
+            prompt.append(BinaryContent(data=f.image_path.read_bytes(), media_type="image/png"))
         try:
-            result = await figure_analyst.run(prompt, model=ctx.deps.model, deps=AgentDeps({s.system_id for s in state.systems}),
-                                              usage=ctx.deps.usage)
-            out = result.output
-            for panel in out.panels:
-                ref = f"{out.figure_label}" + (f" panel {panel.panel_label}" if panel.panel_label else "") + f" (page {fig.page})"
-                state.evidence.append(
-                    Evidence(
-                        evidence_id="",  # BuildGraph numbers the evidence once it is merged
-                        system_ids=panel.system_ids,
-                        technique=panel.technique,
-                        source_type="figure",
-                        source_ref=ref,
-                        summary=f"{panel.plot_type}: {panel.description}",
-                        conditions=[f"axes: {', '.join(panel.axes)}"] if panel.axes else [],
-                        quote=fig.caption or None,
-                        context=fig.context,
-                        image_path=str(fig.image_path.relative_to(state.out_dir)),
-                    )
-                )
-        except Exception as e:
-            state.errors.append(f"Figure analysis failed for {fig.figure_id}: {e}")
-            ctx.deps.on_progress(f"  ! {state.errors[-1]}")
-
-        if self.index + 1 < len(figures):
-            return AnalyzeFigure(index=self.index + 1)
-        return BuildGraph()
+            result = await figure_analyst.run(prompt, model=ctx.deps.model, usage=ctx.deps.usage,
+                                              deps=AgentDeps({s.system_id for s in state.systems}, ids))
+        except Exception as e:  # keep going: one failed figure should not lose the others
+            return [], f"Figure analysis failed for {', '.join(ids)}: {e}"
+        out = result.output
+        crops = {f.figure_id: f for f in group}
+        evidence = []
+        for panel in out.panels:
+            fig = crops.get(panel.image_id or "", head)
+            ref = f"{out.figure_label}" + (f" panel {panel.panel_label}" if panel.panel_label else "") + f" (page {fig.page})"
+            evidence.append(Evidence(
+                evidence_id="",  # BuildGraph numbers the evidence once it is merged
+                system_ids=panel.system_ids, technique=panel.technique, source_type="figure", source_ref=ref,
+                summary=f"{panel.plot_type}: {panel.description}",
+                conditions=[f"axes: {', '.join(panel.axes)}"] if panel.axes else [],
+                quote=fig.caption or None, context=fig.context,
+                image_path=str(fig.image_path.relative_to(state.out_dir))))
+        return evidence, ""
 
 
 @dataclass
@@ -204,7 +220,7 @@ class BuildGraph(BaseNode[SummarizerState, SummarizerDeps, PaperGraph]):
 
 def merge_duplicate_evidence(evidence: list[Evidence]) -> list[Evidence]:
     """Series-wide statements ('all samples were measured with Cu-Kα') come back once per system
-    from ExtractTextEvidence. Merge text items with the same technique, quote and summary; items that
+    from ExtractEvidence. Merge text items with the same technique, quote and summary; items that
     quote the same sentence but say something different about each system stay separate."""
     merged: dict[tuple, Evidence] = {}
     out: list[Evidence] = []
@@ -235,8 +251,7 @@ _builder.add(
     _builder.edge_from(_builder.start_node).to(ReadPDF),
     _builder.node(ReadPDF),
     _builder.node(FindSystems),
-    _builder.node(ExtractTextEvidence),
-    _builder.node(AnalyzeFigure),
+    _builder.node(ExtractEvidence),
     _builder.node(BuildGraph),
 )
 summarizer_graph = _builder.build()

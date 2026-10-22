@@ -295,6 +295,52 @@ def test_replays_run_in_parallel_and_unchanged_scripts_are_not_rerun(tmp_path, m
     assert len(calls) == 4  # only the edited script runs again
 
 
+def test_replays_of_concurrent_plans_share_one_cap(tmp_path, monkeypatch):
+    import paper2structure.agents.constructor.agent as constructor
+    from pydantic_ai.workspaces import CommandResult
+
+    running, peak = [0], [0]
+
+    async def fake_replay(script, out_dir, cc):
+        running[0] += 1
+        peak[0] = max(peak[0], running[0])
+        await asyncio.sleep(0.1)
+        running[0] -= 1
+        return CommandResult(exit_code=0, stdout="", stderr="")
+
+    monkeypatch.setattr(constructor, "replay", fake_replay)
+    agent = LLMConstructor(FunctionModel(lambda messages, info: None), None, make_config())
+    plan = PlanSet.model_validate(PT_PLAN).get("P1")
+
+    async def two_plans():
+        runs = []
+        for k in range(2):  # two plans' runs at once, three scripts each
+            deps = constructor.ConstructionDeps(workdir=tmp_path / f"P{k}", plan=plan, cfg=agent.cfg,
+                                                replay_limit=agent.replay_limit())
+            scripts = []
+            for n in range(3):
+                script = deps.workspace / f"build_{n}.py"
+                script.parent.mkdir(parents=True, exist_ok=True)
+                script.write_text(f"print({n})\n")
+                scripts.append(script.resolve())
+            runs.append(constructor.replay_scripts(deps, scripts))
+        await asyncio.gather(*runs)
+
+    asyncio.run(two_plans())
+    assert peak[0] == constructor.MAX_PARALLEL_REPLAYS  # not 2 x the cap
+
+
+def test_schemas_and_workspace_helpers_do_not_load_the_pdf_reader_or_the_coder():
+    import subprocess
+    import sys
+
+    heavy = ("pymupdf", "paper2structure.agents.summarizer.graph", "paper2structure.agents.constructor.agent")
+    code = ("import sys, paper2structure.agents.summarizer.schemas, paper2structure.agents.constructor.workspace, "
+            f"paper2structure.graph.state; print([m for m in {heavy!r} if m in sys.modules])")
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True).stdout
+    assert out.strip().splitlines()[-1] == "[]"
+
+
 def test_api_reference_covers_public_tools():
     ref = api_reference()
     for name in ("build_bulk", "list_terminations", "build_slab", "build_cluster", "carve_nanocrystal",

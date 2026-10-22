@@ -226,7 +226,7 @@ def per_plan_constructor(scripts: dict[str, list[str]], runs: dict[str, int]):
     """A scripted coding agent for one plan per run (the plan in its prompt): the plan's k-th run
     writes scripts[plan][k] (the last one repeats), runs it, checks it and reports it."""
     def fn(messages, info):
-        pid = re.search(r'"plan_id": "(P\d+)"', _user_text(messages)).group(1)
+        pid = re.search(r'"plan_id":"(P\d+)"', _user_text(messages)).group(1)
         done = [p.tool_name for m in messages for p in m.parts if isinstance(p, ToolReturnPart)]
         if not done:
             k = runs[pid] = runs.get(pid, 0) + 1

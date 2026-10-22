@@ -1,6 +1,7 @@
 """Structure-building tools and deterministic validation (no LLM)."""
 import importlib.util
 import json
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -305,6 +306,45 @@ def test_export_poscar_default_and_roundtrip(tmp_path, pt_bulk, co):
     assert meta["mol_id"].count(0) == 2 and meta["fixed"]
     report = validate_structure(model, "s1", max_atoms=5000, min_vacuum=12.0, files=files)
     assert next(c for c in report.checks if c.name == "export_roundtrip").status == "pass"
+
+
+def test_cif_round_trip_reads_the_p1_sites_as_written(tmp_path, pt_bulk):
+    import re
+
+    from paper2structure.tools.geometry_checks import check_roundtrip
+
+    atoms = pt_bulk.repeat((8, 8, 8))  # 2048 atoms: ASE's symmetry-expanding CIF reader takes about 16 s
+    files = {k: str(v) for k, v in export_structure(atoms, tmp_path, "pt", formats=("poscar", "cif", "extxyz")).items()}
+    check = check_roundtrip(atoms, files)
+    assert check.status == "pass" and "cif" in check.detail
+    cif = Path(files["cif"])
+    cif.write_text(re.sub(r"(_cell_length_a\s+)\S+", r"\g<1>40.0", cif.read_text()))
+    assert check_roundtrip(atoms, files).detail == "cif: cell changed"
+
+
+def test_the_gpu_neighbor_list_waits_for_torch_or_very_large_structures(monkeypatch, pt_bulk):
+    import sys
+    import types
+
+    import paper2structure.tools._geometry as geo
+    from ase.neighborlist import neighbor_list
+
+    calls = []
+
+    def fake(atoms, cutoff):
+        calls.append(len(atoms))
+        return neighbor_list("ijD", atoms, cutoff)
+
+    monkeypatch.setattr(geo, "_nvalchemi_pairs", fake)
+    monkeypatch.setattr(geo, "_backend_failed", False)
+    monkeypatch.setenv("P2S_NEIGHBOR_BACKEND", "auto")
+    big = pt_bulk.repeat((8, 8, 8))  # 2048 atoms
+    monkeypatch.delitem(sys.modules, "torch", raising=False)
+    geo.neighbor_pairs(big, 3.0)
+    assert calls == []  # importing torch and warp would cost more than the GPU saves here
+    monkeypatch.setitem(sys.modules, "torch", types.ModuleType("torch"))
+    geo.neighbor_pairs(big, 3.0)
+    assert calls == [2048]
 
 
 def test_validation_flags_overlaps_and_broken_molecules(pt_bulk, co):

@@ -1,5 +1,3 @@
-"""Surface sites and adsorbate placement. Placement generalizes PerovKit's coarse-to-fine rotational
-search (https://github.com/sj-cha/PerovKit) from perovskite X/A sites to arbitrary surface sites."""
 from __future__ import annotations
 
 import dataclasses
@@ -557,8 +555,7 @@ def _vacuum_axes(atoms: Atoms) -> tuple[int, ...]:
 
 
 def restore_vacuum(atoms: Atoms, recenter: bool = True) -> None:
-    """Keep a builder's vacuum after molecules were added (as PerovKit resets the cell height to the
-    adsorbate top plus the original vacuum): a slab's cell grows along c, which moves no atom; with
+    """Keep a builder's vacuum after molecules were added: a slab's cell grows along c, which moves no atom; with
     `recenter`, a particle's box is re-padded along the directions that hold vacuum."""
     axes = _vacuum_axes(atoms)
     if not axes:

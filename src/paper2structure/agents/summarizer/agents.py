@@ -27,6 +27,7 @@ class AgentDeps:
     """Extra information the validators need. Passed with ``agent.run(..., deps=...)``."""
 
     valid_system_ids: set[str] = field(default_factory=set)
+    image_ids: list[str] = field(default_factory=list)  # the images of one figure call (the crops of one figure)
 
 
 TECHNIQUE_GUIDE = technique_guide()
@@ -84,12 +85,14 @@ figure_analyst = Agent(
     defer_model_check=True,
     retries=2,
     instructions=f"""
-You catalogue ONE figure image from a materials-science paper. You get the image, its caption,
-the other captions on the same page, and the list of material systems with IDs.
+You catalogue ONE figure from a materials-science paper. You get its image, or several images when
+the figure was cut out in pieces (each with its id), its caption, the other captions on the same
+page, and the list of material systems with IDs.
 
 Your job is to label the figure so it can be routed to technique specialists, NOT to analyse it.
 For each panel:
 - identify the panel label, the plot type, the technique, and which systems it shows (use the given IDs);
+- when there are several images, give the image_id of the image the panel is in;
 - give the axis labels with units;
 - describe what the panel shows (samples, traces, insets, annotations) in one or two sentences.
 Do NOT read values off the figure: no peak positions, spacings, sizes, or trends. The specialists
@@ -121,4 +124,7 @@ def _validate_text(ctx: RunContext[AgentDeps], output: TextEvidenceOutput) -> Te
 @figure_analyst.output_validator
 def _validate_figure(ctx: RunContext[AgentDeps], output: FigureOutput) -> FigureOutput:
     _check_ids(ctx, [p.system_ids for p in output.panels])
+    images = ctx.deps.image_ids
+    if len(images) > 1 and any(p.image_id not in images for p in output.panels):
+        raise ModelRetry(f"Give every panel the image_id of the image it is in, one of {images}.")
     return output
