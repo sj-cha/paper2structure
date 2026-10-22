@@ -4,18 +4,10 @@ from ....config import TECHNIQUES, canonical_technique
 from ..spec import GENERIC, TechniqueSpec
 from .afm import AFM
 from .dft import DFT
-from .dielectric import DIELECTRIC
-from .dsc import DSC
-from .eds import EDS
-from .ferroelectric import FERROELECTRIC_PE
 from .ftir import FTIR
-from .magnetization import MAGNETIZATION
 from .mossbauer import MOSSBAUER
-from .neutron_diffraction import NEUTRON_DIFFRACTION
 from .nmr import NMR
-from .pl import PL
 from .raman import RAMAN
-from .resistivity import RESISTIVITY
 from .sem import SEM
 from .tem import TEM
 from .tga import TGA
@@ -27,8 +19,8 @@ from .xrd import XRD
 # One spec per canonical technique in paper2structure.config.TECHNIQUES.
 REGISTRY: dict[str, TechniqueSpec] = {
     spec.name: spec for spec in (
-        XRD, NEUTRON_DIFFRACTION, TEM, SEM, AFM, EDS, XPS, XAS, RAMAN, FTIR, UV_VIS, PL, NMR,
-        MOSSBAUER, MAGNETIZATION, DIELECTRIC, RESISTIVITY, FERROELECTRIC_PE, TGA, DSC, DFT,
+        XRD, TEM, SEM, AFM, XPS, XAS, RAMAN, FTIR,
+        UV_VIS, NMR, MOSSBAUER, TGA, DFT,
     )
 }
 assert set(REGISTRY) == set(TECHNIQUES), f"specs and vocabulary differ: {set(REGISTRY) ^ set(TECHNIQUES)}"
@@ -43,4 +35,4 @@ def implemented_specs() -> list[TechniqueSpec]:
     return [spec for spec in REGISTRY.values() if spec.implemented]
 
 
-__all__ = ["FTIR", "GENERIC", "REGISTRY", "SEM", "TEM", "XRD", "find_spec", "implemented_specs"]
+__all__ = ["GENERIC", "REGISTRY", "find_spec", "implemented_specs"]

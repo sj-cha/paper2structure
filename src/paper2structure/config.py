@@ -80,7 +80,7 @@ def _fake_llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
 TechniqueCategory = Literal[
     "diffraction",  # XRD, neutron diffraction, SAED/electron diffraction
     "microscopy",  # SEM, TEM, HRTEM, AFM, STEM
-    "spectroscopy",  # XPS, Raman, FTIR, UV-Vis, EDS/EDX, XAS, Mossbauer, NMR
+    "spectroscopy",  # XPS, Raman, FTIR, UV-Vis, XAS, Mossbauer, NMR
     "magnetic",  # SQUID, VSM, magnetization vs T/H
     "electrical",  # resistivity, dielectric, impedance, ferroelectric P-E loops
     "thermal",  # TGA, DSC, DTA
@@ -94,29 +94,21 @@ TECHNIQUES: dict[str, tuple[TechniqueCategory, tuple[str, ...]]] = {
         "X-ray diffraction", "PXRD", "powder XRD", "SCXRD", "single-crystal XRD", "GIWAXS", "GIXRD",
         "Rietveld refinement", "Rietveld", "Reitveld refinement", "Reitveld", "Le Bail",
     )),
-    "neutron diffraction": ("diffraction", ("ND", "NPD", "neutron powder diffraction")),
     "TEM": ("microscopy", (
         "transmission electron microscopy", "HRTEM", "STEM", "HAADF-STEM", "SAED", "SAD",
         "electron diffraction", "selected area electron diffraction", "cryo-TEM",
     )),
     "SEM": ("microscopy", ("scanning electron microscopy", "FESEM", "SEM-EDS", "SEM-EDX")),
     "AFM": ("microscopy", ("atomic force microscopy",)),
-    "EDS": ("spectroscopy", ("EDX", "energy-dispersive X-ray spectroscopy", "EDS mapping")),
     "XPS": ("spectroscopy", ("X-ray photoelectron spectroscopy",)),
     "XAS": ("spectroscopy", ("X-ray absorption spectroscopy", "XANES", "EXAFS")),
     "Raman": ("spectroscopy", ("Raman spectroscopy",)),
     "FTIR": ("spectroscopy", ("IR", "infrared", "infrared spectroscopy", "ATR-FTIR", "ATR", "IRRAS", "IRAS", "RAIRS",
                               "PM-IRRAS", "DRIFTS")),
     "UV-Vis": ("spectroscopy", ("UV-Vis absorption", "UV-Vis-NIR", "diffuse reflectance")),
-    "PL": ("spectroscopy", ("photoluminescence", "TRPL")),
     "NMR": ("spectroscopy", ("nuclear magnetic resonance", "solid-state NMR", "ssNMR", "MAS NMR")),
     "Mossbauer": ("spectroscopy", ("Mossbauer spectroscopy",)),
-    "magnetization": ("magnetic", ("SQUID", "VSM", "magnetic susceptibility", "M-T", "M-H")),
-    "dielectric": ("electrical", ("dielectric spectroscopy", "impedance", "impedance spectroscopy")),
-    "resistivity": ("electrical", ("electrical resistivity", "electrical transport")),
-    "ferroelectric P-E": ("electrical", ("P-E loop", "P-E hysteresis", "polarization-electric field")),
     "TGA": ("thermal", ("thermogravimetric analysis",)),
-    "DSC": ("thermal", ("differential scanning calorimetry",)),
     "DFT": ("computational", ("density functional theory", "first-principles calculations")),
 }
 
