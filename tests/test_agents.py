@@ -16,6 +16,7 @@ from paper2structure.agents.constructor.workspace import sandbox_available
 from paper2structure.agents.planner import LLMPlanner, PlanningDeps, check_plan_set
 from paper2structure.agents.planner.schemas import PlanSet
 from paper2structure.agents.reviser import LLMReviser
+from paper2structure.agents.reviser.agent import reviser_prompt
 from paper2structure.agents.summarizer import load_graph
 from paper2structure.config import OverridesConfig
 from paper2structure.graph.state import ArtifactStore, ReconstructionState
@@ -303,12 +304,31 @@ def test_api_reference_covers_public_tools():
         assert name in ref
 
 
-def _review(tmp_path, fn, revisions_left, failed=None):
+def _review(tmp_path, fn, revisions_left, failed=None, rebuilds_left=0):
     s, e = _inputs()
     state = ReconstructionState(run_id="t", summary=s, evidence=e, plan_history=[PlanSet.model_validate(PT_PLAN)],
                                 failed_plans=failed or {})
-    decision = asyncio.run(LLMReviser(FunctionModel(fn), None).review(state, ArtifactStore(tmp_path), revisions_left))
+    decision = asyncio.run(LLMReviser(FunctionModel(fn), None).review(state, ArtifactStore(tmp_path), revisions_left,
+                                                                      rebuilds_left=rebuilds_left))
     return decision, state
+
+
+def test_reviser_rebuild_needs_budget_and_known_structures(tmp_path):
+    seen = []
+
+    def fn(messages, info):
+        seen.append([str(p.content) for m in messages for p in m.parts if isinstance(p, RetryPromptPart)])
+        if not _retried(messages):
+            return _final(info, {"action": "rebuild_structures", "reasoning": "scripted",
+                                 "rebuild_structure_ids": ["ghost"], "feedback": "Pb-I 2.2 A: rebuild at 3.15 A"})
+        if not reported(messages):
+            return ModelResponse(parts=[ToolCallPart("write_report", REPORT)])
+        return _final(info, {"action": "stop_inconclusive", "reasoning": "scripted"})
+
+    decision, state = _review(tmp_path, fn, revisions_left=0, rebuilds_left=0)
+    assert decision.action == "stop_inconclusive"
+    assert "no rebuild is left" in seen[1][0] and "unknown structure IDs ['ghost']" in seen[1][0]
+    assert "Rebuilds left: 0 (rebuild_structures is not available)" in reviser_prompt(state, 0, 0)
 
 
 def test_reviser_cannot_revisit_without_budget(tmp_path):

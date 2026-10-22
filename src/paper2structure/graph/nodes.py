@@ -160,7 +160,7 @@ class PlanStructures(BaseNode[ReconstructionState, WorkflowDeps, ReconstructionR
             return FinalizeResults(status="failed")
         st.plan_history.append(plans)
         st.pending_plan_ids = [p.plan_id for p in plans.plans]
-        st.attempt, st.repair_feedback, st.current_ids, st.failed_plans = 0, "", [], {}
+        st.attempt, st.repairs, st.repair_feedback, st.current_ids, st.failed_plans = 0, 0, "", [], {}
         ctx.deps.store.write_json(f"plans/plans_r{st.revision}.json", plans)
         _checkpoint(ctx, "PlanStructures")
         return ConstructStructures()
@@ -185,6 +185,7 @@ class ConstructStructures(BaseNode[ReconstructionState, WorkflowDeps, Reconstruc
                 st.errors.append(f"{pid} (revision {st.revision}, attempt {st.attempt}): {st.failed_plans[pid]}")
             else:
                 self._register(ctx, *result)
+        st.rebuild_ids = []
         log.info("[ConstructStructures] built %d structures; not built: %s", len(st.current_ids),
                  sorted(p for p in pending if p in st.failed_plans) or "none")
         ctx.deps.store.write_json("artifacts.json", st.artifacts)
@@ -211,7 +212,13 @@ class ConstructStructures(BaseNode[ReconstructionState, WorkflowDeps, Reconstruc
         st, store, cfg = ctx.state, ctx.deps.store, ctx.deps.cfg
         st.construction_reports.append(report)
         rebuilt = {b.plan_id for b in report.structures}
-        st.current_ids = [i for i in st.current_ids if st.artifact(i).plan_id not in rebuilt]
+        if st.rebuild_ids:  # a reviewer rebuild replaces the listed structures and those re-emitted by name
+            names = {b.name for b in report.structures}
+            replaced = {i for i in st.current_ids if i in st.rebuild_ids
+                        or (st.artifact(i).plan_id in rebuilt and st.artifact(i).name in names)}
+        else:  # a new plan set or a repair replaces the plan's structures
+            replaced = {i for i in st.current_ids if st.artifact(i).plan_id in rebuilt}
+        st.current_ids = [i for i in st.current_ids if i not in replaced]
         for pid in rebuilt:
             st.failed_plans.pop(pid, None)
         taken = {a.structure_id for a in st.artifacts}
@@ -270,7 +277,8 @@ class ValidateStructures(BaseNode[ReconstructionState, WorkflowDeps, Reconstruct
         unbuilt = [pid for pid in st.pending_plan_ids if pid in st.failed_plans]
         failing.update(unbuilt)
         store.write_json("validation_reports.json", st.validation_reports)
-        if failing and st.attempt < ctx.deps.max_repairs:
+        if failing and st.repairs < ctx.deps.max_repairs:
+            st.repairs += 1
             st.attempt += 1
             st.pending_plan_ids = sorted(failing)
             parts = (["Deterministic validation failed:"] + notes if notes else []) + (
@@ -285,10 +293,11 @@ class ValidateStructures(BaseNode[ReconstructionState, WorkflowDeps, Reconstruct
 
 @dataclass
 class ScientificRevision(BaseNode[ReconstructionState, WorkflowDeps, ReconstructionResult]):
-    """Agent 5: accept or stop (after writing the final report), or send the run back through
-    evidence -> planning -> construction."""
+    """Agent 5: accept or stop (after writing the final report), send structures whose plan stands
+    back to construction (rebuild, bounded by max_rebuilds), or send the run back through
+    evidence -> planning -> construction (bounded by max_revisions)."""
 
-    async def run(self, ctx: Ctx) -> AnalyzeEvidence | FinalizeResults:
+    async def run(self, ctx: Ctx) -> AnalyzeEvidence | ConstructStructures | FinalizeResults:
         _enter(ctx, "ScientificRevision")
         st, deps = ctx.state, ctx.deps
         current = [st.artifact(i) for i in st.current_ids]
@@ -297,7 +306,7 @@ class ScientificRevision(BaseNode[ReconstructionState, WorkflowDeps, Reconstruct
             images = {a.structure_id: (deps.store.root / a.image).read_bytes() for a in current[:4] if a.image}
         left = deps.max_revisions - st.revision
         try:
-            decision = await deps.reviser.review(st, deps.store, left, images)
+            decision = await deps.reviser.review(st, deps.store, left, images, deps.max_rebuilds - st.rebuilds)
         except Exception as e:  # noqa: BLE001
             st.errors.append(f"review failed: {type(e).__name__}: {e}")
             _checkpoint(ctx, "ScientificRevision")
@@ -305,6 +314,19 @@ class ScientificRevision(BaseNode[ReconstructionState, WorkflowDeps, Reconstruct
         st.revision_history.append(decision)
         deps.store.write_json("revision_history.json", st.revision_history)
         _checkpoint(ctx, "ScientificRevision")
+        if decision.action == "rebuild_structures":
+            st.rebuilds += 1
+            st.attempt += 1
+            st.repairs = 0
+            st.rebuild_ids = list(decision.rebuild_structure_ids)
+            st.pending_plan_ids = sorted({st.artifact(i).plan_id for i in st.rebuild_ids})
+            issues = [f"- {v.structure_id}: {'; '.join(v.issues)}" for v in decision.verdicts
+                      if v.structure_id in st.rebuild_ids and v.issues]
+            st.repair_feedback = "\n".join([
+                f"The reviewer asks to rebuild {', '.join(st.rebuild_ids)}: the plan stands, the built structure "
+                "does not realize it. Fix the scripts (in previous/) accordingly and report every structure of the "
+                "plan again, the ones not listed unchanged.", decision.feedback, *issues])
+            return ConstructStructures()
         if decision.action == "revisit_evidence":
             if left > 0:
                 st.revision += 1

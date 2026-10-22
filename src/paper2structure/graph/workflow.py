@@ -21,7 +21,8 @@ NODES = (SummarizePaper, AnalyzeEvidence, PlanStructures, ConstructStructures, V
 
 def build_graph():
     """SummarizePaper (PDF -> PaperGraph) -> AnalyzeEvidence (characterization reports) -> PlanStructures
-    -> ConstructStructures <-> ValidateStructures -> ScientificRevision -> (AnalyzeEvidence | FinalizeResults)."""
+    -> ConstructStructures <-> ValidateStructures -> ScientificRevision -> (ConstructStructures (rebuild) |
+    AnalyzeEvidence | FinalizeResults)."""
     g = GraphBuilder(state_type=ReconstructionState, deps_type=WorkflowDeps, output_type=ReconstructionResult)
 
     @g.step
@@ -33,7 +34,7 @@ def build_graph():
 
 
 def build_deps(cfg: Paper2StructureConfig, output_dir: str | Path, seed: int, max_revisions: int = 1,
-               max_repairs: int = 2, models: Optional[dict] = None) -> WorkflowDeps:
+               max_repairs: int = 2, models: Optional[dict] = None, max_rebuilds: int = 2) -> WorkflowDeps:
     """Agents and run directory for one run. `models` may map "paper" (Agents 1-2), "planner",
     "constructor" and "reviser" to pydantic-ai Model instances or names (tests, "dry-run");
     otherwise cfg.campaign.model is used."""
@@ -47,7 +48,8 @@ def build_deps(cfg: Paper2StructureConfig, output_dir: str | Path, seed: int, ma
                          read_scripts=cfg.revision.read_scripts)
     return WorkflowDeps(cfg=cfg, store=ArtifactStore(output_dir), planner=planner, constructor=constructor,
                         reviser=reviser, seed=int(seed), paper_model=models.get("paper"),
-                        max_revisions=int(max_revisions), max_repairs=int(max_repairs))
+                        max_revisions=int(max_revisions), max_repairs=int(max_repairs),
+                        max_rebuilds=int(max_rebuilds))
 
 
 async def run_workflow(deps: WorkflowDeps, run_id: Optional[str] = None) -> ReconstructionResult:

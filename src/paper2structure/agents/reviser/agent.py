@@ -24,6 +24,7 @@ class RevisionDeps:
     state: ReconstructionState
     store: ArtifactStore
     revisions_left: int
+    rebuilds_left: int = 0
     report_written: bool = False  # write_report was called in this review
 
     @property
@@ -88,30 +89,39 @@ class LLMReviser(StructuredAgent):
             deps = ctx.deps
             problems = []
             known = deps.structure_ids
-            unknown = (set(output.accepted_structure_ids) | {v.structure_id for v in output.verdicts}) - known
+            unknown = (set(output.accepted_structure_ids) | set(output.rebuild_structure_ids)
+                       | {v.structure_id for v in output.verdicts}) - known
             if unknown:
                 problems.append(f"unknown structure IDs {sorted(unknown)} (valid: {sorted(known)})")
             if output.action == "revisit_evidence" and deps.revisions_left <= 0:
                 problems.append("no revision budget is left: choose accept_candidates or stop_inconclusive")
             if output.action == "revisit_evidence" and not output.feedback.strip():
                 problems.append("revisit_evidence needs concrete feedback for the planning and construction agents")
+            if output.action == "rebuild_structures":
+                if deps.rebuilds_left <= 0:
+                    problems.append("no rebuild is left: choose accept_candidates, revisit_evidence or stop_inconclusive")
+                if not output.rebuild_structure_ids:
+                    problems.append("rebuild_structures needs rebuild_structure_ids")
+                if not output.feedback.strip():
+                    problems.append("rebuild_structures needs feedback saying what is wrong in each structure and what "
+                                    "the rebuilt one must show")
             if output.action == "accept_candidates" and not output.accepted_structure_ids:
                 problems.append("accept_candidates needs the accepted structure IDs")
             if (not known and deps.state.failed_plans and deps.revisions_left > 0
                     and output.action != "revisit_evidence"):
                 problems.append("no structure could be built but a revision is left: choose revisit_evidence and "
                                 "explain the construction failures in feedback so the planner can fix the plans")
-            if output.action != "revisit_evidence" and not deps.report_written:
+            if output.action in ("accept_candidates", "stop_inconclusive") and not deps.report_written:
                 problems.append(f"{output.action} ends the run: call write_report first")
             if problems:
                 raise ModelRetry("Fix the decision:\n- " + "\n- ".join(problems))
             return output
 
     async def review(self, state: ReconstructionState, store: ArtifactStore, revisions_left: int,
-                     images: dict[str, bytes] | None = None) -> RevisionDecision:
+                     images: dict[str, bytes] | None = None, rebuilds_left: int = 0) -> RevisionDecision:
         """Review the current structures in `state`; `images` maps structure IDs to rendered views."""
-        deps = RevisionDeps(state=state, store=store, revisions_left=revisions_left)
-        text = reviser_prompt(state, revisions_left)
+        deps = RevisionDeps(state=state, store=store, revisions_left=revisions_left, rebuilds_left=rebuilds_left)
+        text = reviser_prompt(state, revisions_left, rebuilds_left)
         prompt: list = [text]
         for sid, png in (images or {}).items():
             prompt += [f"Rendered top and side views of {sid}:", BinaryContent(data=png, media_type="image/png")]
@@ -123,7 +133,7 @@ class LLMReviser(StructuredAgent):
         return await self.arun(prompt if images else text, deps=deps, **extra)
 
 
-def reviser_prompt(state: ReconstructionState, revisions_left: int) -> str:
+def reviser_prompt(state: ReconstructionState, revisions_left: int, rebuilds_left: int = 0) -> str:
     parts = ["## Paper summary (material systems, text and figure evidence)",
              state.summary.model_dump_json(indent=1, exclude={"nodes", "edges"}),
              "## Characterization reports (per technique)", state.evidence.model_dump_json(indent=1),
@@ -144,6 +154,7 @@ def reviser_prompt(state: ReconstructionState, revisions_left: int) -> str:
         ]))
     if state.failed_plans:
         parts += ["## Plans that could not be built"] + [f"- {k}: {v}" for k, v in state.failed_plans.items()]
+    parts.append(f"Rebuilds left: {rebuilds_left}" + ("" if rebuilds_left > 0 else " (rebuild_structures is not available)"))
     parts.append(f"Revisions left: {revisions_left}"
                  + ("" if revisions_left > 0 else " (revisit_evidence is not available)"))
     return "\n\n".join(parts)
@@ -164,7 +175,10 @@ snapshot and the plan it realizes.
 
 Rules
 - Deterministic validation results are authoritative for geometry (overlaps, broken molecules,
-  vacuum). Judge resemblance to the paper qualitatively; never invent numerical agreement scores
+  vacuum, bond-valence sums of the framework cations, like-charge contacts). Also check what they
+  cannot see: compare the bond lengths and coordination numbers in each structure's description
+  with what the material requires (e.g. octahedral cations six-coordinated, sensible
+  cation-anion distances). Judge resemblance to the paper qualitatively; never invent numerical agreement scores
   and never treat the authors' proposed mechanism as proven.
 - Accepting a structure means it is a reasonable starting structure for simulation, not that it is
   experimentally established. List the observations it does not explain and the assumptions it
@@ -175,6 +189,13 @@ Rules
 Actions
 - accept_candidates: one or more structures pass validation and represent the paper's system;
   list them in accepted_structure_ids. Keep several when the evidence cannot tell them apart.
+- rebuild_structures: a plan is right but a built structure is not: wrong bond lengths or
+  coordination, wrong composition or charge, missing or misplaced components, a geometry that
+  does not realize the plan's description. List the structures in rebuild_structure_ids and write
+  feedback naming, for each, what is wrong (with the measured values) and what the rebuilt
+  structure must show. The Construction agent rebuilds their plans with your feedback and its
+  previous scripts, without re-planning; structures you do not list are kept. Prefer it to
+  revisit_evidence whenever the hypothesis stands.
 - revisit_evidence: an important feature of the paper is missing or wrong in the structures, or
   plans could not be built, and re-planning from the same evidence could fix it. The planner gets
   your feedback with the paper summary and the characterization reports (which are kept, not
@@ -186,7 +207,7 @@ Actions
 Report
 - accept_candidates and stop_inconclusive end the run: call write_report first with your summary,
   assessment and next steps. Write them for a computational scientist who will simulate the
-  accepted structures. revisit_evidence does not need a report."""
+  accepted structures. rebuild_structures and revisit_evidence do not need a report."""
 
 
 def save_report(state: ReconstructionState, store: ArtifactStore) -> Path:
@@ -249,6 +270,8 @@ def save_report(state: ReconstructionState, store: ArtifactStore) -> Path:
     lines += ["", "## 6. Revision decisions"]
     for k, d in enumerate(state.revision_history):
         lines += [f"- Review {k}: **{d.action}** - {d.reasoning}"]
+        if d.rebuild_structure_ids:
+            lines.append(f"  - rebuild: {', '.join(d.rebuild_structure_ids)}")
         if d.feedback:
             lines.append(f"  - feedback: {d.feedback}")
         for v in d.verdicts:

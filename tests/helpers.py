@@ -131,9 +131,9 @@ def reported(messages) -> bool:
 
 
 def reviser_model(actions: list[str]) -> FunctionModel:
-    """Returns the given actions in order; accepts every structure it is shown and writes the report
-    before a decision that ends the run. When the prompt says no revisions are left,
-    revisit_evidence turns into stop_inconclusive."""
+    """Returns the given actions in order; accepts (or asks to rebuild) every structure it is shown
+    and writes the report before a decision that ends the run. When the prompt says no revisions
+    (rebuilds) are left, revisit_evidence (rebuild_structures) turns into stop_inconclusive."""
     calls = {"n": 0}
 
     def fn(messages, info: AgentInfo) -> ModelResponse:
@@ -143,13 +143,19 @@ def reviser_model(actions: list[str]) -> FunctionModel:
         action = actions[min(calls["n"], len(actions) - 1)]
         if action == "revisit_evidence" and "Revisions left: 0" in text:
             action = "stop_inconclusive"
-        if action != "revisit_evidence" and not reported(messages):
+        if action == "rebuild_structures" and "Rebuilds left: 0" in text:
+            action = "stop_inconclusive"
+        if action in ("accept_candidates", "stop_inconclusive") and not reported(messages):
             return ModelResponse(parts=[ToolCallPart("write_report", REPORT)])
         if not retried:
             calls["n"] += 1
+        feedback = {"revisit_evidence": "use bridge sites as well",
+                    "rebuild_structures": "scripted rebuild: the CO must stand upright"}.get(action, "")
         payload = {"action": action, "reasoning": f"scripted {action}",
-                   "verdicts": [{"structure_id": i, "resembles_paper": action == "accept_candidates"} for i in ids],
+                   "verdicts": [{"structure_id": i, "resembles_paper": action == "accept_candidates",
+                                 "issues": ["CO tilted"] if action == "rebuild_structures" else []} for i in ids],
                    "accepted_structure_ids": ids if action == "accept_candidates" else [],
-                   "feedback": "use bridge sites as well" if action == "revisit_evidence" else ""}
+                   "rebuild_structure_ids": ids if action == "rebuild_structures" else [],
+                   "feedback": feedback}
         return _final(info, payload)
     return FunctionModel(fn)

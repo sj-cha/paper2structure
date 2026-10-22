@@ -26,6 +26,7 @@ stateDiagram-v2
   ConstructStructures --> ValidateStructures
   ValidateStructures --> ConstructStructures: hard validation failure or plan not built (max_repairs)
   ValidateStructures --> ScientificRevision
+  ScientificRevision --> ConstructStructures: rebuild_structures (max_rebuilds)
   ScientificRevision --> AnalyzeEvidence: revisit_evidence (max_revisions)
   ScientificRevision --> FinalizeResults: accept_candidates / stop_inconclusive
   FinalizeResults --> [*]
@@ -38,7 +39,7 @@ stateDiagram-v2
 | PlanStructures | Agent 3, `LLMPlanner` | competing structural hypotheses as `StructurePlan`s: the material systems modeled (`system_ids`), a free-form model type and construction brief, named crystals (space group + Wyckoff positions + lattice with provenance), optional surface/nanocrystal/adsorbate/solvent specs, measurable targets, evidence IDs (summarizer `E004` or technique-qualified observations `XRD:O3`; unknown IDs go back to the planner), assumptions |
 | ConstructStructures | Agent 4, `LLMConstructor` | one Coder run per plan, concurrently, each in its own sandboxed workspace and request budget, writes and runs its own Python; every reported structure is rebuilt by running its script alone from scratch and must pass the validation gate; a run that fails or reports the plan as not built records the reason |
 | ValidateStructures | deterministic | the same gate checks plus the export round trip; hard failures and plans not built go back to construction with the reasons and the last attempt's scripts |
-| ScientificRevision | Agent 5, `LLMReviser` | accept / stop / revisit evidence (back through AnalyzeEvidence -> planning -> construction); can read the build scripts; writes the final report (`write_report` tool) before ending the run |
+| ScientificRevision | Agent 5, `LLMReviser` | accept / stop / rebuild structures (the plan stands, the build is wrong: back to construction with its feedback and the previous scripts; the structures it does not list are kept) / revisit evidence (back through AnalyzeEvidence -> planning -> construction); can read the build scripts; writes the final report (`write_report` tool) before ending the run |
 
 The graph is built from `BaseNode` classes whose `run` return annotations are the edges
 (`src/paper2structure/graph/`). Each run renders its own diagram to `workflow.mmd`. When an agent
@@ -214,7 +215,8 @@ flags set the run-level values and override the YAML where they overlap.
 | `--no_figures` | the summarizer skips figure cataloguing, so Agent 2 reads only the text |
 | `--max_figures` | max figure regions cut from the PDF (default 30) |
 | `--max_revisions` | loops the reviewer may take back through evidence -> planning -> construction (default 1) |
-| `--max_repairs` | construction retries after hard validation failures or unbuilt plans (default 2) |
+| `--max_rebuilds` | rounds the reviewer may send structures back to construction under the same plans (default 2) |
+| `--max_repairs` | construction retries after hard validation failures or unbuilt plans, per construction request (default 2) |
 | `--gpu` | GPU index for neighbor lists in the workflow and in the sandboxed scripts (sets `CUDA_VISIBLE_DEVICES`, `construction.gpu`) |
 | `--skip_preflight` | skip the connectivity checks of Agents 3-5 |
 

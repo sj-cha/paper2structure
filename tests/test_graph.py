@@ -6,8 +6,8 @@ import re
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 
-from helpers import (BAD_SCRIPT, GOOD_SCRIPT, PT_PLAN, coding_model, constructor_model, make_config, planner_model,
-                     reviser_model)
+from helpers import (BAD_SCRIPT, GOOD_SCRIPT, PT_PLAN, REPORT, _final, _user_text, coding_model, constructor_model,
+                     make_config, planner_model, reported, reviser_model)
 from paper2structure.agents.structured_agent import StructuredAgent
 from paper2structure.graph.workflow import build_deps, build_graph, run_workflow
 
@@ -15,10 +15,10 @@ LINEAR = ["SummarizePaper", "AnalyzeEvidence", "PlanStructures", "ConstructStruc
           "ScientificRevision", "FinalizeResults"]
 
 
-def _run(tmp_path, scripts, actions, max_revisions=1, max_repairs=2, planner=None):
+def _run(tmp_path, scripts, actions, max_revisions=1, max_repairs=2, planner=None, max_rebuilds=2):
     deps = build_deps(make_config(), tmp_path / "run", seed=7, max_revisions=max_revisions, max_repairs=max_repairs,
                       models={"planner": planner or planner_model(), "constructor": constructor_model(scripts),
-                              "reviser": reviser_model(actions)})
+                              "reviser": reviser_model(actions)}, max_rebuilds=max_rebuilds)
     result = asyncio.run(run_workflow(deps, run_id="test"))
     final = sorted((tmp_path / "run" / "state").glob("*_FinalizeResults.json"))[-1]
     return result, json.loads(final.read_text())
@@ -112,6 +112,51 @@ def test_graph_edges():
     into_agent1 = [src for src, dst in edges if dst == "SummarizePaper"]
     assert into_agent1 == ["start"]  # Agent 1 runs once
     decision = next(dst for src, dst in edges if src == "ScientificRevision")
-    assert {dst for src, dst in edges if src == decision} == {"AnalyzeEvidence", "FinalizeResults"}
+    assert {dst for src, dst in edges if src == decision} == {"AnalyzeEvidence", "ConstructStructures", "FinalizeResults"}
     validate = next(dst for src, dst in edges if src == "ValidateStructures")
     assert {dst for src, dst in edges if src == validate} == {"ConstructStructures", "ScientificRevision"}
+
+
+def test_rebuild_goes_back_to_construction_without_replanning(tmp_path):
+    result, state = _run(tmp_path, [GOOD_SCRIPT, GOOD_SCRIPT], ["rebuild_structures", "accept_candidates"])
+    assert result.status == "accepted" and state["revision"] == 0 and state["rebuilds"] == 1
+    assert state["node_history"] == LINEAR[:6] + ["ConstructStructures", "ValidateStructures"] + LINEAR[5:]
+    assert len(state["plan_history"]) == 1  # no re-planning
+    first, second = state["revision_history"][0]["rebuild_structure_ids"][0], result.accepted_structure_ids[0]
+    assert first.endswith("_r0a0") and second.endswith("_r0a1") and state["current_ids"] == [second]
+    assert "rebuild" in state["repair_feedback"] and "CO must stand upright" in state["repair_feedback"]
+    assert "CO tilted" in state["repair_feedback"]  # the reviewer's per-structure issues
+    previous = tmp_path / "run" / "construction" / "r0_a1" / "P1" / "workspace" / "previous" / f"{first}.py"
+    assert previous.exists()  # the rebuild starts from the script that built the rejected structure
+    report = (tmp_path / "run" / "final_report.md").read_text()
+    assert f"rebuild: {first}" in report
+
+
+def test_rebuilds_are_bounded(tmp_path):
+    result, state = _run(tmp_path, [GOOD_SCRIPT], ["rebuild_structures"], max_rebuilds=1)
+    assert result.status == "inconclusive" and state["rebuilds"] == 1  # the second request turns into a stop
+    assert [d["action"] for d in state["revision_history"]] == ["rebuild_structures", "stop_inconclusive"]
+
+
+def test_rebuild_keeps_the_structures_the_reviewer_did_not_list(tmp_path):
+    two = GOOD_SCRIPT + 'emit(model, name="pt111_co_copy", plan_id="P1")\n'  # the plan's two structures
+    calls = []
+
+    def reviewer(messages, info):
+        ids = re.findall(r"### (\S+) \(plan", _user_text(messages))
+        calls.append(ids)
+        if len(calls) == 1:  # rebuild one of the two
+            target = next(i for i in ids if i.startswith("pt111_co_top"))
+            return _final(info, {"action": "rebuild_structures", "reasoning": "one is wrong",
+                                 "rebuild_structure_ids": [target], "feedback": "fix the top-site CO"})
+        if not reported(messages):
+            return ModelResponse(parts=[ToolCallPart("write_report", REPORT)])
+        return _final(info, {"action": "accept_candidates", "reasoning": "fine", "accepted_structure_ids": ids})
+
+    deps = build_deps(make_config(), tmp_path / "run", seed=7,
+                      models={"planner": planner_model(), "constructor": constructor_model([two, GOOD_SCRIPT]),
+                              "reviser": coding_model(reviewer)})
+    result = asyncio.run(run_workflow(deps, run_id="keep"))
+    assert result.status == "accepted"
+    assert sorted(calls[0]) == ["pt111_co_copy_r0a0", "pt111_co_top_r0a0"]
+    assert sorted(result.accepted_structure_ids) == ["pt111_co_copy_r0a0", "pt111_co_top_r0a1"]  # copy kept

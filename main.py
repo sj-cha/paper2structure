@@ -50,6 +50,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max_figures", type=int, default=None, help="max figure regions cut from the PDF")
     p.add_argument("--max_revisions", type=int, default=1,
                    help="loops the reviewer may take back through evidence -> planning -> construction")
+    p.add_argument("--max_rebuilds", type=int, default=2,
+                   help="rounds the reviewer may send structures back to construction under the same plans")
     p.add_argument("--max_repairs", type=int, default=2,
                    help="construction retries for structures failing deterministic validation")
     p.add_argument("--gpu", type=int, default=None,
@@ -124,12 +126,12 @@ def main() -> int:
         json.dump(snapshot, fh, indent=2)
 
     deps = build_deps(cfg, args.output_dir, seed=args.random_seed, max_revisions=args.max_revisions,
-                      max_repairs=args.max_repairs)
+                      max_repairs=args.max_repairs, max_rebuilds=args.max_rebuilds)
     cc = cfg.construction
     print(f"[paper2structure] paper={inputs.pdf or inputs.paper_graph} out={args.output_dir} "
           f"model={cfg.campaign.model or 'default'} seed={args.random_seed} "
           f"techniques={cfg.characterization.techniques or 'all found'} "
-          f"budget(revisions={args.max_revisions}, repairs={args.max_repairs}, "
+          f"budget(revisions={args.max_revisions}, rebuilds={args.max_rebuilds}, repairs={args.max_repairs}, "
           f"construction_requests={cc.max_requests}) sandbox={cc.sandbox}", flush=True)
 
     if cc.sandbox == "bubblewrap":

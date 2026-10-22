@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-RevisionAction = Literal["accept_candidates", "revisit_evidence", "stop_inconclusive"]
+RevisionAction = Literal["accept_candidates", "rebuild_structures", "revisit_evidence", "stop_inconclusive"]
 
 
 class StructureVerdict(BaseModel):
@@ -15,13 +15,17 @@ class StructureVerdict(BaseModel):
 
 
 class RevisionDecision(BaseModel):
-    """Agent 5 output. revisit_evidence routes back through Agent 2 -> Agent 3 -> Agent 4."""
+    """Agent 5 output. rebuild_structures sends structures back to Agent 4 (the plan stands);
+    revisit_evidence routes back through Agent 2 -> Agent 3 -> Agent 4."""
     model_config = ConfigDict(extra="forbid")
     action: RevisionAction
     reasoning: str
     verdicts: list[StructureVerdict] = Field(default_factory=list)
     accepted_structure_ids: list[str] = Field(default_factory=list)
-    feedback: str = Field("", description="concrete instructions for re-examining evidence and re-planning")
+    rebuild_structure_ids: list[str] = Field(default_factory=list,
+                                             description="structures to rebuild under their plans (rebuild_structures)")
+    feedback: str = Field("", description="concrete instructions: what is wrong and what the rebuilt structures or "
+                                          "the new plans must show")
     unresolved: list[str] = Field(default_factory=list, description="observations/assumptions left unexplained")
 
 

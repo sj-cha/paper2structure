@@ -33,7 +33,10 @@ class ReconstructionState(BaseModel):
     evidence_version: int = 0
     plan_history: list[PlanSet] = Field(default_factory=list)
     revision: int = 0  # loops taken back through evidence -> planning -> construction
-    attempt: int = 0  # construction attempts within the current revision
+    attempt: int = 0  # construction rounds within the current revision (repairs and rebuilds)
+    repairs: int = 0  # validation repairs since the last plan set or rebuild request
+    rebuilds: int = 0  # rebuild rounds the reviewer asked for in this run
+    rebuild_ids: list[str] = Field(default_factory=list)  # the structures the current construction round rebuilds
     pending_plan_ids: list[str] = Field(default_factory=list)
     artifacts: list[StructureArtifact] = Field(default_factory=list)  # every version ever built
     current_ids: list[str] = Field(default_factory=list)  # structures of the current revision
@@ -95,3 +98,4 @@ class WorkflowDeps:
     paper_model: Model | str | None = None  # Agents 1-2 (summarizer, characterization); None = cfg.campaign.model
     max_revisions: int = 1
     max_repairs: int = 2
+    max_rebuilds: int = 2
