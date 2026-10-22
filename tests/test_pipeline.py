@@ -17,7 +17,8 @@ from pydantic_ai.messages import ModelResponse, RetryPromptPart, ToolCallPart, U
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from helpers import GOOD_SCRIPT, PT_PLAN, coding_model, constructor_model, reviser_model
-from paper2structure.agents.characterization import CharacterizationReport, ExperimentalEvidence, Observation
+from paper2structure.agents.characterization import (REGISTRY, CharacterizationReport, ExperimentalEvidence,
+                                                     Observation, TechniqueSpec)
 from paper2structure.agents.planner import LLMPlanner, PlanningDeps, PlanSet, check_plan_set
 from paper2structure.agents.summarizer import Evidence, MaterialSystem, PaperGraph, load_graph
 from paper2structure.agents.summarizer.pdf_reader import read_pdf
@@ -207,7 +208,13 @@ def test_pdf_to_structures_in_one_graph_run(tmp_path, paper_pdf):
     assert "| XRD | phase | S1 | single phase | low |" in report
 
 
-def test_characterize_runs_one_agent_per_implemented_technique(tmp_path):
+@pytest.fixture
+def nmr_stub(monkeypatch):
+    """NMR as a stub spec (implemented=False), whatever the registry holds."""
+    monkeypatch.setitem(REGISTRY, "NMR", TechniqueSpec(name="NMR", implemented=False))
+
+
+def test_characterize_runs_one_agent_per_implemented_technique(tmp_path, nmr_stub):
     paper, paper_dir, image = _mixed_paper(tmp_path)
     calls, out = [], tmp_path / "characterization"
     ev = asyncio.run(characterize(paper, paper_dir, out, _recording_dry_run(calls), CharacterizationConfig()))
@@ -228,7 +235,7 @@ def test_characterize_runs_one_agent_per_implemented_technique(tmp_path):
     assert loaded.reports == ev.reports and loaded.ids == ev.ids
 
 
-def test_characterize_stubs_and_technique_filter(tmp_path):
+def test_characterize_stubs_and_technique_filter(tmp_path, nmr_stub):
     paper, paper_dir, _ = _mixed_paper(tmp_path)
     dry = get_model("dry-run")
 
