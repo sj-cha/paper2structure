@@ -311,10 +311,36 @@ def _depth(atoms: Atoms, sub: np.ndarray) -> np.ndarray:
     return depth
 
 
+def _loose_organics(sym: np.ndarray, i: np.ndarray, j: np.ndarray, ratio: np.ndarray, sub: np.ndarray,
+                    bond_scale: float) -> list[tuple[int, int]]:
+    """C-H and N-H bonds of the substrate in organic fragments that no heavy atom bonds to a metal:
+    molecules left unregistered. Organic parts bonded into the framework (the linkers of a
+    metal-organic framework, the ligands of a coordination polymer) belong to it. Fragments are
+    joined through heavy atoms only, so a hydrogen crowding an anion does not bind its molecule."""
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+
+    from paper2structure.tools._geometry import cation_elements
+
+    bonded = ratio < bond_scale
+    metal = sub & np.isin(sym, list(cation_elements(sym[sub])))
+    heavy = sub & ~metal & (sym != "H")
+    hh = bonded & heavy[i] & heavy[j]
+    _, label = connected_components(coo_matrix((np.ones(int(hh.sum())), (i[hh], j[hh])), shape=(len(sym),) * 2),
+                                    directed=False)
+    bound = set(label[i[bonded & heavy[i] & metal[j]]]) | set(label[j[bonded & heavy[j] & metal[i]]])
+    out = []
+    for a, b in zip(i[bonded], j[bonded]):
+        if sub[a] and sub[b] and {sym[a], sym[b]} in ({"C", "H"}, {"N", "H"}):
+            if label[a if sym[a] != "H" else b] not in bound:
+                out.append((int(a), int(b)))
+    return out
+
+
 def _crystal_chemistry(atoms: Atoms, i: np.ndarray, j: np.ndarray, d: np.ndarray, ratio: np.ndarray, ids: np.ndarray,
                        given: dict[str, int], bvs_warn: float, bvs_fail: float, bond_share_warn: float,
                        like_contact_warn: float, like_contact_fail: float, min_depth: float = 4.0,
-                       min_cn: int = 3) -> list[CheckResult]:
+                       min_cn: int = 3, loose_organics: bool = False) -> list[CheckResult]:
     """Crystal-chemistry checks of an ionic substrate (one with anion formers), from the shared
     neighbor list (unordered pairs i < j):
 
@@ -329,7 +355,10 @@ def _crystal_chemistry(atoms: Atoms, i: np.ndarray, j: np.ndarray, d: np.ndarray
       element takes its most common one, and only beyond 100% fails). A single bond carrying
       more than bond_share_warn of its cation's valence warns, more than all of it fails. Large
       cations in big cages (Cs, Sr, Ba, Bi on perovskite A sites) are under-bonded with generic
-      parameters and are not framework cations."""
+      parameters and are not framework cations. Bonds to the electronegative atoms of registered
+      molecules count (a carboxylate O on a metal), and organic parts bonded into the framework
+      take part as anions (their O, N) or not at all (C, H); unregistered molecules in the substrate
+      (loose_organics) leave it unassessed."""
     sym = np.array(atoms.get_chemical_symbols())
     sub = ids < 0
     anion_el = {e for e in set(sym[sub]) if e in ANION_FORMERS}
@@ -354,16 +383,17 @@ def _crystal_chemistry(atoms: Atoms, i: np.ndarray, j: np.ndarray, d: np.ndarray
                         f"{_pair_text(atoms, int(i[k]), int(j[k]), float(d[k]))} (x{ratio[k]:.2f})" for k in hits[:5]))
             if len(hits) else f"no like-charge pair below {like_contact_warn} x covalent sum"))
 
-    if (sub & np.isin(sym, ["C"])).any() and (sub & np.isin(sym, ["H"])).any():
+    if loose_organics:
         checks.append(CheckResult(
             name="bond_valence", status="warn",
-            detail="not assessed: organic atoms (C, H) are part of the substrate; register the molecules with "
+            detail="not assessed: unregistered organic molecules are part of the substrate; register them with "
                    "add_molecule(..., role='guest') (or as adsorbates) so the inorganic framework can be checked"))
         return checks
 
-    # cation -> anion bonds, both orientations of the unordered pairs
+    # cation -> anion bonds, both orientations of the unordered pairs; the anion may be a molecule's
+    # electronegative atom bound to the framework cation (a carboxylate O on a metal)
     a = np.concatenate([i, j]); b = np.concatenate([j, i]); dist = np.concatenate([d, d])
-    bond = is_cation[a] & is_anion[b]
+    bond = is_cation[a] & (is_anion[b] | ((ids[b] >= 0) & np.isin(sym[b], list(ANION_FORMERS))))
     a, b, dist = a[bond], b[bond], dist[bond]
     r0 = np.array([_r0(x, y) or np.nan for x, y in zip(sym[a], sym[b])])
     s = np.where(np.isfinite(r0), np.exp((r0 - dist) / _BV_B), 0.0)
@@ -570,16 +600,16 @@ def validate_structure(atoms: Atoms, structure_id: str, *, max_atoms: int, min_v
 
     sub = ids < 0
     sym = atoms.get_chemical_symbols()
-    organic = [(int(a), int(b)) for a, b, q in zip(i, j, ratio)
-               if sub[a] and sub[b] and q < bond_scale and {sym[a], sym[b]} in ({"C", "H"}, {"N", "H"})]
+    organic = _loose_organics(np.array(sym), i, j, ratio, sub, bond_scale)
     if organic:
         a, b = organic[0]
         checks.append(CheckResult(
             name="unregistered_molecules", status="fail",
-            detail=f"{len(organic)} C-H/N-H bonds in the substrate, e.g. "
+            detail=f"{len(organic)} C-H/N-H bonds in substrate fragments not bonded to a metal, e.g. "
                    f"{_pair_text(atoms, a, b, float(atoms.get_distance(a, b, mic=True)))}: molecules must be RDKit "
-                   "conformers registered with place_adsorbates, add_solvent or add_molecule (role 'adsorbate', "
-                   "'solvent' or 'guest')"))
+                   "conformers registered with place_adsorbates, add_solvent, add_molecule (role 'adsorbate', "
+                   "'solvent' or 'guest') or fill_cavities; organic parts bonded into the framework (linkers of a "
+                   "metal-organic framework) may stay in it"))
     if len(atoms) > 1:
         near = ratio < _BV_REACH
         linked = np.bincount(np.concatenate([i[near], j[near]]), minlength=len(atoms))
@@ -627,7 +657,7 @@ def validate_structure(atoms: Atoms, structure_id: str, *, max_atoms: int, min_v
 
     given = {**parse_oxidation_states(str(atoms.info.get("p2s_oxidation_states", ""))), **(oxidation_states or {})}
     checks.extend(_crystal_chemistry(atoms, i, j, d, ratio, ids, given, bvs_warn, bvs_fail, bond_share_warn,
-                                     like_contact_warn, like_contact_fail))
+                                     like_contact_warn, like_contact_fail, loose_organics=bool(organic)))
 
     if charge_neutrality:
         net, how = formal_charge(atoms, oxidation_states)

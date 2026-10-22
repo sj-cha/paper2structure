@@ -561,3 +561,22 @@ def test_van_der_waals_basal_planes_have_surface_sites():
     cdse = build_bulk("F-43m", ["Cd", "Se"], [[0, 0, 0], [0.25, 0.25, 0.25]], a=6.08)
     polar = build_slab(cdse, (1, 1, 1), termination=0, min_thickness=8.0, vacuum=15.0, supercell=(2, 2))
     assert Counter(polar[i].symbol for i in surface_atoms(polar)) == {"Cd": 4}  # Se 0.88 A below stays inside
+
+
+MOF5 = [("Zn", [0.20639, 0.29361, 0.20639]), ("O", [0.25, 0.25, 0.25]), ("O", [0.21964, 0.28036, 0.13389]),
+        ("C", [0.25, 0.25, 0.1114]), ("C", [0.25, 0.25, 0.0540]), ("C", [0.21875, 0.28125, 0.0270]),
+        ("H", [0.1965, 0.3035, 0.0447])]  # Zn4O(BDC)3, Fm-3m (literature coordinates)
+
+
+def test_linkers_bonded_into_a_framework_are_not_loose_molecules():
+    mof = build_bulk("Fm-3m", [s for s, _ in MOF5], [c for _, c in MOF5], a=25.755, formula_units=8)
+    report = _validate(mof)
+    checks = {c.name: c for c in report.checks}
+    assert report.passed and "unregistered_molecules" not in checks
+    assert checks["bond_valence"].status == "pass" and "Zn 1.6" in checks["bond_valence"].detail
+    # a formic acid dropped into the pore without registering it is still a loose molecule
+    loose = Adsorbate.from_smiles("OC=O", seed=0).atoms
+    loose.translate(mof.cell.array.sum(axis=0) / 2 - loose.positions.mean(axis=0))
+    with_loose = mof + loose
+    with_loose.set_array("mol_id", np.full(len(with_loose), -1))
+    assert _check(with_loose, "unregistered_molecules").status == "fail"

@@ -21,7 +21,7 @@ from scipy.spatial.transform import Rotation
 
 from paper2structure.tools._geometry import (ANION_FORMERS, cation_elements, default_seed, get_molecules,
                                              image_shifts, mol_ids)
-from paper2structure.tools._symmetry import symmetry_operations
+from paper2structure.tools._symmetry import orbit, symmetry_operations
 from paper2structure.tools.adsorbate_builder import Adsorbate
 from paper2structure.tools.adsorption_builder import add_molecule
 
@@ -121,15 +121,17 @@ def _anchor_sites(env: _Env, cell: np.ndarray, anchor: str, partner: np.ndarray,
     touching = partner[i] & (d <= contact + CONTACT_SHELL)
     score = np.where(np.all(d >= factor * contact, axis=1), touching.sum(axis=1), -1)
     tight = np.where(touching, d - contact, 0.0).sum(axis=1)
-    chosen, taken = [], []  # taken: the chosen points and their symmetry images (fractional)
+    chosen = []
+    taken = np.zeros((0, 3))  # the chosen points and their symmetry images (fractional)
     for k in np.lexsort((tight, -score)):
         if score[k] <= 0 or len(chosen) >= n_sites:
             break
         f = frac[k]
-        if any(np.linalg.norm(((f - t + 0.5) % 1.0 - 0.5) @ cell) < 1.0 for t in taken):
+        if len(taken) and np.min(np.linalg.norm(((f - taken + 0.5) % 1.0 - 0.5) @ cell, axis=1)) < 1.0:
             continue
         chosen.append(xyz[k])
-        taken.extend([f] if ops is None else np.mod(np.einsum("nij,j->ni", ops[0], f) + ops[1], 1.0))
+        images = f[None] if ops is None else np.mod(np.einsum("nij,j->ni", ops[0], f) + ops[1], 1.0)
+        taken = np.vstack([taken, images])
     return chosen
 
 
@@ -242,13 +244,16 @@ def fill_cavities(crystal: Atoms, molecule: Union[Adsorbate, str], count: int, n
             nb, length = _hbonds(env, poses, donors)
             order = np.lexsort((length, -nb))
             choice = ((0, int(nb[order[0]]), -float(length[order[0]])), [poses[order[0]]])  # alone, no images
-            if ops is not None:
+            # a molecule's orbit is at least its anchor's orbit over the atoms the anchor could map to
+            twins = sum(s == symbols[a0] for s in symbols)
+            fits = ops is not None and len(orbit(p @ np.linalg.inv(cell), *ops)) <= left * twins
+            if fits:
                 for k in order[:POSES_PER_SITE]:
                     images = _images(poses[k], ops, cell, a0, left)
                     if images is not None and not _images_clash(images, cell, vdw, is_h, hbond):
                         choice = ((1, int(nb[k]), -float(length[k])), images)
                         break
-            else:
+            elif ops is None:
                 choice = ((1,) + choice[0][1:], choice[1])
             if best is None or choice[0] > best[0]:
                 best = choice

@@ -133,7 +133,7 @@ are the checks `check_structure` shows the agent while it works:
 | overlaps | two atoms closer than 0.6 x their covalent-radius sum |
 | molecule integrity | a molecule's bond graph differs from its SMILES |
 | molecule geometry | a molecule is not an RDKit conformer of its SMILES: a bond length more than 0.12 A or a bond angle more than 20 degrees off both the UFF and the MMFF conformer (RDKit's own spread over seeds and methods is 0.09 A and 15 degrees; torsions are free) |
-| unregistered molecules | C-H or N-H bonds in the substrate: organic molecules not registered with `place_adsorbates`, `add_solvent` or `add_molecule` |
+| unregistered molecules | C-H or N-H bonds in substrate fragments that no heavy atom bonds to a metal: organic molecules not registered with `place_adsorbates`, `add_solvent`, `add_molecule` or `fill_cavities` (organic parts bonded into the framework, such as MOF linkers, belong to it) |
 | isolated atoms | a substrate atom has no neighbour within 1.5 x the covalent sum (placeholder atoms) |
 | adsorbate binding | an adsorbate's closest substrate contact is beyond 2.0 x the covalent sum (detached; 1.5-2.0 x warns), or an electronegative donor on an ionic surface touches an anion instead of a cation |
 | charge neutrality (off by default: `validation.charge_neutrality`) | substrate formal charges (the plan's oxidation states, `carve_nanocrystal`'s, or common ones; mixed valence allowed between consecutive states) plus the SMILES charges do not sum to zero |
