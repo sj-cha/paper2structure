@@ -21,10 +21,9 @@ from paper2structure.tools._symmetry import space_group_number
 from paper2structure.tools.schemas import (BondAngleCheck, BondLengthCheck, CheckResult, ClaimCheck,
                                            CompositionCheck, CoordinationCheck, HydrogenBondCheck, LatticeCheck,
                                            LayerCheck, SpaceGroupCheck)
-from paper2structure.tools.structure_export import structure_kind, substrate_depth
+from paper2structure.tools.structure_export import INTERIOR_DEPTH, structure_kind, substrate_depth
 
 BOND_SCALE = 1.25  # x covalent-radius sum: the first coordination shell
-INTERIOR_DEPTH = 4.0  # A below the surface of slabs and particles
 LAYER_TOL = 1.0  # A along the stacking axis within one plane
 
 
@@ -43,10 +42,6 @@ def _subset(atoms: Atoms, scope: str) -> Atoms:
 def _canonical(smiles: str) -> Optional[str]:
     mol = Chem.MolFromSmiles(smiles)
     return Chem.MolToSmiles(mol) if mol is not None else None
-
-
-def _range(values) -> str:
-    return f"{min(values):.2f}-{max(values):.2f}" if len(values) else "none"
 
 
 def _lattice(atoms: Atoms, c: LatticeCheck) -> tuple[str, str]:
@@ -109,7 +104,7 @@ def _bond_length(atoms: Atoms, c: BondLengthCheck) -> tuple[str, str]:
     if not len(d):
         return "fail", f"no {a}-{b} pair within {c.max + 0.5:.2f} A"
     out = d[(d < c.min - c.tolerance) | (d > c.max + c.tolerance)]
-    detail = f"built {a}-{b} {_range(d)} A over {len(d)} pairs, paper {c.min}-{c.max} A (+-{c.tolerance})"
+    detail = f"built {a}-{b} {d.min():.2f}-{d.max():.2f} A over {len(d)} pairs, paper {c.min}-{c.max} A (+-{c.tolerance})"
     return ("fail" if len(out) else "pass"), (f"{len(out)} pairs outside: " if len(out) else "") + detail
 
 
@@ -139,15 +134,11 @@ def _bond_angle(atoms: Atoms, c: BondAngleCheck) -> tuple[str, str]:
     return ("fail" if len(out) else "pass"), (f"{len(out)} angles outside: " if len(out) else "") + detail
 
 
-def _interior(atoms: Atoms) -> np.ndarray:
-    sub = np.where(mol_ids(atoms) < 0)[0]
-    return substrate_depth(atoms, sub) >= INTERIOR_DEPTH
-
-
 def _coordination(atoms: Atoms, c: CoordinationCheck) -> tuple[str, str]:
     sym = np.array(atoms.get_chemical_symbols())
-    ids = mol_ids(atoms)
-    centers = np.where((sym == c.center) & (ids < 0) & _interior(atoms))[0]
+    framework = mol_ids(atoms) < 0
+    interior = substrate_depth(atoms, np.where(framework)[0]) >= INTERIOR_DEPTH
+    centers = np.where((sym == c.center) & framework & interior)[0]
     if not len(centers):
         return "fail", f"no interior framework {c.center}"
     i, j, d = neighbor_list("ijd", atoms, _max_bond(c.center, c.neighbor, c.max_bond))
@@ -243,19 +234,15 @@ _RUN = {"lattice": _lattice, "space_group": _space_group, "composition": _compos
 BULK_ONLY = {"lattice", "space_group", "composition"}  # slabs and particles have their own cells and terminations
 
 
-def applies(check: ClaimCheck, system_ids: Optional[Sequence[str]]) -> bool:
-    """A check scoped to systems applies to a structure that models one of them (or declares none)."""
-    return not check.system_ids or not system_ids or bool(set(check.system_ids) & set(system_ids))
-
-
 def run_claim_checks(atoms: Atoms, checks: Sequence[ClaimCheck],
                      system_ids: Optional[Sequence[str]] = None) -> list[CheckResult]:
     """One CheckResult per applicable check, named "claim <id>"; the detail gives the claim, the built
-    value, the paper's value and the evidence. A failing check of severity "warn" warns."""
+    value, the paper's value and the evidence. A failing check of severity "warn" warns. A check
+    scoped to systems runs on a structure that models one of them (or declares none)."""
     kind = structure_kind(atoms)
     results = []
     for c in checks:
-        if not applies(c, system_ids):
+        if c.system_ids and system_ids and not set(c.system_ids) & set(system_ids):
             continue
         name = f"claim {c.id}"
         head = f"{c.claim} [{', '.join(c.evidence_ids + c.claim_ids) or 'no evidence cited'}]: "

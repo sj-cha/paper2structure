@@ -63,6 +63,12 @@ class ReconstructionState(BaseModel):
     def artifact(self, structure_id: str) -> StructureArtifact:
         return next(a for a in self.artifacts if a.structure_id == structure_id)
 
+    @property
+    def accepted_ids(self) -> list[str]:
+        """The structures the last decision accepted (none unless it was accept_candidates)."""
+        last = self.revision_history[-1] if self.revision_history else None
+        return list(last.accepted_structure_ids) if last and last.action == "accept_candidates" else []
+
 
 class ArtifactStore:
     """Run directory: inputs, plans, construction workspaces, exported structures, reports and a
@@ -74,7 +80,10 @@ class ArtifactStore:
         self._snapshots = len(list((self.root / "state").glob("*.json")))  # continue numbering in a reused dir
 
     def path(self, *parts: str) -> Path:
-        """A path in the run directory, with its parent directories created."""
+        """A path in the run directory, with its parent directories created. Parts can come from
+        LLM output (plan IDs, structure names): one that would leave the run directory raises."""
+        if any(Path(x).is_absolute() or ".." in Path(x).parts for x in parts):
+            raise ValueError(f"path {'/'.join(parts)!r} leaves the run directory")
         p = self.root.joinpath(*parts)
         p.parent.mkdir(parents=True, exist_ok=True)
         return p
@@ -104,9 +113,9 @@ class WorkflowDeps:
     constructor: LLMConstructor
     reviser: LLMReviser
     seed: int
+    max_revisions: int  # loop budgets (cfg.budgets unless build_deps overrides them)
+    max_repairs: int
+    max_rebuilds: int
     paper_model: Model | str | None = None  # Agents 1-2 (summarizer, characterization); None = cfg.campaign.model
     paper_usage: dict[str, dict[str, int]] = field(default_factory=lambda: {"summarizer": new_usage(),
                                                                             "characterization": new_usage()})
-    max_revisions: int = 1
-    max_repairs: int = 2
-    max_rebuilds: int = 2

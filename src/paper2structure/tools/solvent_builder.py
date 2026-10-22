@@ -74,7 +74,7 @@ def add_solvent(atoms: Atoms, smiles: str, n_molecules: Optional[int] = None, de
     def sample() -> np.ndarray:
         return origin + np.array([rng.random(), rng.random(), rng.random()]) @ span
 
-    env = PeriodicTree(atoms.positions, np.ones(len(atoms)), atoms.cell.array, atoms.pbc)
+    env = PeriodicTree(atoms.positions, atoms.cell.array, atoms.pbc)
     if density is not None and env.tree is not None:  # free volume: points farther than `gap` from every atom
         probes = origin + np.random.default_rng(default_seed(seed)).random((FREE_VOLUME_PROBES, 3)) @ span
         region_volume *= float(np.mean(env.tree.query_ball_point(probes, r=gap, return_length=True) == 0))
@@ -90,7 +90,7 @@ def add_solvent(atoms: Atoms, smiles: str, n_molecules: Optional[int] = None, de
 
     def tree_of(blocks: list[np.ndarray]) -> PeriodicTree:
         pts = np.vstack(blocks)
-        return PeriodicTree(pts, np.ones(len(pts)), atoms.cell.array, atoms.pbc)
+        return PeriodicTree(pts, atoms.cell.array, atoms.pbc)
 
     def clashes(coords: np.ndarray) -> bool:
         for tree in (env, trees["placed"], trees["recent"]):

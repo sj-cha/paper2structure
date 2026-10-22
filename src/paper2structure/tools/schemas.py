@@ -134,9 +134,6 @@ class ValidationReport(BaseModel):
     def failures(self) -> list[CheckResult]:
         return [c for c in self.checks if c.status == "fail"]
 
-    def warnings(self) -> list[CheckResult]:
-        return [c for c in self.checks if c.status == "warn"]
-
     def with_check(self, check: CheckResult) -> ValidationReport:
         """A copy with `check` added (a failing check fails the report)."""
         return self.model_copy(update={"checks": [*self.checks, check],

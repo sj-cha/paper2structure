@@ -42,9 +42,6 @@ def structural_claims(summary: PaperGraph, evidence: ExperimentalEvidence) -> li
     return claims
 
 
-def claims_text(claims: list[Claim]) -> str:
-    return "\n".join(f"- {c.claim_id} [{', '.join(c.system_ids) or 'all systems'}] {c.text}" for c in claims)
-
 def constraint_value(c) -> str:
     """A structural constraint's value with its unit (once)."""
     return c.value if not c.unit or c.value.rstrip().endswith(c.unit) else f"{c.value} {c.unit}"

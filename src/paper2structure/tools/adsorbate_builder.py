@@ -2,7 +2,6 @@
 generalized away from perovskite-specific sites."""
 from __future__ import annotations
 
-import copy
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -98,19 +97,6 @@ class Adsorbate:
         atoms = Atoms([a.GetSymbol() for a in mol.GetAtoms()], positions=mol.GetConformer().GetPositions())
         return cls(atoms=atoms, mol=mol, smiles=smiles, charge=Chem.GetFormalCharge(mol),
                    name=name or smiles, binding_motif=binding_motif)
-
-    def clone(self) -> Adsorbate:
-        ads = copy.copy(self)
-        ads.atoms = self.atoms.copy()
-        ads.mol = Chem.Mol(self.mol)
-        ads.binding_atoms = list(self.binding_atoms)
-        return ads
-
-    @property
-    def anchor_pos(self) -> Optional[np.ndarray]:
-        if not self.binding_atoms:
-            return None
-        return self.atoms.get_positions()[self.binding_atoms].mean(axis=0)
 
     def __str__(self) -> str:
         bind = ",".join(f"{self.atoms[i].symbol}{i}" for i in self.binding_atoms) or "none"

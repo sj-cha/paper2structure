@@ -39,6 +39,14 @@ def _checkpoint(ctx: Ctx, node: str, full: bool = False) -> None:
     ctx.deps.store.snapshot(ctx.state, node, full=full)
 
 
+def _fail(ctx: Ctx, node: str, what: str, e: Exception) -> FinalizeResults:
+    """End the run: the error goes to the state as one line and to the log with its traceback."""
+    ctx.state.errors.append(f"{what} failed: {type(e).__name__}: {e}")
+    log.error("[%s] %s failed", node, what, exc_info=e)
+    _checkpoint(ctx, node)
+    return FinalizeResults(status="failed")
+
+
 def _paper_model(ctx: Ctx) -> Model | str:
     model = ctx.deps.paper_model
     return model if isinstance(model, Model) else get_model(model or ctx.deps.cfg.campaign.model)
@@ -78,9 +86,7 @@ class SummarizePaper(BaseNode[ReconstructionState, WorkflowDeps, ReconstructionR
             if not st.summary.systems:
                 raise ValueError("the summarizer found no material systems in the paper")
         except Exception as e:  # noqa: BLE001
-            st.errors.append(f"summarization failed: {type(e).__name__}: {e}")
-            _checkpoint(ctx, "SummarizePaper")
-            return FinalizeResults(status="failed")
+            return _fail(ctx, "SummarizePaper", "summarization", e)
         failed_steps = Path(st.paper_dir) / "errors.txt"  # per-system or per-figure steps the summarizer skipped
         if failed_steps.exists():
             st.errors += [f"summarizer: {line}" for line in failed_steps.read_text().splitlines() if line.strip()]
@@ -96,8 +102,8 @@ async def characterize(paper: PaperGraph, paper_dir: Path, out_dir: Path, model:
                        cc: CharacterizationConfig, usage: Optional[dict[str, int]] = None) -> ExperimentalEvidence:
     """One characterization agent per technique found in the paper's evidence, concurrently; each
     report is also saved as out_dir/<technique>.json (earlier reports there are removed first).
-    Techniques outside the vocabulary, and stub specs unless cc.include_stubs, are skipped. The
-    agents' token usage is added to `usage` (token_log.json's keys)."""
+    Techniques outside the vocabulary are skipped. The agents' token usage is added to `usage`
+    (token_log.json's keys)."""
     evidence = ExperimentalEvidence()
     found = sorted({e.technique for e in paper.evidence})
     if cc.techniques is not None:
@@ -108,8 +114,6 @@ async def characterize(paper: PaperGraph, paper_dir: Path, out_dir: Path, model:
         spec = find_spec(technique)
         if spec is None:
             evidence.skipped[technique] = "not in the technique vocabulary"
-        elif not spec.implemented and not cc.include_stubs:
-            evidence.skipped[technique] = "spec is a stub"
         else:
             specs.append(spec)
     log.info("[AnalyzeEvidence] characterizing %s; skipped %s", [s.name for s in specs] or "nothing",
@@ -127,7 +131,7 @@ async def characterize(paper: PaperGraph, paper_dir: Path, out_dir: Path, model:
                 usage[key] += n
         if isinstance(result, BaseException):
             evidence.errors.append(f"{spec.name} characterization failed: {type(result).__name__}: {result}")
-            log.warning("[AnalyzeEvidence] %s", evidence.errors[-1])
+            log.warning("[AnalyzeEvidence] %s", evidence.errors[-1], exc_info=result)
         else:
             evidence.reports[spec.name] = result
             log.info("[AnalyzeEvidence] %s: %d observations, %d structural constraints", spec.name,
@@ -166,9 +170,7 @@ class AnalyzeEvidence(BaseNode[ReconstructionState, WorkflowDeps, Reconstruction
                                               _paper_model(ctx), deps.cfg.characterization,
                                               usage=deps.paper_usage["characterization"])
         except Exception as e:  # noqa: BLE001
-            st.errors.append(f"characterization failed: {type(e).__name__}: {e}")
-            _checkpoint(ctx, "AnalyzeEvidence")
-            return FinalizeResults(status="failed")
+            return _fail(ctx, "AnalyzeEvidence", "characterization", e)
         st.evidence = evidence.focused({s.system_id for s in st.summary.systems})
         kept = sum(len(r.observations) for r in st.evidence.reports.values())
         total = sum(len(r.observations) for r in evidence.reports.values())
@@ -223,9 +225,7 @@ class PlanStructures(BaseNode[ReconstructionState, WorkflowDeps, ReconstructionR
             plans = await ctx.deps.planner.plan(st.summary, st.evidence, st.plan_history,
                                                 _replan_context(st) if st.review_feedback else "")
         except Exception as e:  # noqa: BLE001
-            st.errors.append(f"planning failed: {type(e).__name__}: {e}")
-            _checkpoint(ctx, "PlanStructures")
-            return FinalizeResults(status="failed")
+            return _fail(ctx, "PlanStructures", "planning", e)
         st.plan_history.append(plans)
         st.pending_plan_ids = [p.plan_id for p in plans.plans]
         st.attempt, st.repairs, st.current_ids, st.failed_plans = 0, 0, [], {}
@@ -252,6 +252,7 @@ class ConstructStructures(BaseNode[ReconstructionState, WorkflowDeps, Reconstruc
             if isinstance(result, BaseException):
                 st.failed_plans[pid] = f"construction failed: {type(result).__name__}: {result}"
                 st.errors.append(f"{pid} (revision {st.revision}, attempt {st.attempt}): {st.failed_plans[pid]}")
+                log.warning("[ConstructStructures] %s", st.errors[-1], exc_info=result)
             else:
                 self._register(ctx, *result)
         log.info("[ConstructStructures] built %d structures; not built: %s", len(st.current_ids),
@@ -271,11 +272,11 @@ class ConstructStructures(BaseNode[ReconstructionState, WorkflowDeps, Reconstruc
                 if a.plan_id == plan_id:
                     scripts.setdefault((store.root / a.script).read_text(), a.structure_id)
             previous = {f"{sid}.py": code for code, sid in scripts.items()}
-            if plan_id in st.failed_plans and st.attempt > 0:  # not built last time: that attempt's scripts too
+            if plan_id in st.failed_plans:  # not built last time: that attempt's scripts too
                 last = store.root / "construction" / f"r{st.revision}_a{st.attempt - 1}" / plan_id / WORKSPACE
                 previous.update({f"last_attempt/{p.name}": p.read_text() for p in sorted(last.glob("*.py"))})
         workdir = store.path("construction", f"r{st.revision}_a{st.attempt}", plan_id)
-        return await ctx.deps.constructor.construct(st.plans, [plan_id], workdir, ctx.deps.seed, feedback,
+        return await ctx.deps.constructor.construct(st.plans.get(plan_id), workdir, ctx.deps.seed, feedback,
                                                     previous, st.summary, st.evidence)
 
     @staticmethod
@@ -325,6 +326,7 @@ class ConstructStructures(BaseNode[ReconstructionState, WorkflowDeps, Reconstruc
             except Exception as e:  # noqa: BLE001 - one unexportable structure must not end the run
                 st.failed_plans[built.plan_id] = f"{built.name} could not be exported: {type(e).__name__}: {e}"
                 st.errors.append(f"{built.name} (plan {built.plan_id}): {st.failed_plans[built.plan_id]}")
+                log.warning("[ConstructStructures] %s", st.errors[-1], exc_info=True)
                 continue
             st.validation_reports[sid] = cdeps.reports[built.name].model_copy(update={"structure_id": sid})
             st.artifacts.append(artifact)
@@ -384,8 +386,9 @@ class ValidateStructures(BaseNode[ReconstructionState, WorkflowDeps, Reconstruct
 @dataclass
 class ScientificRevision(BaseNode[ReconstructionState, WorkflowDeps, ReconstructionResult]):
     """Agent 5: accept or stop (after writing the final report), send structures whose plan stands
-    back to construction (rebuild, bounded by max_rebuilds), or send the run back through
-    evidence -> planning -> construction (bounded by max_revisions)."""
+    back to construction (rebuild), or send the run back through evidence -> planning ->
+    construction (revisit). The reviewer's output validator keeps rebuilds and revisits within
+    max_rebuilds and max_revisions."""
 
     async def run(self, ctx: Ctx) -> AnalyzeEvidence | ConstructStructures | FinalizeResults:
         _enter(ctx, "ScientificRevision")
@@ -393,14 +396,12 @@ class ScientificRevision(BaseNode[ReconstructionState, WorkflowDeps, Reconstruct
         current = [st.artifact(i) for i in st.current_ids]
         images = None
         if deps.cfg.campaign.use_images:
-            images = {a.structure_id: (deps.store.root / a.image).read_bytes() for a in current[:4] if a.image}
+            images = {a.structure_id: (deps.store.root / a.image).read_bytes() for a in current[:4]}
         left = deps.max_revisions - st.revision
         try:
             decision = await deps.reviser.review(st, deps.store, left, images, deps.max_rebuilds - st.rebuilds)
         except Exception as e:  # noqa: BLE001
-            st.errors.append(f"review failed: {type(e).__name__}: {e}")
-            _checkpoint(ctx, "ScientificRevision")
-            return FinalizeResults(status="failed")
+            return _fail(ctx, "ScientificRevision", "review", e)
         st.revision_history.append(decision)
         deps.store.write_json("revision_history.json", st.revision_history)
         st.rebuild_request, st.plan_feedback = {}, {}  # a new decision replaces any earlier request
@@ -422,7 +423,7 @@ class ScientificRevision(BaseNode[ReconstructionState, WorkflowDeps, Reconstruct
             st.repair_feedback = "\n\n".join(st.plan_feedback.values())
             _checkpoint(ctx, "ScientificRevision")
             return ConstructStructures()
-        if decision.action == "revisit_evidence" and left > 0:
+        if decision.action == "revisit_evidence":  # the reviewer's validator keeps it within max_revisions
             st.revision += 1
             st.candidate_ids += [i for i in st.current_ids if i not in st.candidate_ids
                                  and st.validation_reports[i].passed]  # still acceptable after re-planning
@@ -433,8 +434,6 @@ class ScientificRevision(BaseNode[ReconstructionState, WorkflowDeps, Reconstruct
             _checkpoint(ctx, "ScientificRevision")
             return AnalyzeEvidence()
         _checkpoint(ctx, "ScientificRevision")
-        if decision.action == "revisit_evidence":
-            return FinalizeResults(status="revision_budget_exhausted")
         return FinalizeResults(status="accepted" if decision.action == "accept_candidates" else "inconclusive")
 
 
@@ -451,8 +450,6 @@ class FinalizeResults(BaseNode[ReconstructionState, WorkflowDeps, Reconstruction
         st.status = self.status
         if self.status == "failed":  # a narrative written for an earlier decision does not describe this end
             st.report = None
-        last = st.revision_history[-1] if st.revision_history else None
-        accepted = list(last.accepted_structure_ids) if last and self.status == "accepted" else []
         store.write_json("plans.json", st.plan_history)
         store.write_json("artifacts.json", st.artifacts)
         store.write_json("validation_reports.json", st.validation_reports)
@@ -463,7 +460,7 @@ class FinalizeResults(BaseNode[ReconstructionState, WorkflowDeps, Reconstruction
         report = save_report(st, store)  # final status and decision around the reviewer's text
         save_structures_readme(st, store)
         result = ReconstructionResult(
-            run_id=st.run_id, status=self.status, run_dir=str(store.root), accepted_structure_ids=accepted,
+            run_id=st.run_id, status=self.status, run_dir=str(store.root), accepted_structure_ids=st.accepted_ids,
             current_structure_ids=list(st.current_ids), structure_files={a.structure_id: a.files for a in st.artifacts},
             report=store.rel(report), revisions=st.revision, errors=list(st.errors))
         store.write_json("result.json", result)

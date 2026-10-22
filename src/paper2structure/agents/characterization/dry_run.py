@@ -3,7 +3,6 @@
 from ...config import DRY_RUN_OUTPUTS
 
 DRY_RUN_OUTPUTS["CharacterizationReport"] = {
-    "technique": "dry-run",
     "observations": [
         {"observation_id": "O1", "source_id": "E001", "system_ids": ["S1"], "quantity": "phase", "value": "single phase", "read_from": "stated_in_text"},
     ],

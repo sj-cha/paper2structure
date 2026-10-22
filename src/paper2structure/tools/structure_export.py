@@ -11,13 +11,20 @@ import numpy as np
 from ase import Atoms
 from ase.constraints import FixAtoms
 from ase.geometry import get_distances
-from ase.io import read, write
+from ase.io import write
 
 from paper2structure.tools._geometry import (clean_arrays, coordination_pairs, get_molecules, hull_depth, mol_ids,
                                              neighbor_pairs, rcov, set_molecules, solvent_mask, substrate_mask)
 
 EXTENSIONS = {"poscar": "vasp", "cif": "cif", "extxyz": "extxyz"}
-_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")  # structure names and plan IDs: safe as file names
+EMIT_DIR = "structures"  # where emit() writes, relative to the working directory
+MANIFEST = "manifest.json"  # emit()'s record of every structure and its script, in EMIT_DIR
+
+
+def structure_path(root: str | os.PathLike, name: str) -> Path:
+    """The extxyz emit() writes for `name` when run in `root`."""
+    return Path(root) / EMIT_DIR / f"{name}.extxyz"
 
 
 def _calling_script() -> str:
@@ -40,9 +47,9 @@ def emit(atoms: Atoms, name: str, plan_id: str, notes: str = "", system_ids: Opt
     system_ids: the paper's systems this structure models (e.g. ["S2"]) when the plan covers
         several; the plan's checks scoped to other systems are then not applied to it.
     """
-    if not _NAME.match(name) or name == "manifest":
+    if not NAME.match(name) or name == Path(MANIFEST).stem:
         raise ValueError(f"invalid structure name {name!r}: use letters, digits, '_', '-', '.' (max 64)")
-    out = Path(os.environ.get("P2S_EMIT_DIR", "structures"))
+    out = Path(EMIT_DIR)
     out.mkdir(parents=True, exist_ok=True)
     atoms = clean_arrays(atoms.copy())
     label = atoms.info.get("p2s_kind")
@@ -59,7 +66,7 @@ def emit(atoms: Atoms, name: str, plan_id: str, notes: str = "", system_ids: Opt
     path = out / f"{name}.extxyz"
     write(path, atoms, format="extxyz")
     export_structure(atoms, out, name, formats=("poscar",))
-    manifest = out / "manifest.json"
+    manifest = out / MANIFEST
     entries = json.loads(manifest.read_text()) if manifest.exists() else []
     entries = [e for e in entries if e["name"] != name]
     entries.append({"name": name, "plan_id": str(plan_id), "path": path.name, "script": script, "notes": str(notes),
@@ -67,10 +74,6 @@ def emit(atoms: Atoms, name: str, plan_id: str, notes: str = "", system_ids: Opt
     manifest.write_text(json.dumps(entries, indent=2))
     print(f"[emit] {name} (plan {plan_id}): {atoms.get_chemical_formula()}, {len(atoms)} atoms -> {path}")
     return str(path)
-
-
-def read_structure(path: str | os.PathLike) -> Atoms:
-    return read(path)
 
 
 OPEN_GAP = 5.0  # A of empty space along a cell vector that marks it as vacuum
@@ -198,6 +201,9 @@ def vacuum_gap(atoms: Atoms) -> float:
         along = wire_axis(atoms)
         return float(min(g for k, g in gaps.items() if k != along))
     return float(min(gaps.values()))
+
+
+INTERIOR_DEPTH = 4.0  # A: substrate atoms this far below the surface are interior (bulk-like) sites
 
 
 def substrate_depth(atoms: Atoms, sub: np.ndarray) -> np.ndarray:

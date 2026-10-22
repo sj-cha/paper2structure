@@ -21,7 +21,8 @@ class RevisionDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
     action: RevisionAction
     reasoning: str
-    verdicts: list[StructureVerdict] = Field(default_factory=list)
+    verdicts: list[StructureVerdict] = Field(default_factory=list,
+                                             description="one per structure under Constructed structures")
     accepted_structure_ids: list[str] = Field(default_factory=list)
     rebuild_structure_ids: list[str] = Field(default_factory=list,
                                              description="structures to rebuild under their plans (rebuild_structures)")

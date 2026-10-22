@@ -10,7 +10,7 @@ from .schemas import (
     StructuralConstraint,
 )
 from .spec import GENERIC, TechniqueSpec, generate_system_prompt
-from .techniques import FTIR, REGISTRY, SEM, TEM, XRD, find_spec, implemented_specs
+from .techniques import FTIR, REGISTRY, SEM, TEM, XRD, find_spec
 
 __all__ = [
     "CharacterizationAgent",
@@ -28,5 +28,4 @@ __all__ = [
     "XRD",
     "find_spec",
     "generate_system_prompt",
-    "implemented_specs",
 ]

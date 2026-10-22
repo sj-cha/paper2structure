@@ -11,13 +11,15 @@ from ase import Atoms
 from ase.io import read
 from rdkit import Chem
 
+from paper2structure import thresholds as T
 from paper2structure.tools.schemas import CheckResult, ValidationReport
-from paper2structure.tools._geometry import (ANION_CONTACT_SCALE, ANION_FORMERS, get_molecules, mol_ids,
-                                             neighbor_pairs, rcov, surface_anions)
-from paper2structure.tools.structure_export import grouped_order, structure_kind, substrate_depth, vacuum_gap
+from paper2structure.tools._geometry import (ANION_FORMERS, get_molecules, mol_ids, neighbor_pairs, rcov,
+                                             surface_anions)
+from paper2structure.tools.structure_export import (INTERIOR_DEPTH, grouped_order, structure_kind, substrate_depth,
+                                                    vacuum_gap)
 
 
-def infer_bonds(atoms: Atoms, scale: float = 1.2) -> frozenset:
+def infer_bonds(atoms: Atoms, scale: float = T.BOND_SCALE) -> frozenset:
     """Bonds from geometry (minimum image): pairs closer than scale x the covalent-radius sum."""
     if len(atoms) < 2:
         return frozenset()
@@ -105,8 +107,9 @@ def molecule_match(symbols: Sequence[str], bonds, smiles: str) -> Optional[tuple
     return tuple(int(k) for k in match) if len(match) == template.GetNumAtoms() else None
 
 
-def molecule_geometry(symbols: list[str], positions: np.ndarray, bonds, smiles: str, bond_tol: float = 0.12,
-                      angle_tol: float = 20.0) -> Optional[list[str]]:
+def molecule_geometry(symbols: list[str], positions: np.ndarray, bonds, smiles: str,
+                      bond_tol: float = T.MOLECULE_BOND_TOL,
+                      angle_tol: float = T.MOLECULE_ANGLE_TOL) -> Optional[list[str]]:
     """Bond lengths and bond angles of a molecule against RDKit conformers of its SMILES (UFF and
     MMFF): the problems against the closer one (empty when it matches), a bond-graph mismatch, or
     None when RDKit cannot embed the SMILES (not assessed). Position, orientation, atom order and
@@ -335,7 +338,7 @@ def _loose_organics(sym: np.ndarray, i: np.ndarray, j: np.ndarray, ratio: np.nda
 
 def _crystal_chemistry(atoms: Atoms, i: np.ndarray, j: np.ndarray, d: np.ndarray, ratio: np.ndarray, ids: np.ndarray,
                        given: dict[str, int], bvs_warn: float, bvs_fail: float, bond_share_warn: float,
-                       like_contact_warn: float, like_contact_fail: float, min_depth: float = 4.0,
+                       like_contact_warn: float, like_contact_fail: float, min_depth: float = INTERIOR_DEPTH,
                        min_cn: int = 3, loose_organics: bool = False) -> list[CheckResult]:
     """Crystal-chemistry checks of an ionic substrate (one with anion formers), from the shared
     neighbor list (unordered pairs i < j):
@@ -519,14 +522,15 @@ def _positive_elements(smiles: str) -> frozenset[str]:
     return _POSITIVE[smiles]
 
 
-def validate_structure(atoms: Atoms, structure_id: str, *, max_atoms: int, min_vacuum: float,
-                       overlap_scale: float = 0.6, close_contact_scale: float = 0.85, bond_scale: float = 1.2,
-                       anion_contact_scale: float = ANION_CONTACT_SCALE, binding_scale: float = 1.5,
-                       detached_scale: float = 2.0,
+def validate_structure(atoms: Atoms, structure_id: str, *, max_atoms: int, min_vacuum: float = T.MIN_VACUUM,
+                       overlap_scale: float = T.OVERLAP_SCALE, close_contact_scale: float = T.CLOSE_CONTACT_SCALE,
+                       bond_scale: float = T.BOND_SCALE, anion_contact_scale: float = T.ANION_CONTACT_SCALE,
+                       binding_scale: float = T.BINDING_SCALE, detached_scale: float = T.DETACHED_SCALE,
                        charge_neutrality: bool = False, oxidation_states: Optional[dict[str, int]] = None,
-                       bvs_warn: float = 0.30, bvs_fail: float = 0.40, bond_share_warn: float = 0.45,
-                       like_contact_warn: float = 0.8, like_contact_fail: float = 0.7,
-                       molecule_bond_tol: float = 0.12, molecule_angle_tol: float = 20.0,
+                       bvs_warn: float = T.BVS_WARN, bvs_fail: float = T.BVS_FAIL,
+                       bond_share_warn: float = T.BOND_SHARE_WARN, like_contact_warn: float = T.LIKE_CONTACT_WARN,
+                       like_contact_fail: float = T.LIKE_CONTACT_FAIL, molecule_bond_tol: float = T.MOLECULE_BOND_TOL,
+                       molecule_angle_tol: float = T.MOLECULE_ANGLE_TOL,
                        files: Optional[dict[str, str]] = None, claim_checks: Sequence = (),
                        system_ids: Optional[Sequence[str]] = None) -> ValidationReport:
     """Geometric and chemical sanity checks. Pairs closer than overlap_scale x the covalent-radius

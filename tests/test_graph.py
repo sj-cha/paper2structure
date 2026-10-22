@@ -16,6 +16,11 @@ LINEAR = ["SummarizePaper", "AnalyzeEvidence", "PlanStructures", "ConstructStruc
           "ScientificRevision", "FinalizeResults"]
 
 
+def _verdicts(messages) -> list[dict]:
+    """A verdict for every structure the reviewer is shown (its validator requires one each)."""
+    return [{"structure_id": i, "resembles_paper": True} for i in re.findall(r"### (\S+) \(plan", _user_text(messages))]
+
+
 def _run(tmp_path, scripts, actions, max_revisions=1, max_repairs=2, planner=None, max_rebuilds=2):
     deps = build_deps(make_config(), tmp_path / "run", seed=7, max_revisions=max_revisions, max_repairs=max_repairs,
                       models={"planner": planner or planner_model(), "constructor": constructor_model(scripts),
@@ -117,6 +122,12 @@ def test_construction_failures_reach_the_planner(tmp_path):
     assert "Plans that could not be built" in prompts[1] and "bulk generates TiO" in prompts[1]
 
 
+def test_loop_budgets_come_from_the_config(tmp_path):
+    deps = build_deps(make_config(budgets={"max_revisions": 0, "max_rebuilds": 3}), tmp_path / "a", seed=0)
+    assert (deps.max_revisions, deps.max_repairs, deps.max_rebuilds) == (0, 2, 3)
+    assert build_deps(make_config(), tmp_path / "b", seed=0, max_repairs=0).max_repairs == 0  # an explicit override
+
+
 def test_graph_edges():
     text = build_graph().render(direction="TB")
     edges = re.findall(r"^\s*(\S+) --> (\S+)\s*$", text, re.M)
@@ -159,10 +170,12 @@ def test_rebuild_keeps_the_structures_the_reviewer_did_not_list(tmp_path):
         if len(calls) == 1:  # rebuild one of the two
             target = next(i for i in ids if i.startswith("pt111_co_top"))
             return _final(info, {"action": "rebuild_structures", "reasoning": "one is wrong",
-                                 "rebuild_structure_ids": [target], "feedback": "fix the top-site CO"})
+                                 "rebuild_structure_ids": [target], "feedback": "fix the top-site CO",
+                                 "verdicts": _verdicts(messages)})
         if not reported(messages):
             return ModelResponse(parts=[ToolCallPart("write_report", REPORT)])
-        return _final(info, {"action": "accept_candidates", "reasoning": "fine", "accepted_structure_ids": ids})
+        return _final(info, {"action": "accept_candidates", "reasoning": "fine", "accepted_structure_ids": ids,
+                             "verdicts": _verdicts(messages)})
 
     deps = build_deps(make_config(), tmp_path / "run", seed=7,
                       models={"planner": planner_model(), "constructor": constructor_model([two, GOOD_SCRIPT]),
@@ -187,7 +200,8 @@ def test_reviewer_runs_its_own_claim_checks(tmp_path):
         results.extend(returns)
         if not reported(messages):
             return ModelResponse(parts=[ToolCallPart("write_report", REPORT)])
-        return _final(info, {"action": "accept_candidates", "reasoning": "fine", "accepted_structure_ids": [sid]})
+        return _final(info, {"action": "accept_candidates", "reasoning": "fine", "accepted_structure_ids": [sid],
+                             "verdicts": _verdicts(messages)})
 
     deps = build_deps(make_config(), tmp_path / "run", seed=7,
                       models={"planner": planner_model(), "constructor": constructor_model([GOOD_SCRIPT]),
@@ -247,10 +261,11 @@ def test_feedback_repairs_and_rebuilds_stay_with_their_plans(tmp_path):
         if len(reviews) == 1:
             p1 = next(sid for sid, pid in shown.items() if pid == "P1")
             return _final(info, {"action": "rebuild_structures", "reasoning": "P1 is off", "feedback": "fix the P1 CO",
-                                 "rebuild_structure_ids": [p1]})
+                                 "rebuild_structure_ids": [p1], "verdicts": _verdicts(messages)})
         if not reported(messages):
             return ModelResponse(parts=[ToolCallPart("write_report", REPORT)])
-        return _final(info, {"action": "accept_candidates", "reasoning": "fine", "accepted_structure_ids": list(shown)})
+        return _final(info, {"action": "accept_candidates", "reasoning": "fine", "accepted_structure_ids": list(shown),
+                             "verdicts": _verdicts(messages)})
 
     deps = build_deps(make_config(), tmp_path / "run", seed=7, models={
         "planner": planner_model([two]), "constructor": constructor, "reviser": coding_model(reviewer)})
@@ -288,12 +303,12 @@ def test_earlier_candidates_stay_acceptable_after_a_revisit(tmp_path):
             reviewed.append(text)
         if len(reviewed) == 1:
             return _final(info, {"action": "revisit_evidence", "reasoning": "check the bridge sites",
-                                 "feedback": "try bridge sites"})
+                                 "feedback": "try bridge sites", "verdicts": _verdicts(messages)})
         earlier = re.findall(r"^- (\S+) \(plan P1 of plan set 0", text, re.M)
         if not reported(messages):
             return ModelResponse(parts=[ToolCallPart("write_report", REPORT)])
         return _final(info, {"action": "accept_candidates", "reasoning": "the first was right",
-                             "accepted_structure_ids": earlier})
+                             "accepted_structure_ids": earlier, "verdicts": _verdicts(messages)})
 
     deps = build_deps(make_config(), tmp_path / "run", seed=7, models={
         "planner": FunctionModel(planner), "constructor": constructor_model([GOOD_SCRIPT]),
@@ -321,7 +336,8 @@ def test_a_failed_end_drops_the_narrative_of_an_earlier_review(tmp_path):
     def reviewer(messages, info):  # writes a report, then sends the run back to planning
         if not reported(messages):
             return ModelResponse(parts=[ToolCallPart("write_report", REPORT)])
-        return _final(info, {"action": "revisit_evidence", "reasoning": "again", "feedback": "try bridge sites"})
+        return _final(info, {"action": "revisit_evidence", "reasoning": "again", "feedback": "try bridge sites",
+                             "verdicts": _verdicts(messages)})
 
     deps = build_deps(make_config(), tmp_path / "run", seed=7, models={
         "planner": FunctionModel(planner), "constructor": constructor_model([GOOD_SCRIPT]),

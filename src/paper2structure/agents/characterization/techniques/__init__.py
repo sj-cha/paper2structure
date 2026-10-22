@@ -32,8 +32,4 @@ def find_spec(technique: str) -> Optional[TechniqueSpec]:
     return REGISTRY.get(canonical_technique(technique) or "")
 
 
-def implemented_specs() -> list[TechniqueSpec]:
-    return [spec for spec in REGISTRY.values() if spec.implemented]
-
-
-__all__ = ["GENERIC", "REGISTRY", "find_spec", "implemented_specs"]
+__all__ = ["GENERIC", "REGISTRY", "find_spec"]

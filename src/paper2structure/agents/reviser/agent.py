@@ -113,7 +113,7 @@ class LLMReviser(StructuredAgent):
                 raise ModelRetry(f"unknown structure {structure_id!r} (valid: {sorted(known)})")
             a = deps.state.artifact(structure_id)
             atoms = read(deps.store.root / a.source)
-            result = run_claim_checks(atoms, [check.model_copy(update={"system_ids": []})])[0]
+            result = run_claim_checks(atoms, [check])[0]
             deps.state.review_checks.append(ReviewCheck(
                 review=len(deps.state.revision_history), structure_id=structure_id, check_id=check.id,
                 kind=check.kind, claim=check.claim, status=result.status, detail=result.detail))
@@ -145,6 +145,16 @@ class LLMReviser(StructuredAgent):
                                     "the rebuilt one must show")
             if output.action == "accept_candidates" and not output.accepted_structure_ids:
                 problems.append("accept_candidates needs the accepted structure IDs")
+            reports = deps.state.validation_reports
+            failed = [i for i in output.accepted_structure_ids if i in known and not reports[i].passed]
+            if output.action == "accept_candidates" and failed:
+                problems.append("these structures fail the deterministic validation and cannot be accepted: "
+                                + "; ".join(f"{i} ({reports[i].summary()})" for i in failed) + ". Accept only "
+                                "structures that pass, or choose "
+                                + ("rebuild_structures" if deps.rebuilds_left > 0 else "stop_inconclusive"))
+            unjudged = sorted(known - {v.structure_id for v in output.verdicts})
+            if unjudged:
+                problems.append(f"give a verdict for every structure under Constructed structures; missing: {unjudged}")
             if (not known and not candidates and deps.state.failed_plans and deps.revisions_left > 0
                     and output.action != "revisit_evidence"):
                 problems.append("no structure could be built but a revision is left: choose revisit_evidence and "
@@ -202,8 +212,8 @@ def reviser_prompt(state: ReconstructionState, revisions_left: int, rebuilds_lef
         parts.append("No structure was built.")
     runs_shown = set()
     for a in current:
-        rep = state.validation_reports.get(a.structure_id)
-        claim_checks = [c for c in rep.checks if c.name.startswith("claim ")] if rep else []
+        rep = state.validation_reports[a.structure_id]
+        claim_checks = [c for c in rep.checks if c.name.startswith("claim ")]
         run_summary = a.construction_summary if a.construction_summary not in runs_shown else "(as above)"
         runs_shown.add(a.construction_summary)
         parts.append("\n".join([
@@ -215,7 +225,7 @@ def reviser_prompt(state: ReconstructionState, revisions_left: int, rebuilds_lef
             f"deviations from plan: {'; '.join(a.deviations) or 'none reported'}",
             *([f"constructor's notes: {a.notes}"] if a.notes else []),
             *([f"construction run summary: {run_summary}"] if a.construction_summary else []),
-            f"deterministic validation: {rep.summary(include_skipped=True) if rep else 'not run'}",
+            f"deterministic validation: {rep.summary(include_skipped=True)}",
             *(["paper claims tested (the plan's checks):"]
               + [f"- {c.name.removeprefix('claim ')} {c.status}: {c.detail}" for c in claim_checks] if claim_checks else []),
         ]))
@@ -302,7 +312,7 @@ def save_report(state: ReconstructionState, store: ArtifactStore) -> Path:
     s, ev, narrative = state.summary, state.evidence, state.report
     claims = {c.claim_id: c for c in structural_claims(s, ev)} if s is not None and ev is not None else {}
     last = state.revision_history[-1] if state.revision_history else None
-    accepted = set(last.accepted_structure_ids) if last and last.action == "accept_candidates" else set()
+    accepted = set(state.accepted_ids)
     status = "under review" if state.status == "running" else state.status
     lines = [f"# Paper2Structure report - {state.run_id}", "", f"**Status:** {status}", "",
              "## 1. Summary",
@@ -396,7 +406,6 @@ def save_report(state: ReconstructionState, store: ArtifactStore) -> Path:
               "`construction/r<revision>_a<attempt>/<plan>/workspace/`."]
     lines += ["", "## 10. Limitations",
               "- The characterization reports are not re-analyzed on revision; the reviewer's feedback goes to the planner.",
-              "- Techniques without a filled-in specification are not analyzed (see section 3).",
               "- Structures are unrelaxed starting geometries; no energies, relaxations or simulated observables "
               "(XPS, IR, XRD) were computed, so agreement with experiment is qualitative only.",
               "- Acceptance means a plausible simulation starting point, not an experimentally established structure."]

@@ -35,10 +35,6 @@ class Observation(BaseModel):
     uncertainty: Optional[str] = Field(default=None, description="Reading precision, e.g. '±0.1 deg' from tick spacing, or the error bar stated in the text.")
     note: str = Field(default="", description="Where in the source, e.g. 'trace 2 of 3, labelled (002)' or 'Rietveld result in Results'.")
 
-    @property
-    def source_type(self) -> Literal["figure", "text"]:
-        return "text" if self.read_from == "stated_in_text" else "figure"
-
 
 class Finding(BaseModel):
     claim: str = Field(description="One interpretive conclusion drawn from the data.")
@@ -61,7 +57,7 @@ class StructuralConstraint(BaseModel):
 
 
 class CharacterizationReport(BaseModel):
-    technique: str
+    technique: SkipJsonSchema[str] = ""  # the agent's spec name, set by CharacterizationAgent.analyze
     observations: list[Observation] = Field(
         default_factory=list,
         description="Values and features read from the figure images or stated in the text records.",

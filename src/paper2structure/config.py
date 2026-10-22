@@ -27,10 +27,12 @@ from typing import Literal, Optional
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models import Model
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+from paper2structure import thresholds as T
 
 load_dotenv()
 
@@ -158,7 +160,7 @@ class CampaignConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     model: Optional[str] = None  # every agent's model; None = $P2S_MODEL or DEFAULT_MODEL; "dry-run" for Agents 1-2 only
     reasoning_effort: Optional[str] = None  # Agents 3-5; None keeps the provider default
-    max_retry: int = 3  # output-validation retries per agent call
+    max_retry: int = Field(3, ge=0)  # output-validation retries per agent call
     use_images: bool = True  # show rendered structures to the Construction and Revision agents
     simulation: Literal["MLIP", "DFT"] = "MLIP"  # what the structures are for; framed in the agents' prompts
 
@@ -185,28 +187,28 @@ class InputsConfig(BaseModel):
 class SummarizerConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     analyze_figures: bool = True  # catalogue the figure images (one vision call per figure)
-    max_figures: int = 30  # figure regions cut from the PDF
+    max_figures: int = Field(30, ge=0)  # figure regions cut from the PDF
 
 
 class CharacterizationConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     techniques: Optional[list[str]] = None  # only these techniques; None = every technique with evidence
-    include_stubs: bool = False  # also run techniques whose spec is not filled in yet
     reasoning_effort: str = REASONING_EFFORT
-    output_retries: int = 1
+    output_retries: int = Field(1, ge=0)
 
 
 class PlanningConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    max_plans: int = 3
-    max_atoms: int = 5000
+    max_plans: int = Field(3, ge=1)
+    max_atoms: int = Field(5000, ge=1)
 
-    @field_validator("max_plans", "max_atoms")
-    @classmethod
-    def _positive(cls, v: int) -> int:
-        if v < 1:
-            raise ValueError("must be positive")
-        return v
+
+class BudgetsConfig(BaseModel):
+    """The workflow's loops; main.py's flags override them."""
+    model_config = ConfigDict(extra="forbid")
+    max_revisions: int = Field(1, ge=0)  # loops the reviewer may take back through evidence -> planning -> construction
+    max_repairs: int = Field(2, ge=0)  # construction retries after hard validation failures or unbuilt plans
+    max_rebuilds: int = Field(2, ge=0)  # rounds the reviewer may send structures back to construction
 
 
 class ConstructionConfig(BaseModel):
@@ -216,13 +218,13 @@ class ConstructionConfig(BaseModel):
     network: bool = False  # let sandboxed commands reach the network
     gpu: bool = False  # expose the GPUs to sandboxed commands (network stays off; drops the socket filter CUDA trips)
     hide_paths: list[str] = Field(default_factory=lambda: [".env", "~/.ssh", "~/.aws", "~/.netrc", "~/.config"])
-    max_requests: int = 60  # model requests per Construction-agent run
-    max_tool_calls: int = 150  # tool calls per Construction-agent run
-    gate_retries: int = 2  # final reports the validation gate may send back before passing failures on
-    code_timeout: float = 600.0  # seconds for the from-scratch replay of each final script
-    memory_limit_gb: Optional[float] = 16.0  # per replay; None disables the cap
+    max_requests: int = Field(60, ge=1)  # model requests per Construction-agent run
+    max_tool_calls: int = Field(150, ge=1)  # tool calls per Construction-agent run
+    gate_retries: int = Field(2, ge=0)  # final reports the validation gate may send back before passing failures on
+    code_timeout: float = Field(600.0, gt=0)  # seconds for the from-scratch replay of each final script
+    memory_limit_gb: Optional[float] = Field(16.0, gt=0)  # per replay; None disables the cap
     planning_tool: bool = True  # harness Planning: a task list the agent keeps
-    reminder_every: int = 10  # model requests between reminders of the script contract; 0 disables
+    reminder_every: int = Field(10, ge=0)  # model requests between reminders of the script contract; 0 disables
     delegation: bool = False  # Coder's delegate_task (hand a sub-task to a fresh run of the agent)
     memory_dir: Optional[str] = None  # harness Memory notebook kept across runs; None disables
 
@@ -233,23 +235,23 @@ class RevisionConfig(BaseModel):
 
 
 class ValidationConfig(BaseModel):
+    """The validation gate's thresholds; the defaults and their meaning are in paper2structure.thresholds."""
     model_config = ConfigDict(extra="forbid")
-    overlap_scale: float = 0.6  # fail below this x covalent-radius sum
-    close_contact_scale: float = 0.85  # warn below this for molecular contacts
-    anion_contact_scale: float = 1.3  # warn below this for molecule O/N/S/halogen - surface anion pairs
-    bond_scale: float = 1.2  # bond detection for molecule integrity
-    binding_scale: float = 1.5  # adsorbate-substrate contact beyond this x covalent sum warns (weakly bound)
-    detached_scale: float = 2.0  # ... and beyond this fails (detached)
+    overlap_scale: float = Field(T.OVERLAP_SCALE, gt=0)
+    close_contact_scale: float = Field(T.CLOSE_CONTACT_SCALE, gt=0)
+    anion_contact_scale: float = Field(T.ANION_CONTACT_SCALE, gt=0)
+    bond_scale: float = Field(T.BOND_SCALE, gt=0)
+    binding_scale: float = Field(T.BINDING_SCALE, gt=0)
+    detached_scale: float = Field(T.DETACHED_SCALE, gt=0)
     charge_neutrality: bool = False  # gate on zero net formal charge (substrate oxidation states + SMILES charges)
-    min_vacuum: float = 15.0  # A between periodic images of slabs/nanocrystals
-    # crystal chemistry of ionic substrates: bond-valence sums of the framework cations at interior sites
-    bvs_warn: float = 0.30  # warn beyond this relative deviation from the oxidation state
-    bvs_fail: float = 0.40  # ... and fail beyond this
-    bond_share_warn: float = 0.45  # warn when one bond carries more than this share of its cation's valence
-    like_contact_warn: float = 0.8  # cation-cation / anion-anion pairs below this x covalent sum warn
-    like_contact_fail: float = 0.7  # ... and fail below this
-    molecule_bond_tol: float = 0.12  # A: molecule bond lengths must match RDKit conformers of their SMILES
-    molecule_angle_tol: float = 20.0  # degrees: ... and bond angles (RDKit's own spread: 0.09 A, 15 degrees)
+    min_vacuum: float = Field(T.MIN_VACUUM, ge=0)
+    bvs_warn: float = Field(T.BVS_WARN, gt=0)
+    bvs_fail: float = Field(T.BVS_FAIL, gt=0)
+    bond_share_warn: float = Field(T.BOND_SHARE_WARN, gt=0)
+    like_contact_warn: float = Field(T.LIKE_CONTACT_WARN, gt=0)
+    like_contact_fail: float = Field(T.LIKE_CONTACT_FAIL, gt=0)
+    molecule_bond_tol: float = Field(T.MOLECULE_BOND_TOL, gt=0)
+    molecule_angle_tol: float = Field(T.MOLECULE_ANGLE_TOL, gt=0)
 
 
 class ExportConfig(BaseModel):
@@ -295,6 +297,7 @@ class Paper2StructureConfig(BaseModel):
     summarizer: SummarizerConfig = Field(default_factory=SummarizerConfig)
     characterization: CharacterizationConfig = Field(default_factory=CharacterizationConfig)
     planning: PlanningConfig = Field(default_factory=PlanningConfig)
+    budgets: BudgetsConfig = Field(default_factory=BudgetsConfig)
     construction: ConstructionConfig = Field(default_factory=ConstructionConfig)
     validation: ValidationConfig = Field(default_factory=ValidationConfig)
     revision: RevisionConfig = Field(default_factory=RevisionConfig)

@@ -21,7 +21,7 @@ def _main(out, *args, timeout: float = 3600) -> dict:
                           cwd=REPO, capture_output=True, text=True, timeout=timeout)
     assert proc.returncode == 0, proc.stdout[-3000:] + proc.stderr[-3000:]
     result = json.loads((out / "result.json").read_text())
-    assert result["status"] in ("accepted", "inconclusive", "revision_budget_exhausted"), result["errors"]
+    assert result["status"] in ("accepted", "inconclusive"), result["errors"]
     assert result["structure_files"] and (out / "final_report.md").exists()
     return result
 

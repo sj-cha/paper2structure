@@ -35,7 +35,6 @@ system_finder = Agent(
     None,
     name="system_finder",
     output_type=SystemsOutput,
-    deps_type=AgentDeps,
     defer_model_check=True,
     retries=2,
     instructions=f"""
@@ -50,7 +49,6 @@ Task:
    Do NOT list precursors/reagents (e.g. La2O3 used for synthesis) or impurity phases as systems.
 3. Write each name as an explicit formula when the paper gives a series formula
    (La1-xBixCrO3 with x=0.2 -> 'La0.8Bi0.2CrO3') and record the variables.
-{TECHNIQUE_GUIDE}
 """,
 )
 
@@ -68,8 +66,8 @@ You will get the paper text, the list of all systems with their IDs, and the tar
 Extract, using ONLY what the text says (never invent numbers):
 - synthesis: method, precursors, temperatures/times/atmospheres.
 - structure: crystal system, space group, lattice parameters, site occupancy, phase purity.
-- evidence: one item per technique which gives structural information (XRD, TEM, XPS, AFM, NMR, SEM, UV-Vis, TGA, XAS, Raman, and DFT ) describing what that technique showed
-  for the target system. Include instrument settings in `conditions`, numbers in `measurements`,
+- evidence: one item per technique that gives structural information (the canonical names below, or
+  others the paper uses) describing what that technique showed for the target system. Include instrument settings in `conditions`, numbers in `measurements`,
   the figures the text cites in `figure_refs`, a short verbatim `quote` and the page number.
   If a statement applies to the whole series, put all relevant system IDs in `system_ids`
   (always including the target ID).
@@ -101,8 +99,7 @@ whose results it lists (Rietveld or diffraction refinement -> XRD, binding energ
 shells -> XAS, ...), the systems in its rows or columns, its column headings with units as the axes,
 and what it lists in the description, without transcribing its values (its text is in the paper
 text, and the specialist reads the image).
-If the image is not a scientific figure or table (logo, journal banner), return no panels and
-useful_for_structure=false.
+If the image is not a scientific figure or table (logo, journal banner), return no panels.
 {TECHNIQUE_GUIDE}
 """,
 )

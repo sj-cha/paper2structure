@@ -8,10 +8,10 @@ from ase import Atoms
 from pymatgen.core import Lattice, Structure
 from pymatgen.io.ase import AseAtomsAdaptor
 
+from paper2structure.thresholds import OVERLAP_SCALE  # build_bulk rejects overlaps the gate would fail
 from paper2structure.tools._geometry import ROLE_SUBSTRATE, cation_elements, clean_arrays, coordination_pairs, rcov
 from paper2structure.tools._symmetry import Setting, hall_operations, orbit, resolve, settings_of
 
-OVERLAP_SCALE = 0.6  # x covalent-radius sum: the validation gate's overlap threshold
 MERGE_TOL = 0.05  # A: symmetry images closer than this are one site (rounded special positions)
 LENGTH_TOL = 1e-3  # relative: a given lattice length may differ this much from the one the setting fixes
 ANGLE_TOL = 0.1  # deg: ... and an angle this much

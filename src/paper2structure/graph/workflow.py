@@ -33,11 +33,12 @@ def build_graph():
     return g.build()
 
 
-def build_deps(cfg: Paper2StructureConfig, output_dir: str | Path, seed: int, max_revisions: int = 1,
-               max_repairs: int = 2, models: Optional[dict] = None, max_rebuilds: int = 2) -> WorkflowDeps:
-    """Agents and run directory for one run. `models` may map "paper" (Agents 1-2), "planner",
-    "constructor" and "reviser" to pydantic-ai Model instances or names (tests, "dry-run");
-    otherwise cfg.campaign.model is used."""
+def build_deps(cfg: Paper2StructureConfig, output_dir: str | Path, seed: int, max_revisions: Optional[int] = None,
+               max_repairs: Optional[int] = None, models: Optional[dict] = None,
+               max_rebuilds: Optional[int] = None) -> WorkflowDeps:
+    """Agents and run directory for one run. The loop budgets default to cfg.budgets. `models` may
+    map "paper" (Agents 1-2), "planner", "constructor" and "reviser" to pydantic-ai Model
+    instances or names (tests, "dry-run"); otherwise cfg.campaign.model is used."""
     models = models or {}
     c = cfg.campaign
     planner = LLMPlanner(models.get("planner", c.model), c.reasoning_effort, max_plans=cfg.planning.max_plans,
@@ -52,10 +53,12 @@ def build_deps(cfg: Paper2StructureConfig, output_dir: str | Path, seed: int, ma
           if overrides != "none" else [])])
     reviser = LLMReviser(models.get("reviser", c.model), c.reasoning_effort, max_retry=c.max_retry,
                          read_scripts=cfg.revision.read_scripts, constraints=constraints)
+    b = cfg.budgets
     return WorkflowDeps(cfg=cfg, store=ArtifactStore(output_dir), planner=planner, constructor=constructor,
                         reviser=reviser, seed=int(seed), paper_model=models.get("paper"),
-                        max_revisions=int(max_revisions), max_repairs=int(max_repairs),
-                        max_rebuilds=int(max_rebuilds))
+                        max_revisions=b.max_revisions if max_revisions is None else int(max_revisions),
+                        max_repairs=b.max_repairs if max_repairs is None else int(max_repairs),
+                        max_rebuilds=b.max_rebuilds if max_rebuilds is None else int(max_rebuilds))
 
 
 async def run_workflow(deps: WorkflowDeps, run_id: Optional[str] = None) -> ReconstructionResult:

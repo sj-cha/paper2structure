@@ -8,13 +8,14 @@ from pymatgen.core import Composition
 from rdkit import Chem
 
 from paper2structure.agents.characterization.schemas import ExperimentalEvidence
-from paper2structure.agents.planner.claims import Claim, claims_about, claims_text, structural_claims
+from paper2structure.agents.planner.claims import Claim, claims_about, structural_claims
 from paper2structure.agents.planner.schemas import BulkSpec, PlanSet, StructurePlan
 from paper2structure.agents.structured_agent import StructuredAgent
 from paper2structure.agents.summarizer.schemas import PaperGraph
 from paper2structure.config import OverridesConfig, simulation_brief
 from paper2structure.tools._symmetry import resolve, space_group_number
 from paper2structure.tools.bulk_builder import build_bulk
+from paper2structure.tools.structure_export import NAME
 
 log = logging.getLogger(__name__)
 
@@ -212,6 +213,11 @@ def check_plan_set(plans: PlanSet, deps: PlanningDeps) -> list[str]:
         problems.append(f"{len(plans.plans)} plans given; at most {deps.max_plans} allowed")
     ov = deps.overrides
     for p in plans.plans:
+        if not NAME.match(p.plan_id):
+            problems.append(f"plan ID {p.plan_id!r} names files and folders: use letters, digits, '_', '-', '.' "
+                            "(e.g. 'P1')")
+        if deps.system_ids and not p.system_ids:
+            problems.append(f"{p.plan_id}: give the system_ids it models (valid: {sorted(deps.system_ids)})")
         cited = (set(p.evidence_ids) | {e for c in p.crystals for e in c.lattice.evidence_ids}
                  | {e for t in p.targets for e in t.evidence_ids} | {e for c in p.checks for e in c.evidence_ids})
         unknown = cited - deps.evidence_ids - set(deps.claims)
@@ -329,7 +335,8 @@ def planner_prompt(summary: PaperGraph, evidence: ExperimentalEvidence, history:
              evidence.model_dump_json(exclude_none=True)]
     if claims:
         parts += ["## Structural claims (every plan tests each claim about its systems with a check, "
-                  "or lists it in unchecked with the reason)", claims_text(claims)]
+                  "or lists it in unchecked with the reason)",
+                  "\n".join(f"- {c.claim_id} [{', '.join(c.system_ids) or 'all systems'}] {c.text}" for c in claims)]
     if history:
         parts += ["## Previous plan sets (oldest first)"] + [h.model_dump_json(exclude_none=True) for h in history]
     if feedback:

@@ -1,20 +1,19 @@
 from dataclasses import dataclass
 
-from ...config import TECHNIQUES, TechniqueCategory, canonical_technique
+from ...config import canonical_technique
 
 
 @dataclass(frozen=True)
 class TechniqueSpec:
     """Domain knowledge that specializes the generic characterization agent.
 
-    ``name`` must be a canonical technique name from ``paper2structure.config.TECHNIQUES``;
-    aliases and category come from there. Cloning the agent for a new technique means
-    filling in one of these; see ``techniques/xrd.py`` for a worked example. Stubs
-    (``implemented=False``) are skipped by the orchestrator unless asked for.
+    ``name`` must be a canonical technique name from ``paper2structure.config.TECHNIQUES``
+    (which holds its aliases and category). Cloning the agent for a new technique means filling
+    in one of these, registering it in ``techniques/__init__.py`` and adding the name to the
+    vocabulary; see ``techniques/xrd.py`` for a worked example.
     """
 
     name: str
-    implemented: bool = True
     # What figures of this technique contain.
     observables: tuple[str, ...] = ()
     # How to read values off this technique's figures: axes, conventions, visual pitfalls.
@@ -26,14 +25,6 @@ class TechniqueSpec:
     # What this technique cannot determine; the agent must not claim these.
     limitations: tuple[str, ...] = ()
     extra_instructions: str = ""
-
-    @property
-    def aliases(self) -> tuple[str, ...]:
-        return TECHNIQUES[self.name][1] if self.name in TECHNIQUES else ()
-
-    @property
-    def category(self) -> TechniqueCategory:
-        return TECHNIQUES[self.name][0] if self.name in TECHNIQUES else "other"
 
     def matches(self, technique: str) -> bool:
         return canonical_technique(technique) == self.name

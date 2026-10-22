@@ -59,7 +59,6 @@ class ExtractedFigure:
 
 @dataclass
 class PaperDocument:
-    pdf_path: Path
     pages: list[str]  # text per page, figure-internal text (axis ticks etc.) removed
     figures: list[ExtractedFigure]
 
@@ -259,4 +258,4 @@ def read_pdf(pdf_path: str | Path, figures_dir: str | Path, max_figures: int = 3
                                                page_captions=[c for _, c in fig_captions + table_captions], kind=kind))
     for fig in figures:  # citations can be on any page, so this runs after all pages are read
         fig.context = _citing_sentences(body, fig.caption, fig.kind)
-    return PaperDocument(pdf_path=pdf_path, pages=pages, figures=figures)
+    return PaperDocument(pages=pages, figures=figures)

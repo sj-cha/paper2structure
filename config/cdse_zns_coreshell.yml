@@ -14,13 +14,17 @@ summarizer:  # Agent 1
 
 characterization:  # Agent 2: one agent per technique with evidence in the paper
   techniques: null  # e.g. [XRD, TEM]; null = every technique found
-  include_stubs: false  # also run techniques whose spec is a stub
   reasoning_effort: high
   output_retries: 1
 
 planning:
   max_plans: 3
   max_atoms: 5000
+
+budgets:  # the workflow's loops (main.py's --max_revisions/--max_repairs/--max_rebuilds override them)
+  max_revisions: 1  # loops the reviewer may take back through evidence -> planning -> construction
+  max_repairs: 2  # construction retries after hard validation failures or unbuilt plans
+  max_rebuilds: 2  # rounds the reviewer may send structures back to construction under the same plans
 
 construction:  # the Construction agent: a pydantic-ai-harness Coder, one sandboxed workspace per attempt
   sandbox: bubblewrap  # bubblewrap (no network, writes only inside the workspace) or none

@@ -8,14 +8,16 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
+from collections import Counter
 from pathlib import Path
 
 from ...config import get_model
-from .graph import summarize_paper_sync, summarizer_graph
+from .graph import summarize_paper, summarizer_graph
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Summarize a materials paper into a knowledge graph.")
+    parser = argparse.ArgumentParser(description="Summarize a materials paper: its material systems and evidence.")
     parser.add_argument("pdf", nargs="?", help="Path to the paper PDF")
     parser.add_argument("--out", default=None, help="Output folder (default: outputs/<pdf name>)")
     parser.add_argument("--model", default=None, help="e.g. openai:gpt-5.6-luna (default), or dry-run")
@@ -31,10 +33,11 @@ def main() -> None:
         parser.error("pdf is required")
 
     out = Path(args.out) if args.out else Path("outputs") / Path(args.pdf).stem
-    graph = summarize_paper_sync(args.pdf, out, get_model(args.model), analyze_figures=not args.no_figures, max_figures=args.max_figures)
+    graph = asyncio.run(summarize_paper(args.pdf, out, get_model(args.model), analyze_figures=not args.no_figures,
+                                        max_figures=args.max_figures))
     print(f"\nOpen {out / 'summary.md'} for the readable summary.")
-    for tech in sorted({e.technique for e in graph.evidence}):
-        print(f"  {tech}: {len(graph.evidence_for(technique=tech))} evidence items")
+    for tech, n in sorted(Counter(e.technique for e in graph.evidence).items()):
+        print(f"  {tech}: {n} evidence items")
 
 
 if __name__ == "__main__":

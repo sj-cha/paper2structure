@@ -17,8 +17,8 @@ from pydantic_ai.messages import ModelResponse, RetryPromptPart, ToolCallPart, U
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from helpers import GOOD_SCRIPT, PT_PLAN, coding_model, constructor_model, cover_claims, reviser_model
-from paper2structure.agents.characterization import (REGISTRY, CharacterizationReport, ExperimentalEvidence,
-                                                     Observation, StructuralConstraint, TechniqueSpec)
+from paper2structure.agents.characterization import (CharacterizationReport, ExperimentalEvidence, Observation,
+                                                     StructuralConstraint)
 from paper2structure.agents.planner import LLMPlanner, PlanningDeps, PlanSet, check_plan_set
 from paper2structure.agents.summarizer import Evidence, MaterialSystem, PaperGraph, load_graph
 from paper2structure.agents.summarizer.pdf_reader import read_pdf
@@ -27,6 +27,7 @@ from paper2structure.agents.structured_agent import StructuredAgent
 from paper2structure.config import (DEFAULT_MODEL, DRY_RUN_OUTPUTS, CharacterizationConfig, OverridesConfig,
                                     Paper2StructureConfig, canonical_technique, get_model)
 from paper2structure.graph.nodes import characterize
+from paper2structure.graph.state import ArtifactStore
 from paper2structure.graph.workflow import build_deps, run_workflow
 
 LINEAR = ["SummarizePaper", "AnalyzeEvidence", "PlanStructures", "ConstructStructures", "ValidateStructures",
@@ -130,8 +131,8 @@ def _xrd_text(evidence_id: str = "E001") -> Evidence:
 
 
 def _mixed_paper(tmp_path: Path) -> tuple[PaperGraph, Path, Path]:
-    """XRD text and figure evidence (implemented spec), NMR (a stub spec) and a technique outside
-    the vocabulary; returns the paper, its folder and the figure image (relative path in the paper)."""
+    """XRD text and figure evidence, NMR text evidence and a technique outside the vocabulary;
+    returns the paper, its folder and the figure image (relative path in the paper)."""
     paper_dir = tmp_path / "paper"
     image = paper_dir / "figures" / "p1_f1.png"
     image.parent.mkdir(parents=True)
@@ -211,46 +212,34 @@ def test_pdf_to_structures_in_one_graph_run(tmp_path, paper_pdf):
     assert "| XRD | phase | S1 | single phase | low |" in report
 
 
-@pytest.fixture
-def nmr_stub(monkeypatch):
-    """NMR as a stub spec (implemented=False), whatever the registry holds."""
-    monkeypatch.setitem(REGISTRY, "NMR", TechniqueSpec(name="NMR", implemented=False))
-
-
-def test_characterize_runs_one_agent_per_implemented_technique(tmp_path, nmr_stub):
+def test_characterize_runs_one_agent_per_technique(tmp_path):
     paper, paper_dir, image = _mixed_paper(tmp_path)
     calls, out = [], tmp_path / "characterization"
+    out.mkdir()
+    (out / "TEM.json").write_text("{}")  # another run's report: removed first
     ev = asyncio.run(characterize(paper, paper_dir, out, _recording_dry_run(calls), CharacterizationConfig()))
 
-    assert set(ev.reports) == {"XRD"} and ev.errors == []
-    assert ev.skipped == {"NMR": "spec is a stub", "positron annihilation": "not in the technique vocabulary"}
-    assert ev.reports["XRD"].technique == "XRD" and ev.ids == {"XRD:O1"}
+    assert set(ev.reports) == {"XRD", "NMR"} and ev.errors == []
+    assert ev.skipped == {"positron annihilation": "not in the technique vocabulary"}
+    assert ev.reports["XRD"].technique == "XRD" and ev.reports["NMR"].technique == "NMR"
+    assert ev.ids == {"XRD:O1", "NMR:O1"}  # the same observation ID, told apart by its technique
 
     # the XRD agent got only XRD evidence: the text item, and the figure record with its image
-    [items] = calls
+    [items] = [c for c in calls if "E001" in _text(c)]
     prompt = _text(items)
-    assert "E001" in prompt and "p1_f1" in prompt and "E003" not in prompt and "E004" not in prompt
+    assert "p1_f1" in prompt and "E003" not in prompt and "E004" not in prompt
     assert [x.data for x in items if isinstance(x, BinaryContent)] == [image.read_bytes()]
 
     # one JSON per report, which `inputs.characterization` reloads
-    assert sorted(p.name for p in out.glob("*.json")) == ["XRD.json"]
+    assert sorted(p.name for p in out.glob("*.json")) == ["NMR.json", "XRD.json"]
     loaded = ExperimentalEvidence.load(out)
     assert loaded.reports == ev.reports and loaded.ids == ev.ids
 
 
-def test_characterize_stubs_and_technique_filter(tmp_path, nmr_stub):
+def test_characterize_technique_filter(tmp_path):
     paper, paper_dir, _ = _mixed_paper(tmp_path)
-    dry = get_model("dry-run")
-
-    stubs = asyncio.run(characterize(paper, paper_dir, tmp_path / "stubs", dry,
-                                     CharacterizationConfig(include_stubs=True)))
-    assert set(stubs.reports) == {"XRD", "NMR"} and stubs.errors == []
-    assert stubs.skipped == {"positron annihilation": "not in the technique vocabulary"}
-    assert stubs.ids == {"XRD:O1", "NMR:O1"}  # the same observation ID, told apart by its technique
-    assert set(ExperimentalEvidence.load(tmp_path / "stubs").reports) == {"XRD", "NMR"}
-
-    only = asyncio.run(characterize(paper, paper_dir, tmp_path / "only", dry,
-                                    CharacterizationConfig(techniques=["X-ray diffraction"], include_stubs=True)))
+    only = asyncio.run(characterize(paper, paper_dir, tmp_path / "only", get_model("dry-run"),
+                                    CharacterizationConfig(techniques=["X-ray diffraction"])))
     assert set(only.reports) == {"XRD"}  # an alias names the canonical technique; NMR is not requested
     assert [p.name for p in (tmp_path / "only").glob("*.json")] == ["XRD.json"]
 
@@ -364,6 +353,17 @@ def test_evidence_is_focused_on_the_summary_systems():
     focused = ExperimentalEvidence(reports={"XRD": report}).focused({"S1", "S2"}).reports["XRD"]
     assert [o.observation_id for o in focused.observations] == ["O1", "O3", "O4"]
     assert [c.constraint_id for c in focused.structural_constraints] == ["C2"]
+
+
+def test_plans_need_file_safe_ids_and_their_systems(tmp_path):
+    deps = PlanningDeps(evidence_ids={"E001"}, max_plans=3, overrides=OverridesConfig(), system_ids={"S1", "S2"})
+    plans = _plan(["E001"], [])
+    plans["plans"][0]["plan_id"] = "../P1"
+    problems = check_plan_set(PlanSet.model_validate(plans), deps)
+    assert any("plan ID '../P1' names files and folders" in p for p in problems), problems
+    assert any("give the system_ids it models (valid: ['S1', 'S2'])" in p for p in problems), problems
+    with pytest.raises(ValueError, match="leaves the run directory"):  # plans saved before the check
+        ArtifactStore(tmp_path).path("construction", "r0_a0", "../../x")
 
 
 def test_planner_cites_summary_and_technique_qualified_ids():

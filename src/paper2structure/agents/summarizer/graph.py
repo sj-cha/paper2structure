@@ -14,7 +14,6 @@ and the token usage every LLM call adds to.
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -40,9 +39,6 @@ class SummarizerState:
     evidence: list[Evidence] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
-    def new_evidence_id(self) -> str:
-        return f"E{len(self.evidence) + 1:03d}"
-
     def systems_text(self) -> str:
         return "\n".join(f"- {s.system_id}: {s.name} {s.composition_variables or ''} ({s.form or 'form not stated'})" for s in self.systems)
 
@@ -54,10 +50,6 @@ class SummarizerDeps:
     analyze_figures: bool = True
     max_figures: int = 30
     usage: RunUsage = field(default_factory=RunUsage)
-
-    @property
-    def model_name(self) -> str:
-        return self.model if isinstance(self.model, str) else self.model.model_name
 
 
 Ctx = GraphRunContext[SummarizerState, SummarizerDeps]
@@ -88,8 +80,7 @@ class FindSystems(BaseNode[SummarizerState, SummarizerDeps, PaperGraph]):
 
     async def run(self, ctx: Ctx) -> ExtractTextEvidence | BuildGraph:
         ctx.deps.on_progress("Identifying the material systems studied...")
-        result = await system_finder.run(ctx.state.document.full_text, model=ctx.deps.model, deps=AgentDeps(),
-                                         usage=ctx.deps.usage)
+        result = await system_finder.run(ctx.state.document.full_text, model=ctx.deps.model, usage=ctx.deps.usage)
         ctx.state.metadata = result.output.metadata
         ctx.state.systems = [
             MaterialSystem(system_id=f"S{i}", **c.model_dump(exclude={"why_distinct"}))
@@ -126,7 +117,7 @@ class ExtractTextEvidence(BaseNode[SummarizerState, SummarizerDeps, PaperGraph])
             for item in out.evidence:
                 state.evidence.append(
                     Evidence(
-                        evidence_id=state.new_evidence_id(),
+                        evidence_id="",  # BuildGraph numbers the evidence once it is merged
                         source_type="text",
                         source_ref=f"page {item.page}" if item.page else "text",
                         **item.model_dump(exclude={"page"}),
@@ -170,10 +161,9 @@ class AnalyzeFigure(BaseNode[SummarizerState, SummarizerDeps, PaperGraph]):
                 ref = f"{out.figure_label}" + (f" panel {panel.panel_label}" if panel.panel_label else "") + f" (page {fig.page})"
                 state.evidence.append(
                     Evidence(
-                        evidence_id=state.new_evidence_id(),
+                        evidence_id="",  # BuildGraph numbers the evidence once it is merged
                         system_ids=panel.system_ids,
                         technique=panel.technique,
-                        technique_category=panel.technique_category,
                         source_type="figure",
                         source_ref=ref,
                         summary=f"{panel.plot_type}: {panel.description}",
@@ -194,14 +184,14 @@ class AnalyzeFigure(BaseNode[SummarizerState, SummarizerDeps, PaperGraph]):
 
 @dataclass
 class BuildGraph(BaseNode[SummarizerState, SummarizerDeps, PaperGraph]):
-    """Merge duplicates, build the knowledge graph and save everything. No LLM."""
+    """Merge duplicates, number the evidence and save the PaperGraph. No LLM."""
 
     async def run(self, ctx: Ctx) -> End[PaperGraph]:
-        state = ctx.state
-        ctx.deps.on_progress("Building the knowledge graph and saving files...")
+        state, model = ctx.state, ctx.deps.model
+        ctx.deps.on_progress("Merging the evidence and saving files...")
         state.evidence = merge_duplicate_evidence(state.evidence)
-        metadata = state.metadata or PaperMetadata(title=state.pdf_path.stem, summary="(not extracted)")
-        graph = build_graph(str(state.pdf_path), ctx.deps.model_name, metadata, state.systems, state.evidence)
+        graph = build_graph(str(state.pdf_path), model if isinstance(model, str) else model.model_name,
+                            state.metadata, state.systems, state.evidence)
         path = save_outputs(graph, state.out_dir)
         if state.errors:
             (state.out_dir / "errors.txt").write_text("\n".join(state.errors))
@@ -225,7 +215,7 @@ def merge_duplicate_evidence(evidence: list[Evidence]) -> list[Evidence]:
         key = (ev.technique.lower(), " ".join(ev.quote.lower().split()), " ".join(ev.summary.lower().split()))
         if key in merged:
             keep = merged[key]
-            keep.system_ids = sorted(set(keep.system_ids) | set(ev.system_ids), key=lambda s: int(s[1:]) if s[1:].isdigit() else 0)
+            keep.system_ids = sorted(set(keep.system_ids) | set(ev.system_ids), key=lambda s: (len(s), s))
             known = {(m.quantity, m.value) for m in keep.measurements}
             keep.measurements += [m for m in ev.measurements if (m.quantity, m.value) not in known]
         else:
@@ -270,5 +260,3 @@ async def summarize_paper(
     return await summarizer_graph.run(state=state, deps=deps, inputs=ReadPDF())
 
 
-def summarize_paper_sync(*args, **kwargs) -> PaperGraph:
-    return asyncio.run(summarize_paper(*args, **kwargs))

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Optional
-
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -51,7 +49,7 @@ class StructureArtifact(BaseModel):
     files: dict[str, str]
     source: str = Field(description="the emitted extxyz (full per-atom metadata), relative to the run dir")
     script: str = Field(description="standalone script that regenerates the structure, relative to the run dir")
-    image: Optional[str] = None
+    image: str = Field(description="rendered top and side views (PNG), relative to the run dir")
     method: str = ""
     target_checks: list[TargetCheck] = Field(default_factory=list)
     formula: str

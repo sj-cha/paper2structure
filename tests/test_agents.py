@@ -161,12 +161,12 @@ def test_constructor_writes_runs_and_verifies_a_standalone_script(tmp_path):
         return inner(messages, info)
 
     agent = LLMConstructor(coding_model(spy), None, make_config())
-    report, deps = asyncio.run(agent.construct(PlanSet.model_validate(PT_PLAN), ["P1"], tmp_path, seed=7))
+    report, deps = asyncio.run(agent.construct(PlanSet.model_validate(PT_PLAN).get("P1"), tmp_path, seed=7))
     assert [s.name for s in report.structures] == ["pt111_co_top"]
     assert deps.scripts["pt111_co_top"] == (tmp_path / "workspace" / "build_P1.py").resolve()
     assert deps.verified["pt111_co_top"] == tmp_path / "replay" / "build_P1" / "structures" / "pt111_co_top.extxyz"
     ws = tmp_path / "workspace"
-    assert (ws / "task" / "plans.json").exists() and (ws / ".agents" / "skills" / "structure-toolkit" / "SKILL.md").exists()
+    assert (ws / "task" / "plan.json").exists() and (ws / ".agents" / "skills" / "structure-toolkit" / "SKILL.md").exists()
     # harness Coder + Skills + Planning tools next to the workflow's own checks
     assert {"read_file", "write_file", "edit_file", "shell", "load_capability", "check_structure",
             "view_structure"} <= seen["tools"]
@@ -199,7 +199,7 @@ def _construct(tmp_path, fn):
         return fn(messages, info)
 
     agent = LLMConstructor(coding_model(spy), None, make_config())
-    report, _ = asyncio.run(agent.construct(PlanSet.model_validate(PT_PLAN), ["P1"], tmp_path, seed=7))
+    report, _ = asyncio.run(agent.construct(PlanSet.model_validate(PT_PLAN).get("P1"), tmp_path, seed=7))
     retries = " ".join(str(p.content) for m in seen["messages"] for p in m.parts if isinstance(p, RetryPromptPart))
     return report, retries
 
@@ -252,7 +252,7 @@ def test_validation_gate_sends_reports_back_but_never_stalls_the_run(tmp_path):
         return inner(messages, info)
 
     agent = LLMConstructor(coding_model(spy), None, make_config(construction={"gate_retries": 2}))
-    report, deps = asyncio.run(agent.construct(PlanSet.model_validate(PT_PLAN), ["P1"], tmp_path, seed=0))
+    report, deps = asyncio.run(agent.construct(PlanSet.model_validate(PT_PLAN).get("P1"), tmp_path, seed=0))
     gate_msgs = [r for r in seen["retries"] if "validation gate" in r]
     assert len(gate_msgs) == 2 and "adsorbate_binding" in gate_msgs[0] and "detached" in gate_msgs[0]
     # after gate_retries rejections the report passes on, with its failing gate report, to ValidateStructures
@@ -277,7 +277,7 @@ def test_replays_run_in_parallel_and_unchanged_scripts_are_not_rerun(tmp_path, m
         return CommandResult(exit_code=0, stdout="", stderr="")
 
     monkeypatch.setattr(constructor, "replay", fake_replay)
-    deps = constructor.ConstructionDeps(workdir=tmp_path, plan_ids=["P1"], plans=PlanSet.model_validate(PT_PLAN),
+    deps = constructor.ConstructionDeps(workdir=tmp_path, plan=PlanSet.model_validate(PT_PLAN).get("P1"),
                                         cfg=make_config())
     scripts = []
     for sub in ("a", "b", "c"):  # same file name in three folders
@@ -293,7 +293,6 @@ def test_replays_run_in_parallel_and_unchanged_scripts_are_not_rerun(tmp_path, m
     scripts[1].write_text("print('changed')\n")
     asyncio.run(constructor.replay_scripts(deps, scripts))
     assert len(calls) == 4  # only the edited script runs again
-    assert deps.plan("P1") is not None and deps.plan("P9") is None
 
 
 def test_api_reference_covers_public_tools():
@@ -372,3 +371,47 @@ def test_reviser_writes_the_report_before_ending_the_run(tmp_path):
     assert "## 2. Paper and material systems\n- [SYNTHETIC FIXTURE]" in report and "| S1 | Pt(111) |" in report
     assert "## 3. Characterization" in report and "| LEED | CO coverage (required) | S1 |" in report
     assert "## 7. Assessment\nscripted assessment" in report and "- relax with an MLIP" in report
+
+
+def test_reviser_judges_every_structure_and_accepts_only_validated_ones(tmp_path):
+    from paper2structure.agents.constructor.schemas import StructureArtifact
+    from paper2structure.tools.schemas import CheckResult, ValidationReport
+
+    seen = []
+
+    def fn(messages, info):
+        seen.append([str(p.content) for m in messages for p in m.parts if isinstance(p, RetryPromptPart)])
+        if not _retried(messages):  # accepts a structure that failed validation, without a verdict
+            return _final(info, {"action": "accept_candidates", "reasoning": "scripted", "accepted_structure_ids": ["s1"]})
+        if not reported(messages):
+            return ModelResponse(parts=[ToolCallPart("write_report", REPORT)])
+        return _final(info, {"action": "stop_inconclusive", "reasoning": "scripted",
+                             "verdicts": [{"structure_id": "s1", "resembles_paper": False, "issues": ["overlap"]}]})
+
+    s, e = _inputs()
+    artifact = StructureArtifact(structure_id="s1", plan_id="P1", name="s1", revision=0, files={},
+                                 source="structures/s1.extxyz", script="structures/s1.py", image="structures/s1.png",
+                                 formula="Pt4", n_atoms=4)
+    failed = ValidationReport(structure_id="s1", passed=False,
+                              checks=[CheckResult(name="overlaps", status="fail", detail="Pt0-Pt1 0.9 A")])
+    state = ReconstructionState(run_id="t", summary=s, evidence=e, plan_history=[PlanSet.model_validate(PT_PLAN)],
+                                artifacts=[artifact], current_ids=["s1"], validation_reports={"s1": failed})
+    decision = asyncio.run(LLMReviser(FunctionModel(fn), None).review(state, ArtifactStore(tmp_path), 0,
+                                                                      rebuilds_left=1))
+    assert decision.action == "stop_inconclusive"
+    assert "s1 (FAIL - overlaps: Pt0-Pt1 0.9 A)" in seen[1][0] and "choose rebuild_structures" in seen[1][0]
+    assert "give a verdict for every structure" in seen[1][0] and "missing: ['s1']" in seen[1][0]
+
+
+def test_a_broken_manifest_goes_back_to_the_agent(tmp_path):
+    import paper2structure.agents.constructor.agent as constructor
+    from pydantic_ai import ModelRetry
+
+    deps = constructor.ConstructionDeps(workdir=tmp_path, plan=PlanSet.model_validate(PT_PLAN).get("P1"),
+                                        cfg=make_config())
+    manifest = deps.workspace / "structures" / "manifest.json"
+    manifest.parent.mkdir(parents=True)
+    for text in ("not json", '{"name": "x"}', '[{"name": "x"}]'):
+        manifest.write_text(text)
+        with pytest.raises(ModelRetry, match="manifest.json is malformed"):
+            deps.manifest()

@@ -46,16 +46,16 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--model", default=None, help="every agent's model, e.g. openai:gpt-5.6-luna (sets campaign.model)")
     p.add_argument("--techniques", nargs="+", default=None,
                    help="characterize only these techniques, e.g. XRD TEM; default: every technique found")
-    p.add_argument("--include_stubs", action="store_true",
-                   help="also run characterization agents whose technique spec is not filled in yet")
     p.add_argument("--no_figures", action="store_true", help="summarizer skips figure cataloguing")
     p.add_argument("--max_figures", type=int, default=None, help="max figure regions cut from the PDF")
-    p.add_argument("--max_revisions", type=int, default=1,
-                   help="loops the reviewer may take back through evidence -> planning -> construction")
-    p.add_argument("--max_rebuilds", type=int, default=2,
-                   help="rounds the reviewer may send structures back to construction under the same plans")
-    p.add_argument("--max_repairs", type=int, default=2,
-                   help="construction retries for structures failing deterministic validation")
+    p.add_argument("--max_revisions", type=int, default=None,
+                   help="loops the reviewer may take back through evidence -> planning -> construction "
+                        "(sets budgets.max_revisions)")
+    p.add_argument("--max_rebuilds", type=int, default=None,
+                   help="rounds the reviewer may send structures back to construction under the same plans "
+                        "(sets budgets.max_rebuilds)")
+    p.add_argument("--max_repairs", type=int, default=None,
+                   help="construction retries for structures failing deterministic validation (sets budgets.max_repairs)")
     p.add_argument("--gpu", type=int, default=None,
                    help="GPU index for CUDA-accelerated neighbor lists, in the workflow and in the agent's "
                         "sandboxed scripts (sets CUDA_VISIBLE_DEVICES and construction.gpu)")
@@ -111,14 +111,19 @@ def main() -> int:
         cfg.campaign.model = args.model
     if args.techniques:
         cfg.characterization.techniques = args.techniques
-    if args.include_stubs:
-        cfg.characterization.include_stubs = True
     if args.no_figures:
         cfg.summarizer.analyze_figures = False
     if args.max_figures is not None:
         cfg.summarizer.max_figures = args.max_figures
     if args.gpu is not None:
         cfg.construction.gpu = True  # the agent's sandboxed scripts may use it too
+    budgets = {k: getattr(args, k) for k in ("max_revisions", "max_repairs", "max_rebuilds") if getattr(args, k) is not None}
+    if budgets:
+        try:
+            cfg.budgets = type(cfg.budgets).model_validate({**cfg.budgets.model_dump(), **budgets})
+        except ValueError as e:
+            print(f"ERROR: {e}", file=sys.stderr)
+            return 2
 
     if inputs.pdf and inputs.characterization:
         print("ERROR: inputs.characterization needs the summary its reports were made from: set inputs.paper_graph "
@@ -143,14 +148,13 @@ def main() -> int:
     with open(os.path.join(args.output_dir, "config.json"), "w") as fh:
         json.dump(snapshot, fh, indent=2)
 
-    deps = build_deps(cfg, args.output_dir, seed=args.random_seed, max_revisions=args.max_revisions,
-                      max_repairs=args.max_repairs, max_rebuilds=args.max_rebuilds)
-    cc = cfg.construction
+    deps = build_deps(cfg, args.output_dir, seed=args.random_seed)
+    cc, b = cfg.construction, cfg.budgets
     print(f"[paper2structure] paper={inputs.pdf or inputs.paper_graph} "
           f"characterization={inputs.characterization or 'run Agent 2'} out={args.output_dir} "
           f"model={cfg.campaign.model or 'default'} seed={args.random_seed} "
           f"techniques={cfg.characterization.techniques or 'all found'} "
-          f"budget(revisions={args.max_revisions}, rebuilds={args.max_rebuilds}, repairs={args.max_repairs}, "
+          f"budget(revisions={b.max_revisions}, rebuilds={b.max_rebuilds}, repairs={b.max_repairs}, "
           f"construction_requests={cc.max_requests}) sandbox={cc.sandbox}", flush=True)
 
     if cc.sandbox == "bubblewrap":

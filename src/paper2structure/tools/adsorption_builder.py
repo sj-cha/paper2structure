@@ -13,8 +13,9 @@ import numpy as np
 from ase import Atoms
 from ase.geometry import get_distances
 
-from paper2structure.tools._geometry import (ANION_CONTACT_SCALE, ANION_FORMERS, ROLE_ADSORBATE, ROLE_SOLVENT,
-                                             PeriodicTree, coordination_pairs, default_seed, ensure_bookkeeping,
+from paper2structure.thresholds import ANION_CONTACT_SCALE
+from paper2structure.tools._geometry import (ANION_FORMERS, ROLE_ADSORBATE, ROLE_SOLVENT, PeriodicTree,
+                                             coordination_pairs, default_seed, ensure_bookkeeping,
                                              farthest_point_sampling, neighbor_pairs, rcov, register_molecules,
                                              rotation_about_axis, rotation_from_u_to_v, signed_angle, substrate_mask,
                                              surface_anions, unit)
@@ -210,7 +211,7 @@ def surface_sites(atoms: Atoms, kinds: Sequence[str] = ("top",), elements: Optio
             for b, d in adj[a]:
                 add("bridge", [a, b], [np.zeros(3), d])
     if "hollow" in kinds:
-        tree = PeriodicTree(sub.positions, np.ones(len(sub)), sub.cell.array, sub.pbc)
+        tree = PeriodicTree(sub.positions, sub.cell.array, sub.pbc)
         for a in adj:
             nbrs = adj[a]
             for x in range(len(nbrs)):
@@ -375,7 +376,7 @@ def place_adsorbates(atoms: Atoms, adsorbate, sites: Sequence[Site], count: Opti
     env_idx = np.where(keep)[0]
     symbols = atoms.get_chemical_symbols()
     env_r = rcov([symbols[i] for i in env_idx])
-    env_tree = PeriodicTree(atoms.positions[env_idx], env_r, cell, pbc)
+    env_tree = PeriodicTree(atoms.positions[env_idx], cell, pbc, env_r)
     env_pos = {int(o): k for k, o in enumerate(env_idx)}
 
     ads_sym = adsorbate.atoms.get_chemical_symbols()
@@ -391,7 +392,7 @@ def place_adsorbates(atoms: Atoms, adsorbate, sites: Sequence[Site], count: Opti
     charges = [a.GetFormalCharge() for a in adsorbate.mol.GetAtoms()]
     acceptor = [k for k, s in enumerate(ads_sym) if s in ANION_FORMERS and charges[k] <= 0]
     anions = [k for k, i in enumerate(env_idx) if sub_mask[i] and symbols[i] in like]
-    anion_tree = (PeriodicTree(atoms.positions[env_idx[anions]], env_r[anions], cell, pbc)
+    anion_tree = (PeriodicTree(atoms.positions[env_idx[anions]], cell, pbc, env_r[anions])
                   if acceptor and anions else None)
 
     def contacts(site: Site) -> list[int]:
@@ -486,7 +487,7 @@ def place_adsorbates(atoms: Atoms, adsorbate, sites: Sequence[Site], count: Opti
         if not coords_list:
             return None
         pts = np.vstack(coords_list)
-        return PeriodicTree(pts, np.tile(ads_r, len(coords_list)), cell, pbc)
+        return PeriodicTree(pts, cell, pbc, np.tile(ads_r, len(coords_list)))
 
     def clearance(k: int, everyone: Optional[PeriodicTree] = None) -> float:
         """Molecule k's clearance against the substrate and every other placed molecule."""

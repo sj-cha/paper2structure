@@ -143,26 +143,34 @@ def image_shifts(cell: np.ndarray, pbc: Sequence[bool]) -> np.ndarray:
 
 
 class PeriodicTree:
-    """KD-tree over a set of atoms and their neighbouring periodic images, for any cell shape.
+    """KD-tree over a set of atoms and their neighbouring periodic images, for any cell shape:
+    `points` are the images, `index` the atom each one is an image of (per-atom arrays indexed
+    with it give per-image values). Answers nearest-neighbour queries and, with per-atom `radii`,
+    "how close is the nearest atom, relative to the covalent-radius sum" for the placement and
+    packing searches. Valid while the queried distances stay below the shortest cell width, which
+    holds for contact-scale cutoffs."""
 
-    Answers "how close is the nearest atom, relative to the covalent-radius sum" queries used by
-    the placement and packing searches. Valid while the queried distances stay below the
-    shortest cell width, which holds for overlap-scale cutoffs."""
-
-    def __init__(self, positions: np.ndarray, radii: np.ndarray, cell: np.ndarray, pbc: Sequence[bool]):
+    def __init__(self, positions: np.ndarray, cell: np.ndarray, pbc: Sequence[bool],
+                 radii: Optional[np.ndarray] = None):
         positions = np.asarray(positions, dtype=float).reshape(-1, 3)
-        self.radii = np.asarray(radii, dtype=float)
+        self.radii = None if radii is None else np.asarray(radii, dtype=float)
         self.n = len(positions)
-        self.r_max = float(self.radii.max()) if self.n else 0.0
+        self.r_max = float(self.radii.max()) if self.n and self.radii is not None else 0.0
         if self.n == 0:
             self.tree = None
             self.index = np.array([], dtype=int)
+            self.points = np.zeros((0, 3))
             return
         shifts = image_shifts(np.asarray(cell, dtype=float), pbc)
         pts = (positions[None, :, :] + shifts[:, None, :]).reshape(-1, 3)
         self.tree = cKDTree(pts)
         self.index = np.tile(np.arange(self.n), len(shifts))
         self.points = pts
+
+    def nearest(self, points: np.ndarray, k: int) -> tuple[np.ndarray, np.ndarray]:
+        """Distances and image indices of the k nearest images of each point (shape (..., k))."""
+        d, i = self.tree.query(points, k=min(k, len(self.points)))
+        return d.reshape(*points.shape[:-1], -1), i.reshape(*points.shape[:-1], -1)
 
     def min_normalized(self, points: np.ndarray, radii: np.ndarray, cap: float = 3.0,
                        exclude: Optional[dict[int, set[int]]] = None) -> float:
@@ -333,7 +341,6 @@ def clean_arrays(atoms: Atoms) -> Atoms:
 
 
 ANION_FORMERS = frozenset({"N", "O", "F", "S", "Cl", "Br", "I", "Se", "Te"})  # electronegative elements
-ANION_CONTACT_SCALE = 1.3  # x covalent sum: an electronegative molecule atom closer to a surface anion crowds it
 
 
 def cation_elements(symbols: Iterable[str]) -> frozenset[str]:

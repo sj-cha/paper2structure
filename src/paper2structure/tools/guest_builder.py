@@ -16,11 +16,10 @@ from typing import Optional, Union
 import numpy as np
 from ase import Atoms
 from ase.data import atomic_numbers, vdw_radii
-from scipy.spatial import cKDTree
 from scipy.spatial.transform import Rotation
 
-from paper2structure.tools._geometry import (ANION_FORMERS, cation_elements, default_seed, get_molecules,
-                                             image_shifts, mol_ids)
+from paper2structure.tools._geometry import (ANION_FORMERS, PeriodicTree, cation_elements, default_seed,
+                                             get_molecules, mol_ids)
 from paper2structure.tools._symmetry import hall_operations, orbit, symmetry_operations
 from paper2structure.tools.adsorbate_builder import Adsorbate
 from paper2structure.tools.adsorption_builder import add_molecule
@@ -65,19 +64,16 @@ class _Env:
     `acceptor` marks the framework's electronegative atoms (hydrogen-bond acceptors)."""
 
     def __init__(self, atoms: Atoms):
-        shifts = image_shifts(atoms.cell.array, atoms.pbc)
-        symbols = np.array(atoms.get_chemical_symbols())
-        self.points = (atoms.positions[None] + shifts[:, None]).reshape(-1, 3)
-        index = np.tile(np.arange(len(atoms)), len(shifts))
+        self.tree = PeriodicTree(atoms.positions, atoms.cell.array, atoms.pbc)
+        symbols, index = np.array(atoms.get_chemical_symbols()), self.tree.index
+        self.points = self.tree.points
         self.symbols = symbols[index]
         self.vdw = _vdw(symbols)[index]
         self.is_h = self.symbols == "H"
         self.acceptor = np.isin(self.symbols, list(ANION_FORMERS)) & (mol_ids(atoms) < 0)[index]
-        self.tree = cKDTree(self.points)
 
     def query(self, xyz: np.ndarray, k: int):
-        d, i = self.tree.query(xyz, k=min(k, len(self.points)))
-        return d.reshape(*xyz.shape[:-1], -1), i.reshape(*xyz.shape[:-1], -1)
+        return self.tree.nearest(xyz, k)
 
 
 def _clash_free(env: _Env, xyz: np.ndarray, vdw: np.ndarray, is_h: np.ndarray, donor_h: np.ndarray) -> np.ndarray:

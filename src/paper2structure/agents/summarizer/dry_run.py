@@ -19,7 +19,6 @@ DRY_RUN_OUTPUTS.update({
             {
                 "system_ids": ["S1", "S2"],
                 "technique": "XRD",
-                "technique_category": "diffraction",
                 "summary": "Single phase by XRD.",
                 "conditions": ["Cu-Kα"],
                 "quote": "dry-run quote",
@@ -30,8 +29,7 @@ DRY_RUN_OUTPUTS.update({
     "FigureOutput": {
         "figure_label": "Fig. 1",
         "panels": [
-            {"panel_label": "a", "plot_type": "XRD pattern", "technique": "XRD", "technique_category": "diffraction", "system_ids": ["S1"], "description": "Dry-run panel."}
+            {"panel_label": "a", "plot_type": "XRD pattern", "technique": "XRD", "system_ids": ["S1"], "description": "Dry-run panel."}
         ],
-        "useful_for_structure": True,
     },
 })

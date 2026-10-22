@@ -14,7 +14,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from ...config import TECHNIQUES, TechniqueCategory, canonical_technique
+from ...config import TechniqueCategory, canonical_technique, technique_category
 
 
 # --------------------------------------------------------------------------------------
@@ -81,8 +81,7 @@ class SystemsOutput(BaseModel):
 
 class TextEvidenceItem(BaseModel):
     system_ids: list[str] = Field(description="IDs (e.g. 'S1') of the systems this evidence applies to. Use several IDs if it applies to a whole series.")
-    technique: str = Field(description="Canonical technique name from the list in the instructions, e.g. 'XRD', 'TEM', 'SEM', 'XPS', 'Raman', 'magnetization'.")
-    technique_category: TechniqueCategory
+    technique: str = Field(description="A canonical technique name from the instructions, otherwise the paper's name (e.g. 'magnetization').")
     summary: str = Field(description="What this evidence says, in one or two sentences.")
     measurements: list[Measurement] = Field(default_factory=list)
     conditions: list[str] = Field(default_factory=list, description="Instrument/settings, e.g. 'Cu-Kα', '2θ 10-110°', 'FullProf', '200 kV'.")
@@ -102,8 +101,7 @@ class TextEvidenceOutput(BaseModel):
 class FigurePanel(BaseModel):
     panel_label: str | None = Field(default=None, description="'a', 'b', ... or None if single-panel.")
     plot_type: str = Field(description="e.g. 'XRD pattern', 'Rietveld fit', 'lattice parameter vs composition', 'TEM micrograph', 'SAED pattern'.")
-    technique: str
-    technique_category: TechniqueCategory
+    technique: str = Field(description="A canonical technique name from the instructions, otherwise the paper's name.")
     system_ids: list[str] = Field(description="Systems shown in this panel (use the given IDs).")
     description: str = Field(description="What the panel shows (samples, plot layout, insets), without reading any values off it.")
     axes: list[str] = Field(default_factory=list, description="Axis labels with units, e.g. ['2θ (deg)', 'Intensity (arb.)'].")
@@ -114,7 +112,6 @@ class FigureOutput(BaseModel):
 
     figure_label: str = Field(description="e.g. 'Fig. 2'.")
     panels: list[FigurePanel]
-    useful_for_structure: bool = Field(description="True if this figure carries information useful to build an atomic structure.")
 
 
 # --------------------------------------------------------------------------------------
@@ -146,7 +143,7 @@ class Evidence(BaseModel):
     system_ids: list[str]
     technique: str = Field(description="Canonical technique name from paper2structure.config.TECHNIQUES when one fits.")
     technique_as_written: str | None = Field(default=None, description="Technique name as the paper/LLM wrote it, e.g. 'HRTEM' for technique 'TEM'.")
-    technique_category: TechniqueCategory
+    technique_category: TechniqueCategory = Field(default="other", description="From the technique vocabulary; 'other' outside it.")
     source_type: Literal["text", "figure"]
     source_ref: str = Field(description="Where it came from, e.g. 'page 2' or 'Fig. 1 (b)'.")
     summary: str
@@ -168,7 +165,7 @@ class Evidence(BaseModel):
                 if canonical != data["technique"]:
                     data.setdefault("technique_as_written", data["technique"])
                 data["technique"] = canonical
-                data["technique_category"] = TECHNIQUES[canonical][0]
+                data["technique_category"] = technique_category(canonical)
         return data
 
 
@@ -184,14 +181,3 @@ class PaperGraph(BaseModel):
     metadata: PaperMetadata
     systems: list[MaterialSystem]
     evidence: list[Evidence]
-
-    def evidence_for(self, technique: str | None = None, system_id: str | None = None, category: str | None = None) -> list[Evidence]:
-        """Filter evidence, e.g. ``graph.evidence_for(technique="XRD")``. Matching is case-insensitive substring."""
-        out = self.evidence
-        if technique:
-            out = [e for e in out if technique.lower() in e.technique.lower()]
-        if category:
-            out = [e for e in out if e.technique_category == category]
-        if system_id:
-            out = [e for e in out if system_id in e.system_ids]
-        return out

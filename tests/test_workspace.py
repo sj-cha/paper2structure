@@ -88,11 +88,11 @@ def test_replay_runs_a_script_alone_from_scratch(tmp_path):
 
 
 def test_skills_install_with_generated_reference(tmp_path):
-    lib = skills.install(tmp_path)
+    lib = skills.install(tmp_path, make_config(validation={"overlap_scale": 0.55}).validation)
     names = sorted(p.name for p in lib.iterdir())
     assert names == ["custom-structures", "nanocrystals", "solvation", "structure-toolkit", "surfaces-and-adsorbates"]
     toolkit = (lib / "structure-toolkit" / "SKILL.md").read_text()
     assert toolkit.startswith("---\nname: structure-toolkit\ndescription: ")
-    assert "{{API_REFERENCE}}" not in toolkit
+    assert "{{" not in toolkit and "no atoms closer than 0.55 x" in toolkit  # the run's own gate thresholds
     for fn in ("build_bulk(", "place_adsorbates(", "add_molecule(", "carve_nanocrystal(", "emit("):
         assert fn in toolkit

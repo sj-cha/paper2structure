@@ -27,9 +27,9 @@ numpy for everything else (see the `custom-structures` skill).
 - `emit(atoms, name=..., plan_id=..., notes=...)` writes `structures/<name>.extxyz` (all per-atom
   data), `structures/<name>.vasp` (POSCAR) and `structures/<name>.json`, and records the emitting
   script in `structures/manifest.json`.
-- The validation gate (check_structure, and again on your final report): no atoms closer than 0.6 x
+- The validation gate (check_structure, and again on your final report): no atoms closer than {{overlap_scale}} x
   the covalent-radius sum; molecules matching their SMILES; every adsorbate bound to the
-  substrate (closest contact within 1.5 x the covalent sum, never beyond 2.0 x; an electronegative
+  substrate (closest contact within {{binding_scale}} x the covalent sum, never beyond {{detached_scale}} x; an electronegative
   donor on an ionic surface binds a cation, not an anion); vacuum; the atom budget; and the plan's
   checks of the paper's claims ("claim C1": lattice, space group, composition, bond lengths and
   angles, coordination, hydrogen bonds, layer counts), for the systems passed to

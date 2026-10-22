@@ -28,33 +28,26 @@ from paper2structure.agents.characterization.schemas import ExperimentalEvidence
 from paper2structure.agents.constructor import skills
 from paper2structure.agents.constructor.schemas import ConstructionReport
 from paper2structure.agents.constructor.workspace import make_workspace, replay
-from paper2structure.agents.planner.schemas import PlanSet, StructurePlan
+from paper2structure.agents.planner.schemas import StructurePlan
 from paper2structure.agents.structured_agent import StructuredAgent
 from paper2structure.agents.summarizer.schemas import PaperGraph
-from paper2structure.config import Paper2StructureConfig, simulation_brief
+from paper2structure.config import Paper2StructureConfig, ValidationConfig, simulation_brief
 from paper2structure.tools.geometry_checks import validate_structure
 from paper2structure.tools.render import render_png
 from paper2structure.tools.schemas import CheckResult, ValidationReport
-from paper2structure.tools.structure_export import describe
+from paper2structure.tools.structure_export import EMIT_DIR, MANIFEST, NAME, describe, structure_path
 
 log = logging.getLogger(__name__)
 
 WORKSPACE = "workspace"  # the agent's directory inside an attempt directory
 REPLAYS = "replay"  # from-scratch runs of the final scripts, next to it
-EMIT_DIR = "structures"  # where emit() writes, relative to the working directory
 MAX_PARALLEL_REPLAYS = 4
-
-
-def structure_file(root: Path, name: str) -> Path:
-    """Where emit() put structure `name` when its script ran in `root`."""
-    return root / EMIT_DIR / f"{name}.extxyz"
 
 
 @dataclass
 class ConstructionDeps:
     workdir: Path  # attempt directory holding workspace/ (the agent's) and replay/ (verification)
-    plan_ids: list[str]
-    plans: PlanSet
+    plan: StructurePlan  # the plan this run builds
     cfg: Paper2StructureConfig
     verified: dict[str, Path] = field(default_factory=dict)  # structure name -> extxyz from the replay
     scripts: dict[str, Path] = field(default_factory=dict)  # structure name -> its script in the workspace
@@ -66,15 +59,24 @@ class ConstructionDeps:
     def workspace(self) -> Path:
         return self.workdir / WORKSPACE
 
-    def plan(self, plan_id: str) -> Optional[StructurePlan]:
-        return next((p for p in self.plans.plans if p.plan_id == plan_id), None)
-
     def manifest(self) -> dict[str, dict]:
-        path = self.workspace / EMIT_DIR / "manifest.json"
-        return {e["name"]: e for e in json.loads(path.read_text())} if path.exists() else {}
+        """emit()'s records by structure name. The agent can edit the file: a broken one is sent
+        back to it (ModelRetry), since every caller runs inside a tool or the output validator."""
+        path = self.workspace / EMIT_DIR / MANIFEST
+        if not path.exists():
+            return {}
+        try:
+            entries = json.loads(path.read_text())
+            out = {e["name"]: e for e in entries}
+            if any(not {"plan_id", "script"} <= set(e) for e in entries):
+                raise KeyError("an entry lacks plan_id or script")
+            return out
+        except (ValueError, TypeError, KeyError) as e:
+            raise ModelRetry(f"{EMIT_DIR}/{MANIFEST} is malformed ({type(e).__name__}: {e}): delete it and run your "
+                             "build scripts again") from e
 
     def emitted(self, name: str) -> Path:
-        return structure_file(self.workspace, name)
+        return structure_path(self.workspace, name)
 
     def not_emitted(self, name: str) -> Optional[str]:
         """The message for a structure name the agent never emitted, else None."""
@@ -108,21 +110,18 @@ def _same_atoms(x, y, tol: float = 1e-3) -> bool:
             and np.allclose(x.cell.array, y.cell.array, atol=tol) and np.allclose(x.positions, y.positions, atol=tol))
 
 
-def _validate(deps: ConstructionDeps, atoms, name: str, plan_id: str,
-              system_ids: Optional[list[str]] = None) -> ValidationReport:
+def _validate(deps: ConstructionDeps, atoms, name: str, system_ids: Optional[list[str]] = None) -> ValidationReport:
     """The validation gate on one structure: tools.geometry_checks with the campaign's `validation`
     settings, the plan's oxidation states for the optional charge check and the plan's checks of the
-    paper's claims for the systems the structure models (as emitted; default the plan's). A
-    structure the checks cannot process fails."""
-    plan = deps.plan(plan_id)
-    systems = system_ids or deps.manifest().get(name, {}).get("system_ids") or (plan.system_ids if plan else [])
+    paper's claims for the systems the structure models (as reported or emitted; none: all the
+    plan's). A structure the checks cannot process fails."""
+    systems = system_ids or deps.manifest().get(name, {}).get("system_ids") or []
     try:
         return validate_structure(atoms, name, max_atoms=deps.cfg.planning.max_atoms,
-                                  oxidation_states=plan.oxidation_states() if plan else None,
-                                  claim_checks=plan.checks if plan else (), system_ids=systems,
-                                  **deps.cfg.validation.model_dump())
+                                  oxidation_states=deps.plan.oxidation_states(), claim_checks=deps.plan.checks,
+                                  system_ids=systems, **deps.cfg.validation.model_dump())
     except Exception as e:  # noqa: BLE001 - a broken structure is the agent's to fix, not the end of the run
-        log.warning("validating %s failed: %s", name, e)
+        log.warning("validating %s failed: %s", name, e, exc_info=True)
         return ValidationReport(structure_id=name, passed=False, checks=[CheckResult(
             name="validation_error", status="fail", detail=f"{type(e).__name__}: {e}")])
 
@@ -135,25 +134,36 @@ def check_emitted(deps: ConstructionDeps, name: str) -> str:
     atoms = _read(deps.emitted(name))
     if atoms is None:
         return f"could not read {EMIT_DIR}/{name}.extxyz"
-    report = _validate(deps, atoms, name, deps.manifest().get(name, {}).get("plan_id", ""))
+    report = _validate(deps, atoms, name)
     try:
         summary = describe(atoms)
     except Exception as e:  # noqa: BLE001
         summary = f"could not describe {name}: {type(e).__name__}: {e}"
-    return f"{summary}\nvalidation: {report.summary()}"
+    emitted_for = deps.manifest()[name]["plan_id"]
+    other = ("" if emitted_for == deps.plan.plan_id else f"\nnote: emitted for plan {emitted_for!r}: emit it with "
+             f"plan_id={deps.plan.plan_id!r}, or the final report is rejected")
+    return f"{summary}\nvalidation: {report.summary()}{other}"
 
 
 def check_report(deps: ConstructionDeps, output: ConstructionReport) -> tuple[list[str], dict[Path, list[str]]]:
-    """Bookkeeping problems of a final report (unknown plans, structures never emitted, emitted by
-    inline code or by another script, plans not covered), and the reported structures by script."""
+    """Bookkeeping problems of a final report (another plan, invalid names, structures never emitted,
+    emitted by inline code or by another script, an empty report), and the reported structures by
+    script."""
     problems = []
     manifest = deps.manifest()
     workspace = deps.workspace.resolve()
     by_script: dict[Path, list[str]] = {}
+    pid = deps.plan.plan_id
+    for f in output.failed:
+        if f.plan_id != pid:
+            problems.append(f"failed plan {f.plan_id!r} is not the plan to build ({pid})")
     for s in output.structures:
         entry = manifest.get(s.name)
-        if s.plan_id not in deps.plan_ids:
-            problems.append(f"{s.plan_id} is not one of the plans to build ({deps.plan_ids})")
+        if s.plan_id != pid:
+            problems.append(f"{s.name!r}: {s.plan_id!r} is not the plan to build ({pid})")
+        if not NAME.match(s.name):
+            problems.append(f"{s.name!r} is not a valid structure name (letters, digits, '_', '-', '.'; max 64)")
+            continue
         if entry is None:
             problems.append(f"{s.name!r} was never emitted (emitted: {sorted(manifest)})")
             continue
@@ -170,10 +180,8 @@ def check_report(deps: ConstructionDeps, output: ConstructionReport) -> tuple[li
             problems.append(f"script {s.script!r} is not a file in the workspace")
         else:
             by_script.setdefault(script, []).append(s.name)
-    covered = {s.plan_id for s in output.structures} | {f.plan_id for f in output.failed}
-    missing = [p for p in deps.plan_ids if p not in covered]
-    if missing:
-        problems.append(f"plans {missing} are neither built nor reported as failed")
+    if not output.structures and not output.failed:
+        problems.append(f"build plan {pid} or report it as failed with the reason")
     return problems, by_script
 
 
@@ -213,7 +221,7 @@ async def verify_report(deps: ConstructionDeps, output: ConstructionReport) -> l
                             f"{_tail(res.stderr)}")
             continue
         for name in names:
-            fresh = structure_file(deps.replay_dir(script), name)
+            fresh = structure_path(deps.replay_dir(script), name)
             atoms = _read(fresh)
             if atoms is None:
                 problems.append(f"{script.name} run alone in an empty directory does not emit {name!r}")
@@ -236,7 +244,7 @@ def gate_report(deps: ConstructionDeps, output: ConstructionReport, atoms: dict)
     ValidateStructures (repair loop, reviewer) so the gate never stalls a run."""
     failing = {}
     for s in output.structures:
-        report = deps.reports[s.name] = _validate(deps, atoms[s.name], s.name, s.plan_id, s.system_ids)
+        report = deps.reports[s.name] = _validate(deps, atoms[s.name], s.name, s.system_ids)
         if not report.passed:
             failing[s.name] = "; ".join(f"{c.name}: {c.detail}" for c in report.failures())
     if not failing:
@@ -310,18 +318,18 @@ class LLMConstructor(StructuredAgent):
                 raise ModelRetry("Fix these problems, then give the final report again:\n- " + "\n- ".join(problems))
             return output
 
-    async def construct(self, plans: PlanSet, plan_ids: list[str], workdir: Path, seed: int, feedback: str = "",
+    async def construct(self, plan: StructurePlan, workdir: Path, seed: int, feedback: str = "",
                         previous_scripts: Optional[dict[str, str]] = None, summary: Optional[PaperGraph] = None,
                         evidence: Optional[ExperimentalEvidence] = None) -> tuple[ConstructionReport, ConstructionDeps]:
-        """Build `plan_ids` in a fresh workspace under `workdir`; returns the verified report and the
-        deps holding the replayed structures, their scripts and their gate reports."""
-        deps = ConstructionDeps(workdir=Path(workdir), plan_ids=list(plan_ids), plans=plans, cfg=self.cfg)
+        """Build `plan` in a fresh workspace under `workdir`; returns the verified report and the deps
+        holding the replayed structures, their scripts and their gate reports."""
+        deps = ConstructionDeps(workdir=Path(workdir), plan=plan, cfg=self.cfg)
         for leftover in (deps.workspace, deps.workdir / REPLAYS):  # a reused run directory: start clean
             shutil.rmtree(leftover, ignore_errors=True)
         previous_scripts = previous_scripts or {}
-        prepare_workspace(deps.workspace, plans, plan_ids, feedback, previous_scripts, summary, evidence)
+        prepare_workspace(deps.workspace, plan, feedback, previous_scripts, summary, evidence, self.cfg.validation)
         cc = self.cfg.construction
-        report = await self.arun(constructor_prompt(plans, plan_ids, seed, feedback, previous_scripts),
+        report = await self.arun(constructor_prompt(plan, seed, feedback, previous_scripts),
                                  deps=deps, usage_limits=UsageLimits(request_limit=cc.max_requests,
                                                                      tool_calls_limit=cc.max_tool_calls),
                                  workspace=make_workspace(deps.workspace, cc))
@@ -329,17 +337,18 @@ class LLMConstructor(StructuredAgent):
 
     def preflight(self, **run_kwargs) -> tuple[bool, str]:
         with tempfile.TemporaryDirectory(prefix="p2s-preflight-") as tmp:
-            skills.install(Path(tmp))
+            skills.install(Path(tmp), self.cfg.validation)
             return super().preflight(workspace=make_workspace(Path(tmp), self.cfg.construction), **run_kwargs)
 
 
-def prepare_workspace(workspace: Path, plans: PlanSet, plan_ids: list[str], feedback: str,
-                      previous_scripts: dict[str, str], summary: Optional[PaperGraph],
-                      evidence: Optional[ExperimentalEvidence]) -> None:
-    """Task files, the previous attempt's scripts, the skills library and a README for the user."""
+def prepare_workspace(workspace: Path, plan: StructurePlan, feedback: str, previous_scripts: dict[str, str],
+                      summary: Optional[PaperGraph], evidence: Optional[ExperimentalEvidence],
+                      validation: ValidationConfig) -> None:
+    """Task files, the previous attempt's scripts, the skills library (with the run's gate
+    thresholds) and a README for the user."""
     task = workspace / "task"
     task.mkdir(parents=True, exist_ok=True)
-    (task / "plans.json").write_text(json.dumps([plans.get(p).model_dump(mode="json") for p in plan_ids], indent=1))
+    (task / "plan.json").write_text(plan.model_dump_json(indent=1))
     if summary is not None:
         (task / "paper_summary.json").write_text(summary.model_dump_json(exclude_none=True))
     if evidence is not None:
@@ -350,7 +359,7 @@ def prepare_workspace(workspace: Path, plans: PlanSet, plan_ids: list[str], feed
         path = workspace / "previous" / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(code)
-    skills.install(workspace)
+    skills.install(workspace, validation)
     (workspace / "README.md").write_text(WORKSPACE_README)
 
 
@@ -359,7 +368,7 @@ WORKSPACE_README = """\
 
 Written by the Paper2Structure Construction agent.
 
-- `task/`: the plans it was asked to build (plans.json), the paper summary and evidence it was given,
+- `task/`: the plan it was asked to build (plan.json), the paper summary and evidence it was given,
   and feedback from a previous attempt (feedback.md), if any.
 - `*.py`: its scripts. Each final script is standalone: `python <script>.py` rebuilds its structures
   into `structures/` (`<name>.extxyz` with per-atom roles and molecules, `<name>.vasp` POSCAR).
@@ -378,18 +387,15 @@ REMINDER = ("Final structures come from standalone scripts (one file, SEED passe
             "and are re-run from scratch and validated again before the report is accepted.")
 
 
-def constructor_prompt(plans: PlanSet, plan_ids: list[str], seed: int, feedback: str,
-                       previous_scripts: dict[str, str]) -> str:
-    chosen = [plans.get(p) for p in plan_ids]
-    parts = ["## Plans to build (also in task/plans.json)", "\n\n".join(p.model_dump_json(indent=1) for p in chosen),
-             f"Use SEED = {seed}."]
+def constructor_prompt(plan: StructurePlan, seed: int, feedback: str, previous_scripts: dict[str, str]) -> str:
+    parts = ["## Plan to build (also in task/plan.json)", plan.model_dump_json(indent=1), f"Use SEED = {seed}."]
     if feedback:
         parts += ["## Feedback on the previous attempt (also in task/feedback.md)", feedback]
     if previous_scripts:
-        parts.append("The scripts of the plans' current structures (named after the first structure each built) and "
+        parts.append("The scripts of the plan's current structures (named after the first structure each built) and "
                      "of an attempt that built nothing (last_attempt/) are in previous/: "
                      + ", ".join(sorted(previous_scripts)) + ". Start from them and address the feedback above.")
-    parts.append("Build every plan above (or report why it cannot be built), then give the final report.")
+    parts.append("Build the plan above (or report why it cannot be built), then give the final report.")
     return "\n\n".join(parts)
 
 
@@ -401,11 +407,11 @@ def constructor_system_prompt(cfg: Paper2StructureConfig) -> str:
     views = " view_structure(name) shows rendered views." if cfg.campaign.use_images else ""
     pins = cfg.overrides.pins()
     technical = "search settings, rounding of thickness" + ("" if cfg.overrides.supercell else " or supercell")
-    pinned = (f"\n- User-pinned choices, already in the plans: {pins}. Never change them, not even as technical "
-              "parameters; apply them also when a plan describes the model only in its description; if a plan "
+    pinned = (f"\n- User-pinned choices, already in the plan: {pins}. Never change them, not even as technical "
+              "parameters; apply them also when the plan describes the model only in its description; if the plan "
               "cannot be built with them, report it as failed." if pins else "")
     return f"""\
-You are the Structure Construction agent of Paper2Structure. You turn construction plans into
+You are the Structure Construction agent of Paper2Structure. You turn a construction plan into
 atomic structures by writing and running Python in this workspace; {simulation_brief(cfg.campaign.simulation)}.
 Any Python with ASE, pymatgen, RDKit, numpy and scipy is
 available. paper2structure.tools is a helper library for the common steps (crystals from Wyckoff
@@ -415,11 +421,12 @@ interfaces, defects, supported particles, ...). The skills describe the library 
 structure-toolkit before writing the first script.
 
 The workspace
-- task/plans.json holds the plans; task/paper_summary.json (the paper's material systems and
-  evidence) and task/evidence.json (the characterization reports) the context they come from; task/feedback.md and previous/ the problems and scripts of a previous attempt.
+- task/plan.json holds the plan; task/paper_summary.json (the paper's material systems and
+  evidence) and task/evidence.json (the characterization reports) the context it comes from;
+  task/feedback.md and previous/ the feedback on and the scripts of a previous attempt.
 - Commands run in a sandbox: no network, and only this workspace is writable.
 
-The deliverable: one standalone build script per plan (or per group of closely related
+The deliverable: one standalone build script for the plan (or one per group of closely related
 structures), e.g. build_P1_core_shell.py. Users will run and modify these scripts, so:
 - One file that imports only installed packages and reads no files. Named parameters at the top
   (lattice constants, sizes, coverage, SEED = the given seed) with comments tying them to the plan,
@@ -445,14 +452,14 @@ How to work
   bond angles), never the check.{views}
 - Measure every plan target on the built structure with code and report the values.
 - Change only technical parameters ({technical}, a truncated adsorbate) and report every
-  deviation from the plan. If a plan cannot be built as specified, report it as failed with the
+  deviation from the plan. If the plan cannot be built as specified, report it as failed with the
   reason instead of building something else.{pinned}
 - Limits: at most {cfg.planning.max_atoms} atoms per structure; at least {cfg.validation.min_vacuum} A of
   vacuum between periodic images of slabs and particles (unless solvent fills it).
 - Pass notes=... to emit() for what the reviewer must know about a structure (simplifications,
   choices the plan left open); they are shown with the structure.
 
-Final report: for every structure that realizes a plan, its emit() name, plan_id, the script that
-builds it, how it was built (toolkit steps and your own code), the measured targets and the
-deviations; and every plan that could not be built. Each listed script is then run alone in an
+Final report: for every structure that realizes the plan, its emit() name, plan_id, the script
+that builds it, how it was built (toolkit steps and your own code), the measured targets and the
+deviations; or the plan as failed, with the reason. Each listed script is then run alone in an
 empty directory and must reproduce its structures exactly."""

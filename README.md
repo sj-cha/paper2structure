@@ -12,8 +12,7 @@ Every structure comes with the standalone Python script that generated it.
   structure validation and a minimal Scientific Revision agent (Agent 5).
 - **Techniques:** every technique in the vocabulary (`config.TECHNIQUES`: XRD, TEM, SEM, AFM, XPS,
   XAS, Raman, FTIR, UV-Vis, NMR, Mossbauer, TGA, DFT, Structure model) has a filled-in spec.
-  Techniques outside it (e.g. PL, ICP-OES, magnetization) get no characterization agent; a spec
-  marked as a stub (`implemented=False`) is skipped unless `characterization.include_stubs`.
+  Techniques outside it (e.g. PL, ICP-OES, magnetization) get no characterization agent.
 - **Inputs:** a paper PDF, or one of the scenarios in `examples/fixtures/`, which stand in for the
   output of Agents 1-2 and are hand-written synthetic inputs, not extracted from real papers.
 
@@ -39,13 +38,13 @@ stateDiagram-v2
 | SummarizePaper | Agent 1, summarizer | reads the PDF into a `PaperGraph` (material systems `S1`, `S2`, ...; text and figure evidence `E001`, ... tagged by technique) saved under `paper/`, or loads `inputs.paper_graph`; runs once |
 | AnalyzeEvidence | Agent 2, characterization | one `CharacterizationAgent` per technique found that has a filled-in spec, concurrently; each reads its figure images and text records and returns observations, findings and structural constraints (`characterization/<TECH>.json`); or loads `inputs.characterization` (checked against the summary). The reports, restricted to the summary's systems, are saved once to `inputs/experimental_evidence.json`. Re-entered on `revisit_evidence`: the reports are kept and the reviewer's feedback goes to the planner |
 | PlanStructures | Agent 3, `LLMPlanner` | competing structural hypotheses as `StructurePlan`s: the material systems modeled (`system_ids`), a free-form model type and construction brief, named crystals (space group + Wyckoff positions + lattice with provenance, and the molecules of a hybrid or molecular crystal), optional surface/nanocrystal/adsorbate/solvent specs, the paper's claims as checks for the validation gate (below), measurable targets, evidence IDs (summarizer `E004` or technique-qualified observations `XRD:O3`; unknown IDs go back to the planner), assumptions |
-| ConstructStructures | Agent 4, `LLMConstructor` | one Coder run per plan, concurrently, each in its own sandboxed workspace and request budget, writes and runs its own Python; every reported structure is rebuilt by running its script alone from scratch and must pass the validation gate; a run that fails or reports the plan as not built records the reason. Each plan's run gets only its own feedback; the structures it reports replace that plan's structures that failed validation, were sent back by the reviewer or are emitted again under the same name, and every other structure stays current |
+| ConstructStructures | Agent 4, `LLMConstructor` | one Coder run per plan, concurrently, each in its own sandboxed workspace and request budget, building only that plan, writes and runs its own Python; every reported structure is rebuilt by running its script alone from scratch and must pass the validation gate; a run that fails or reports the plan as not built records the reason. Each plan's run gets only its own feedback; the structures it reports replace that plan's structures that failed validation, were sent back by the reviewer or are emitted again under the same name, and every other structure stays current |
 | ValidateStructures | deterministic | the same gate checks plus the export round trip; the plans of this round with hard failures or not built go back to construction, each with its own validation notes, the reviewer's pending rebuild request and the scripts of its structures (and of an attempt that built nothing, under `previous/last_attempt/`) |
-| ScientificRevision | Agent 5, `LLMReviser` | accept / stop / rebuild structures (the plan stands, the build is wrong: back to construction with its feedback and the previous scripts; the structures it does not list are kept) / revisit evidence (back through AnalyzeEvidence -> planning -> construction; the planner gets the feedback with how each earlier plan's structures fared, and the current structures that passed validation stay acceptable as earlier candidates); sees the claims with their IDs, every claim check's result, its own earlier decisions and the run's purpose, atom budget and user overrides; runs checks of its own (`check_claim` tool, kept in the state and the report); can read the build scripts; writes the final report (`write_report` tool) before ending the run |
+| ScientificRevision | Agent 5, `LLMReviser` | accept / stop / rebuild structures (the plan stands, the build is wrong: back to construction with its feedback and the previous scripts; the structures it does not list are kept) / revisit evidence (back through AnalyzeEvidence -> planning -> construction; the planner gets the feedback with how each earlier plan's structures fared, and the current structures that passed validation stay acceptable as earlier candidates); sees the claims with their IDs, every claim check's result, its own earlier decisions and the run's purpose, atom budget and user overrides; gives a verdict on every structure and accepts only structures that pass validation; runs checks of its own (`check_claim` tool, kept in the state and the report); can read the build scripts; writes the final report (`write_report` tool) before ending the run |
 
 The graph is built from `BaseNode` classes whose `run` return annotations are the edges
 (`src/paper2structure/graph/`). Each run renders its own diagram to `workflow.mmd`. When an agent
-fails, the run ends with status `failed` (a failed construction attempt still goes to review if
+fails, the run ends with status `failed` (the error is in `result.json`, its traceback in the log) (a failed construction attempt still goes to review if
 earlier structures exist), and so does a paper in which the summarizer finds no material system;
 a failed technique agent is only recorded as an error.
 
@@ -76,7 +75,7 @@ text records. It returns a `CharacterizationReport`: observations (`O1`, ...: qu
 source figure or evidence ID, systems, and whether it is a printed label, an axis estimate, a
 visual feature or stated in the text), findings, structural constraints (value, derivation, cited
 observations, confidence) and caveats. Agents 3-5 see the reports as `ExperimentalEvidence`, with
-the skipped techniques and why (a stub spec, or a technique outside the vocabulary).
+the techniques skipped because they are outside the vocabulary.
 
 The structural constraints are numbered `C1`, `C2`, ... in the order the agent wrote them; the run
 restricts the reports to the summary's systems (keeping every observation a kept finding or
@@ -256,12 +255,11 @@ flags set the run-level values and override the YAML where they overlap.
 | `--random_seed` | the `SEED` the build scripts use (conformers, placement, packing) (required) |
 | `--model` | every agent's model, e.g. `openai:gpt-5.6-luna` (sets `campaign.model`) |
 | `--techniques` | characterize only these, e.g. `XRD TEM` (aliases work); default: every technique found |
-| `--include_stubs` | also run the technique agents whose spec is a stub (none at present) |
 | `--no_figures` | the summarizer skips figure cataloguing, so Agent 2 reads only the text |
 | `--max_figures` | max figure regions cut from the PDF (default 30) |
-| `--max_revisions` | loops the reviewer may take back through evidence -> planning -> construction (default 1) |
-| `--max_rebuilds` | rounds the reviewer may send structures back to construction under the same plans (default 2) |
-| `--max_repairs` | construction retries after hard validation failures or unbuilt plans, per construction request (default 2) |
+| `--max_revisions` | loops the reviewer may take back through evidence -> planning -> construction (sets `budgets.max_revisions`, default 1) |
+| `--max_rebuilds` | rounds the reviewer may send structures back to construction under the same plans (sets `budgets.max_rebuilds`, default 2) |
+| `--max_repairs` | construction retries after hard validation failures or unbuilt plans, per construction request (sets `budgets.max_repairs`, default 2) |
 | `--gpu` | GPU index for neighbor lists in the workflow and in the sandboxed scripts (sets `CUDA_VISIBLE_DEVICES`, `construction.gpu`) |
 | `--skip_preflight` | skip the connectivity checks of Agents 3-5 |
 
@@ -306,10 +304,11 @@ field). Run-level settings are CLI flags; both are snapshotted to `<output_dir>/
 | `campaign` | every agent's model as a pydantic-ai name (`openai:gpt-5.6-luna`, the OpenAI Responses API; null = `$P2S_MODEL` or that default; `dry-run` returns canned answers and works for Agents 1-2 only), reasoning effort of Agents 3-5 (null = provider default), output-validation retries, whether agents see rendered structures, what the structures are for (`simulation`: `MLIP` or `DFT`, in the prompts of Agents 3-5) |
 | `inputs` | the paper: `pdf`, or `paper_graph` (an earlier run's `paper/paper_graph.json`, skips Agent 1); `characterization` (a folder of saved reports, skips Agent 2); paths relative to the working directory or the config's folder |
 | `summarizer` | `analyze_figures` (one vision call per figure), `max_figures` (default 30) |
-| `characterization` | `techniques` (null = every technique found), `include_stubs`, `reasoning_effort` (default high), `output_retries` |
+| `characterization` | `techniques` (null = every technique found), `reasoning_effort` (default high), `output_retries` |
 | `planning` | max plans, max atoms per structure (default 5000) |
+| `budgets` | the loops: `max_revisions` (1), `max_repairs` (2), `max_rebuilds` (2); the CLI flags override them |
 | `construction` | sandbox (`bubblewrap`/`none`), network, gpu, hidden paths, request and tool-call budget, replay timeout/memory, Planning, reminders, delegation, Memory |
-| `validation` | overlap / close-contact / bond / adsorbate-binding scale factors, minimum vacuum, bond-valence and like-charge thresholds |
+| `validation` | overlap / close-contact / bond / adsorbate-binding scale factors, minimum vacuum, bond-valence and like-charge thresholds; the defaults live in `paper2structure/thresholds.py`, which the toolkit's own defaults (`validate_structure`, `build_bulk`'s overlap rejection, the adsorbate placer) share, and the skills the agent reads quote the run's values |
 | `revision` | whether the reviewer may read the build scripts |
 | `export` | output formats, default `[poscar]` |
 | `overrides` | user-pinned choices the planner must respect (model type, Miller index, supercell, lattice); the constructor and the reviewer are told the pinned values too |
@@ -331,7 +330,7 @@ Without it, sandboxed scripts compute neighbor lists on the CPU.
 | `structures/<id>.json`, `.png` | per-atom roles (tags 0/1 substrate, 2 adsorbate, 3 solvent), molecule ids and records; top/side views |
 | `structures/README.md` | which script rebuilds which structure |
 | `final_report.md` | the reviewer's summary, assessment and next steps around the generated record: paper and material systems, structural constraints per technique, hypotheses, structures with how they were built and the measured targets, validation, revision decisions, how to reproduce, limitations |
-| `construction/r<rev>_a<attempt>/<plan>/workspace/` | the agent's workspace: `task/` (plans, context, feedback), every script it wrote, `structures/` (emitted), `.agents/skills/`, `README.md` |
+| `construction/r<rev>_a<attempt>/<plan>/workspace/` | the agent's workspace: `task/` (the plan, context, feedback), every script it wrote, `structures/` (emitted), `.agents/skills/`, `README.md` |
 | `construction/r<rev>_a<attempt>/<plan>/replay/<script>/` | the from-scratch re-run of each final script |
 | `plans.json`, `artifacts.json`, `validation_reports.json`, `revision_history.json`, `construction_reports.json` | full history (every plan set, every structure ever built, every decision, every construction report); nothing is overwritten across revisions |
 | `state/NN_<node>.json` | graph-state snapshot after every node; the summary and evidence, which have their own files, are only in the last one |

@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-RunStatus = Literal["accepted", "inconclusive", "revision_budget_exhausted", "failed"]
+RunStatus = Literal["accepted", "inconclusive", "failed"]
 
 
 class ReconstructionResult(BaseModel):

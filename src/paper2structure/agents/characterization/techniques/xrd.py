@@ -1,7 +1,7 @@
 from ..spec import TechniqueSpec
 
 
-# Worked example of a filled-in spec; populate a stub (e.g. nmr.py) the same way.
+# Worked example of a filled-in spec; write a new technique's spec the same way.
 # Aliases and category come from paper2structure.config.TECHNIQUES.
 XRD = TechniqueSpec(
     name="XRD",
