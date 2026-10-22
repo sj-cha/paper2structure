@@ -442,3 +442,11 @@ def test_failed_agent_runs_still_count_their_usage():
     with pytest.raises(Exception):
         asyncio.run(agent.arun("go"))
     assert agent.usage["calls"] == 2  # the first try and the one retry, recorded although the run failed
+
+
+def test_doped_crystal_formula_points_at_the_description():
+    plan = copy.deepcopy(PT_PLAN)
+    plan["plans"][0]["crystals"][0]["formula"] = "Pt0.9Au0.1"  # the parent's sites with a dopant formula
+    deps = PlanningDeps(evidence_ids={"E1", "E2", "E3"}, max_plans=3, overrides=OverridesConfig())
+    problems = check_plan_set(PlanSet.model_validate(plan), deps)
+    assert any("not the stated formula" in p and "in the description" in p for p in problems), problems

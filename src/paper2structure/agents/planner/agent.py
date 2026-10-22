@@ -48,13 +48,18 @@ def _check_bulk(bulk: BulkSpec) -> list[str]:
                            formula_units=bulk.formula_units)
     except Exception as e:  # noqa: BLE001 - every builder error is a planning error here
         return [f"bulk {bulk.formula} ({bulk.space_group}) cannot be built: {e}"]
+    ordered = ("a crystal is the ordered cell its sites generate: give that formula and put doping, substitution "
+               "or partial occupancy in the description (the Construction agent makes it in a supercell)")
     try:
-        want = Composition(bulk.formula).reduced_formula
+        stated = Composition(bulk.formula)
     except Exception:  # noqa: BLE001
-        return [f"bulk formula {bulk.formula!r} is not a chemical formula"]
-    got = Composition(atoms.get_chemical_formula()).reduced_formula
-    if got != want:
-        return [f"bulk sites generate {got}, not the stated formula {want}; check the Wyckoff positions"]
+        return [f"bulk formula {bulk.formula!r} is not a chemical formula; {ordered}"]
+    generated = Composition(atoms.get_chemical_formula())
+    if generated.reduced_formula != stated.reduced_formula:
+        doped = (not set(stated.elements) <= set(generated.elements)
+                 or any(abs(n - round(n)) > 1e-6 for n in stated.values()))
+        return [f"bulk sites generate {generated.reduced_formula}, not the stated formula {stated.reduced_formula}; "
+                + (ordered if doped else "check the Wyckoff positions")]
     return []
 
 
@@ -80,7 +85,9 @@ def check_plan_set(plans: PlanSet, deps: PlanningDeps) -> list[str]:
                 problems.append(f"{p.plan_id}: lattice of {crystal.name!r} has source 'paper' but cites no evidence")
             problems.extend(f"{p.plan_id}: crystal {crystal.name!r}: {msg}" for msg in _check_bulk(crystal))
         if (p.surface is not None or p.nanocrystal is not None) and not p.crystals:
-            problems.append(f"{p.plan_id}: a surface or nanocrystal spec needs the crystal it is cut from in `crystals`")
+            problems.append(f"{p.plan_id}: a surface or nanocrystal spec needs the crystal it is cut from in `crystals`; "
+                            "for a crystal without complete Wyckoff sites, drop the spec and describe the slab or "
+                            "particle (orientation, thickness, vacuum, size) in the description")
         if ov.model_type and p.model_type.strip().lower() != ov.model_type.strip().lower():
             problems.append(f"{p.plan_id}: user override requires model_type {ov.model_type!r}")
         if p.surface is not None:
@@ -226,12 +233,13 @@ What each plan decides
   `crystals`: give its space group, lattice parameters, layer stacking or connectivity and its
   molecules (SMILES with formal charges, number per cell) in the description, and the Construction
   agent builds it in code. Never list a partial sublattice or an isolated layer as a crystal.
-- surface (optional helper): Miller index, termination described by its exposed species, minimum
-  thickness (A), in-plane supercell, vacuum (at least {min_vacuum} A) and a fixed bottom region (A).
-- nanocrystal (optional helper): shape and size (closed-shell shapes for elemental metals; spheres
-  or faceted polyhedra cut from the crystal for compounds), facets, and oxidation states when the
-  particle must be charge-neutral. For multi-component particles give the overall size here and
-  the regions in the description.
+- surface (optional helper, for a crystal listed in `crystals`): Miller index, termination
+  described by its exposed species, minimum thickness (A), in-plane supercell, vacuum (at least
+  {min_vacuum} A) and a fixed bottom region (A).
+- nanocrystal (optional helper, for a crystal listed in `crystals`): shape and size (closed-shell
+  shapes for elemental metals; spheres or faceted polyhedra cut from the crystal for compounds),
+  facets, and oxidation states when the particle must be charge-neutral. For multi-component
+  particles give the overall size here and the regions in the description.
 - adsorbates: SMILES with explicit formal charges encoding the protonation state, the
   binding atoms (one element for monodentate binding, two for bidentate; keep this consistent with
   the hypothesis) and an anchor SMARTS for the binding group, mode "adsorb" (on top of surface
