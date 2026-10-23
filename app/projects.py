@@ -754,12 +754,18 @@ def _plan_failures(run: Path) -> dict[str, str]:
     return failures
 
 
+def _registered(artifacts: list[dict]) -> set[tuple[str, str]]:
+    """(name, attempt folder) of each artifact. Artifacts no longer record their attempt, so it is read
+    from `source`, the extxyz emitted under construction/r<rev>_a<attempt>/."""
+    return {(a["name"], Path(a["source"]).parts[1]) for a in artifacts}
+
+
 def _unreported_structures(project: Project, run: Path, artifacts: list[dict], method: str) -> list[dict]:
     """Structures emitted in the construction workspaces that never became artifacts: the agent gave the
     plan up (a target or claim it could not meet) after building them. They are still worth looking at,
     downloading and varying, so the page shows them with the same tools. Their geometry checks are
     computed once and cached in runs/<run>/unreported.json."""
-    registered = {(a["name"], f"r{a['revision']}_a{a['attempt']}") for a in artifacts}
+    registered = _registered(artifacts)
     failures = _plan_failures(run)
     cache_path = run / "unreported.json"
     cache, dirty, cfg = _read_json(cache_path, {}), False, None
@@ -800,7 +806,7 @@ def _unreported_structures(project: Project, run: Path, artifacts: list[dict], m
 
 
 def _unreported_count(run: Path) -> int:
-    registered = {(a["name"], f"r{a['revision']}_a{a['attempt']}") for a in _read_json(run / "artifacts.json", [])}
+    registered = _registered(_read_json(run / "artifacts.json", []))
     return sum(1 for m in run.glob("construction/r*_a*/*/workspace/structures/manifest.json")
                for e in _read_json(m, []) if (e["name"], m.parents[3].name) not in registered)
 
