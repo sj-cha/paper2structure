@@ -9,7 +9,6 @@ __pycache__/
 .venv/
 outputs/
 runs/
-examples/
 pdf/
 
 # the benchmark Valency papers stay local
