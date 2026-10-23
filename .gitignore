@@ -11,3 +11,7 @@ outputs/
 runs/
 examples/
 pdf/
+
+# the benchmark Valency papers stay local
+papers/*
+!papers/README.md
